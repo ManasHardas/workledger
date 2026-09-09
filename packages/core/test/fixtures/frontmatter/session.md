@@ -2,12 +2,12 @@
 schema_version: 1
 id: 01JQ8ZK4T0000000000000000A
 harness: claude-code
-harness_session_id: 01BukmMWZ6SZQeFumc9UXcAV
+harness_session_id: hsess-0000000000000000
 repo: github.com/manashardas/workledger
 branch: p1/6-ids-frontmatter
 author:
-  name: Manas Hardas
-  email: manas.hardas@gmail.com
+  name: Ada Lovelace
+  email: <redacted:email>
   dome_user: null
 started: 2026-09-09T12:00:00Z
 ended: null

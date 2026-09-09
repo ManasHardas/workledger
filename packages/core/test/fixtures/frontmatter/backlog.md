@@ -8,8 +8,8 @@ proposed_by:
   session: 01JQ8ZK4T0000000000000000A
   checkpoint: 1
   author:
-    name: Manas Hardas
-    email: manas.hardas@gmail.com
+    name: Ada Lovelace
+    email: <redacted:email>
     dome_user: null
 confirmed_by: null
 owner: null
@@ -31,8 +31,8 @@ history:
     diff: created from checkpoint 1
   - at: 2026-09-09T12:41:57Z
     by:
-      name: Manas Hardas
-      email: manas.hardas@gmail.com
+      name: Ada Lovelace
+      email: <redacted:email>
       dome_user: null
     op: status
     diff: "status: proposed → accepted"
