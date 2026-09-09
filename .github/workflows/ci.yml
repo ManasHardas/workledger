@@ -100,15 +100,32 @@ jobs:
       - run: pnpm -r build
 
       # Packs `workledger` and asserts the tarball is exactly bin/ + dist/ + package.json
-      # (+ README.md / LICENSE when present) and that the package declares no runtime deps.
+      # (+ README.md / LICENSE when present) and that the package declares exactly the runtime
+      # dependencies scripts/bundle-cli.mjs expects (`better-sqlite3`).
       - name: Pack and assert the published file list
         run: node scripts/check-pack.mjs --dest /tmp/pack
 
-      # The published bin must run with nothing installed beside it — proof that bundling core
-      # into dist/main.js actually removed the `workspace:*` dependency rather than hiding it.
-      - name: Run the packed CLI with no node_modules
+      # `better-sqlite3` is a native module esbuild cannot inline, so as of #10 the published
+      # package has one runtime dependency and no longer runs with an empty node_modules. This
+      # installs the tarball exactly as `npm i workledger` would — which is also the only tree
+      # that proves the native binding resolves — and runs the installed bin.
+      - name: Install the packed CLI as a consumer would and run it
         run: |
           set -euo pipefail
-          tar -xzf /tmp/pack/workledger-*.tgz -C /tmp/pack
-          test ! -e /tmp/pack/package/node_modules
-          node /tmp/pack/package/bin/workledger --version
+          mkdir -p /tmp/consumer
+          npm install --omit=dev --prefix /tmp/consumer /tmp/pack/workledger-*.tgz
+          test -f /tmp/consumer/node_modules/workledger/dist/migrations/0001_init.sql
+          node /tmp/consumer/node_modules/workledger/bin/workledger --version
+
+      # The same tarball, extracted and installed in place. `npm pkg delete devDependencies`
+      # first because `pnpm pack` rewrites the `workspace:*` reference to `@workledger/core` into
+      # a plain `0.0.1` that the registry has never heard of; npm never installs a dependency's
+      # devDependencies, so dropping them is what a consumer's tree already looks like.
+      - name: Run the packed CLI from an extracted tarball
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/extract
+          tar -xzf /tmp/pack/workledger-*.tgz -C /tmp/extract
+          npm pkg delete devDependencies --prefix /tmp/extract/package
+          npm install --omit=dev --prefix /tmp/extract/package
+          node /tmp/extract/package/bin/workledger --version
