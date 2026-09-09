@@ -517,6 +517,37 @@
       "wall_clock_min": 29,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "stop allow p95 72.7ms host"
+    },
+    {
+      "session": 2,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 29,
+      "issue": 13,
+      "agent_role": "backend",
+      "class": "endpoint-chained first-of-class (lean, CR+security lens)",
+      "tokens_implementer": 210779,
+      "tokens_reviewers": 106017,
+      "review_iterations": 0,
+      "files_touched": 12,
+      "wall_clock_min": 21,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "2",
+      "kind": "pr_merge",
+      "pr": 30,
+      "issue": 2,
+      "agent_role": "qa",
+      "class": "e2e (lean, no review)",
+      "tokens_implementer": 103861,
+      "tokens_reviewers": 0,
+      "review_iterations": 0,
+      "files_touched": 2,
+      "wall_clock_min": 11,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "claude runs checkpoint on its own; bytes default was wrong -> amendment 3"
     }
   ]
 }

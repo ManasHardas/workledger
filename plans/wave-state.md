@@ -6,30 +6,26 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S1)
+## Current state — 2026-09-09 (post-S2, P1 shipped)
 
-**Phase:** P1 — CLI core (per `plans/feature-p1-cli-core.md`)
+**Phase:** P2 — Local UI (per `plans/feature-p2-local-ui.md`). P1 shipped at tag `p1-shipped` (b5692a6).
 
-**Wave:** Wave 1 (build loop), 8 of 12 slots merged. Wave 0 (contract freeze, PR #1) and Wave 0.5 (issues #3–#14) complete. Two contract amendments on `main` (PR #15; amendment 2 at `1e9c2b3`).
+**Wave:** P2 Wave 0 complete (contracts under `docs/contracts/p2/`, data flow in `plans/feature-p2-data-flow.md`, committed directly per Clause #12). Wave 0.5: issues filed directly by the orchestrator. **Next: Wave 1.**
 
-**Last session:** S1 closed at the chore-close commit on `main` after PR #23 (last build merge `3d2eb52`, PR #22). 8 build PRs merged: #16 #17 #18 #19 #20 #21 #22 #23. Stopped by **T-D** (two fix-cycle iterations on slot 5, PR #20) per the plan's watchdog rule; budget was not exhausted.
+**Last session:** S2 (same conversation as S1, continued under Clause #12 lean mode): merged #26 #27 #28 #29 #30, amendment 3, dogfood on this repo (three live sessions), CHANGELOG, tag.
 
-**Carry-over slots:** none dropped. Not yet started: slot 8 (#11 checkpoint), slot 9 (#12 hook), slot 10 (#13 init/doctor/brief/config), slot 12 (#14 dogfood), plus follow-up #25 (Infra, pack-time manifest).
+**Carry-over slots:** none.
 
-**Open blockers (must resolve before next required activity):**
-- None at file-write time. #11's dependencies (#5 #6 #7 #8 #10 #4) are all merged.
+**Open blockers:** None at file-write time. `dome_workspace` enablement is operator-manual.
 
 **Next required activities (in order):**
-1. ⏳ Wave 1 slot 8: dispatch Backend on #11 (`workledger checkpoint`), full trio review. Pre-rendered brief in `plans/next-session.md`.
-2. ⏳ Wave 1 slot 9: #12 (hook + Claude Code adapter), full trio; must honor the three budget comments on the issue (lazy `better-sqlite3`, no core import on the allow path, deep-specifier imports).
-3. ⏳ Wave 1 slot 10: #13; full trio. Then #25 (Infra, CR-only) and slot 12 (#14, CR-only).
-4. ⏳ Wave 2 QA planning pass, then Wave 3 docs + tag `p1-shipped`, Wave 3.5 dogfood (three real sessions here and in `dome_workspace`).
+1. ⏳ P2 Wave 1: server + api-client + backlog-ops (Backend, parallel with the Frontend scaffold), then the web views, then `serve` packaging (Infra).
+2. ⏳ P2 Wave 2 (one QA e2e over `serve`), Wave 3 tag `p2-shipped`.
+3. ⏳ P3 (repair, backfill), P4 (Cursor, Codex), P5 (team), P6 (Dome card), P7 (design).
 
-**Operating mode:** ACTIVE (first-of-class slots remain: checkpoint, hook, init).
+**Operating mode:** ACTIVE, Clause #12 lean (one reviewer per PR, one fix-cycle, merge on green).
 
-**Throughput mode:** serial for the three remaining first-of-class CLI slots (#11 → #12 → #13 have a real dependency chain anyway); #25 may run in parallel with #11 (Infra, disjoint files).
-
-**Watchdog record (S1):** T-A never tripped. T-G fired on every slot (bootstrap anchors were 3–5× too low; see `capacity-log.md`). T-D fired on slot 5. T-X handled by pre-creating the command registry in slot 7 and by appending exports at the end of `packages/core/src/index.ts`. T-Y: one straggler (#7 not auto-closed because PR #22's body was clobbered); closed by hand.
+**Throughput mode:** parallel on disjoint packages.
 
 ---
 
@@ -39,6 +35,7 @@
 |---|---|---|---|---|
 | S0 | P1 / design | n/a | 0 | Spec, decision log, roadmap, phase spec, implementation plan, agentwaves vendored |
 | S1 | P1 / Wave 0 → 0.5 → 1 | ACTIVE, serial | 10 (#1 freeze, #15 amendment, 8 builds) | 8/12 slots merged; T-D on slot 5; anchors recalibrated |
+| S2 | P1 / Wave 1 → 3.5, P2 / Wave 0 | ACTIVE, lean | 5 (#26 #27 #28 #29 #30) | P1 shipped; lean mode cut per-slot cost ~3×; bytes default fixed from e2e |
 
 ---
 
