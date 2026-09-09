@@ -14,8 +14,8 @@ export interface BriefOptions {
   maxTokens?: number;
 }
 
-/** @returns the process exit code. */
-export function briefCommand(options: BriefOptions): number {
+/** @returns the process exit code. Async so an implementing slot never has to widen it. */
+export async function briefCommand(options: BriefOptions): Promise<number> {
   // Parsed and deliberately unread: the implementing slot fills this body in, and the
   // signature above is already the contract's.
   void options;

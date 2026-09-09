@@ -7,8 +7,7 @@
  * the body is this.
  */
 
-/** Exit code for a usage error, per docs/contracts/p1/cli.md. */
-const EXIT_USAGE = 1;
+import { EXIT_USAGE } from "../exit-codes.js";
 
 /**
  * Report that `name` is registered but has no implementation yet, and return the usage exit

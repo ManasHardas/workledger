@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -468,6 +469,66 @@ describe("rebuildIndex", () => {
     expect(db.getSessionByUlid("01JQ8ZK4T000000000000000ST")).toBeUndefined();
     expect(db.getSessionByUlid("01JQ8ZK4T0000000000000000D")).toBeDefined();
     expect(db.listCheckpoints("01JQ8ZK4T0000000000000000A")).toHaveLength(2);
+  });
+
+  it("keeps the newest session when two files claim one harness session id", () => {
+    // data-flow §2: `resume` mints a new ulid when the index has no row for the harness session,
+    // so any index loss followed by a resume leaves two ledger files with one
+    // `harness_session_id`. The unique constraint holds one of them; the rebuild must not abort.
+    const dir = path.join(home, "sessions");
+    mkdirSync(dir);
+    for (const name of readdirSync(FIXTURE_SESSIONS)) {
+      copyFileSync(path.join(FIXTURE_SESSIONS, name), path.join(dir, name));
+    }
+    const resumed = "01JQ8ZK4T0000000000000000R";
+    writeFileSync(
+      path.join(dir, `${resumed}.md`),
+      readFileSync(path.join(FIXTURE_SESSIONS, "01JQ8ZK4T0000000000000000A.md"), "utf8")
+        .replace("id: 01JQ8ZK4T0000000000000000A", `id: ${resumed}`)
+        // Newer `started`, and no checkpoints of its own yet: the live session after the resume.
+        .replace("started: 2026-09-09T12:00:00Z", "started: 2026-09-09T18:00:00Z")
+        .replace(/checkpoints:\n(?: {2}- [\s\S]*?\n)+---/, "checkpoints: []\n---"),
+    );
+
+    const db = open();
+    const result = rebuildIndex(db, REPO, dir);
+
+    // Three files parsed, three rows written: the pre-resume ulid is the one dropped.
+    expect(result.sessions).toBe(3);
+    expect(db.getSessionByUlid(resumed)).toBeDefined();
+    expect(db.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toBeUndefined();
+    // Every other session survives — the whole point of not aborting.
+    expect(db.getSessionByUlid("01JQ8ZK4T0000000000000000B")).toBeDefined();
+    expect(db.getSessionByUlid("01JQ8ZK4T0000000000000000C")).toBeDefined();
+
+    expect(result.problems).toHaveLength(1);
+    expect(path.basename(result.problems[0]!.file)).toBe("01JQ8ZK4T0000000000000000A.md");
+    expect(result.problems[0]!.message).toContain("hsess-aaaaaaaaaaaaaaaa");
+    expect(result.problems[0]!.message).toContain(`${resumed}.md`);
+  });
+
+  it("reports a session it still cannot insert instead of losing the rest", () => {
+    // Two files carrying one `id`: not a shape the ledger produces on purpose, so it falls
+    // through the duplicate rule to the per-session insert guard.
+    const dir = path.join(home, "sessions");
+    mkdirSync(dir);
+    const source = readFileSync(
+      path.join(FIXTURE_SESSIONS, "01JQ8ZK4T0000000000000000A.md"),
+      "utf8",
+    );
+    writeFileSync(path.join(dir, "first.md"), source);
+    writeFileSync(
+      path.join(dir, "second.md"),
+      source.replace("harness_session_id: hsess-aaaaaaaaaaaaaaaa", "harness_session_id: other"),
+    );
+
+    const db = open();
+    const result = rebuildIndex(db, REPO, dir);
+
+    expect(result.sessions).toBe(1);
+    expect(db.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toBeDefined();
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]!.message).toMatch(/could not be indexed: .*UNIQUE constraint/);
   });
 
   it("rebuilds to zero rows when the sessions directory does not exist", () => {

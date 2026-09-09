@@ -14,8 +14,8 @@ export interface DoctorOptions {
   json?: boolean;
 }
 
-/** @returns the process exit code. */
-export function doctorCommand(options: DoctorOptions): number {
+/** @returns the process exit code. Async so an implementing slot never has to widen it. */
+export async function doctorCommand(options: DoctorOptions): Promise<number> {
   // Parsed and deliberately unread: the implementing slot fills this body in, and the
   // signature above is already the contract's.
   void options;

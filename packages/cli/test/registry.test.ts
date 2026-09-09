@@ -111,6 +111,25 @@ describe("command registry", () => {
     expect(err).not.toContain(BACKLOG_MESSAGE);
   });
 
+  it("awaits an async command body and returns the code it resolves to", async () => {
+    // The T-X guarantee is that slots 8-10 change only their own file. A body that has to await
+    // — init's confirmation prompt, a stdin read — must therefore work without touching main.ts.
+    vi.resetModules();
+    vi.doMock("../src/commands/doctor.js", () => ({
+      doctorCommand: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return 42;
+      },
+    }));
+    try {
+      const fresh = await import("../src/main.js");
+      await expect(fresh.run(["doctor"])).resolves.toBe(42);
+    } finally {
+      vi.doUnmock("../src/commands/doctor.js");
+      vi.resetModules();
+    }
+  });
+
   it("returns 1 for an unknown command", async () => {
     const { code } = await invoke(["nope"]);
 

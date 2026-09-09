@@ -13,8 +13,8 @@ export const HOOK_EVENTS = ["SessionStart", "Stop", "SessionEnd"] as const;
 /** One of {@link HOOK_EVENTS}. */
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
-/** @returns the process exit code. */
-export function hookCommand(event: HookEvent): number {
+/** @returns the process exit code. Async so an implementing slot never has to widen it. */
+export async function hookCommand(event: HookEvent): Promise<number> {
   // Parsed and deliberately unread: the implementing slot fills this body in, and the
   // signature above is already the contract's.
   void event;

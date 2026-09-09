@@ -6,6 +6,11 @@
  * `.workledger/sessions/*.md` frontmatter, so a rebuild never reads a transcript and never reads
  * a session body.
  *
+ * Two ledger files can legitimately claim one `(harness, harness_session_id)`: data-flow §2 mints
+ * a *new* ulid on `resume`/`fork` when the index has no row for the harness session, so any index
+ * loss followed by a resume produces exactly that pair. The unique constraint allows one of them,
+ * so the rebuild picks a winner and reports the loser rather than aborting.
+ *
  * Counter semantics, per data-flow §3: the "since" counters reset to zero and `last_offset`
  * comes from the last checkpoint's `transcript_offset`. `turns_total` is *not* zeroed — the last
  * checkpoint's `turns` is cumulative by contract, so restoring it is what keeps the next
@@ -49,15 +54,28 @@ function listSessionFiles(sessionsDir: string): string[] | null {
   }
 }
 
+/** One session file, parsed and ready to insert. */
+interface ParsedSession {
+  /** Absolute path of the file it came from. */
+  file: string;
+  /** `started` from the frontmatter, kept for the duplicate tie-break. */
+  started: string;
+  session: NewSession;
+  checkpoints: SessionFrontmatter["checkpoints"];
+}
+
 /** The `sessions` row a validated frontmatter block implies. */
 function toSessionRow(
   frontmatter: SessionFrontmatter,
   repoPath: string,
   now: string,
-): { session: NewSession; checkpoints: SessionFrontmatter["checkpoints"] } {
+  file: string,
+): ParsedSession {
   const checkpoints = [...frontmatter.checkpoints].sort((a, b) => a.n - b.n);
   const last = checkpoints.at(-1);
   return {
+    file,
+    started: frontmatter.started,
     session: {
       ulid: frontmatter.id,
       repo_path: repoPath,
@@ -85,6 +103,54 @@ function toSessionRow(
 }
 
 /**
+ * Rank two files claiming one `(harness, harness_session_id)`: the newest `started` wins, then
+ * the one with more checkpoints, then the earlier filename. The newest is the live session — the
+ * older one is the pre-resume ulid whose ledger file is already complete — and the tie-breaks
+ * exist only so the choice is deterministic for a given directory.
+ *
+ * @returns a negative number when `a` should win
+ */
+function preferNewer(a: ParsedSession, b: ParsedSession): number {
+  const byStarted = Date.parse(b.started) - Date.parse(a.started);
+  if (byStarted !== 0 && Number.isFinite(byStarted)) return byStarted;
+  const byCheckpoints = b.checkpoints.length - a.checkpoints.length;
+  if (byCheckpoints !== 0) return byCheckpoints;
+  return a.file.localeCompare(b.file);
+}
+
+/**
+ * Keep one file per `(harness, harness_session_id)` and describe every file dropped, so the
+ * unique constraint can never turn one duplicated harness session into a failed rebuild.
+ */
+function dedupe(parsed: ParsedSession[], problems: RebuildProblem[]): ParsedSession[] {
+  const groups = new Map<string, ParsedSession[]>();
+  for (const entry of parsed) {
+    const key = `${entry.session.harness}\u0000${entry.session.harness_session_id}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  const kept = new Set<ParsedSession>();
+  for (const group of groups.values()) {
+    const [winner, ...losers] = [...group].sort(preferNewer);
+    if (!winner) continue;
+    kept.add(winner);
+    for (const loser of losers) {
+      problems.push({
+        file: loser.file,
+        message:
+          `harness session "${loser.session.harness_session_id}" is also claimed by ` +
+          `${path.basename(winner.file)} (started ${winner.started}), which the index can only ` +
+          "hold one row for; keeping the newer session",
+      });
+    }
+  }
+  // Filename order, not group order, so the rebuild is deterministic.
+  return parsed.filter((entry) => kept.has(entry));
+}
+
+/**
  * Replace every row this repo owns with what `sessionsDir` says, under one `BEGIN IMMEDIATE` so
  * a concurrent hook either sees the old index or the new one but never a half-rebuilt cache.
  *
@@ -98,7 +164,7 @@ export function rebuildIndex(db: IndexDb, repoPath: string, sessionsDir: string)
   const problems: RebuildProblem[] = [];
   const now = new Date().toISOString();
 
-  const parsed: Array<ReturnType<typeof toSessionRow>> = [];
+  const parsed: ParsedSession[] = [];
   for (const name of files ?? []) {
     const file = path.join(sessionsDir, name);
     try {
@@ -111,17 +177,32 @@ export function rebuildIndex(db: IndexDb, repoPath: string, sessionsDir: string)
         problems.push({ file, message: `frontmatter does not match SessionFrontmatter — ${detail}` });
         continue;
       }
-      parsed.push(toSessionRow(result.data, repoPath, now));
+      parsed.push(toSessionRow(result.data, repoPath, now, file));
     } catch (error) {
       problems.push({ file, message: error instanceof Error ? error.message : String(error) });
     }
   }
 
+  const candidates = dedupe(parsed, problems);
+
   const written = db.transaction(() => {
     db.clearRepo(repoPath);
+    let sessions = 0;
     let checkpoints = 0;
-    for (const { session, checkpoints: rows } of parsed) {
-      db.insertSession(session);
+    for (const { file, session, checkpoints: rows } of candidates) {
+      try {
+        db.insertSession(session);
+      } catch (error) {
+        // `dedupe` has already resolved the one duplicate the ledger produces by design; this
+        // catches the rest — two files carrying the same `id`, most likely — without letting one
+        // of them cost the caller every session that follows it in the directory.
+        problems.push({
+          file,
+          message: `could not be indexed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        continue;
+      }
+      sessions += 1;
       for (const row of rows) {
         db.insertCheckpoint({
           session_ulid: session.ulid,
@@ -134,8 +215,8 @@ export function rebuildIndex(db: IndexDb, repoPath: string, sessionsDir: string)
         checkpoints += 1;
       }
     }
-    return checkpoints;
+    return { sessions, checkpoints };
   });
 
-  return { sessions: parsed.length, checkpoints: written, problems };
+  return { ...written, problems };
 }

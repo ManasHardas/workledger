@@ -107,8 +107,11 @@ jobs:
 
       # `better-sqlite3` is a native module esbuild cannot inline, so as of #10 the published
       # package has one runtime dependency and no longer runs with an empty node_modules. This
-      # installs the tarball exactly as `npm i workledger` would — which is also the only tree
-      # that proves the native binding resolves — and runs the installed bin.
+      # installs the tarball exactly as `npm i workledger` would and runs the installed bin: it
+      # proves the declared dependency resolves and that dist/migrations shipped. Installing
+      # *inside* the extracted package is deliberately not attempted — `pnpm pack` rewrites the
+      # `workspace:*` reference to `@workledger/core` into an unresolvable `0.0.1`, and a step
+      # that edits the artifact to get green is worse than no step.
       - name: Install the packed CLI as a consumer would and run it
         run: |
           set -euo pipefail
@@ -117,15 +120,21 @@ jobs:
           test -f /tmp/consumer/node_modules/workledger/dist/migrations/0001_init.sql
           node /tmp/consumer/node_modules/workledger/bin/workledger --version
 
-      # The same tarball, extracted and installed in place. `npm pkg delete devDependencies`
-      # first because `pnpm pack` rewrites the `workspace:*` reference to `@workledger/core` into
-      # a plain `0.0.1` that the registry has never heard of; npm never installs a dependency's
-      # devDependencies, so dropping them is what a consumer's tree already looks like.
-      - name: Run the packed CLI from an extracted tarball
+      # `--version` never touches the database, so the step above proves the file list and the
+      # bin, not the native binding — deleting node_modules/better-sqlite3 still exits 0. This
+      # loads the binding from the consumer tree and runs a statement through it, which is the
+      # part `npm i workledger` has to get right. Replace with `workledger doctor` once slot 10
+      # gives the CLI a command that opens the index itself.
+      - name: Load the native binding from the consumer install
+        working-directory: /tmp/consumer
         run: |
           set -euo pipefail
-          mkdir -p /tmp/extract
-          tar -xzf /tmp/pack/workledger-*.tgz -C /tmp/extract
-          npm pkg delete devDependencies --prefix /tmp/extract/package
-          npm install --omit=dev --prefix /tmp/extract/package
-          node /tmp/extract/package/bin/workledger --version
+          node --input-type=module -e '
+            const { default: Database } = await import("better-sqlite3");
+            const db = new Database(":memory:");
+            db.pragma("journal_mode = WAL");
+            const { one } = db.prepare("SELECT 1 AS one").get();
+            if (one !== 1) throw new Error(`expected 1, got ${one}`);
+            db.close();
+            console.log("better-sqlite3 binding loaded and queried from the consumer install");
+          '

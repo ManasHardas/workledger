@@ -293,8 +293,17 @@ const SESSION_COLUMNS = [
   "updated_at",
 ] as const satisfies ReadonlyArray<keyof SessionRow>;
 
-/** Fill a `NewSession` out to a full row so one INSERT statement covers every column. */
+/**
+ * Fill a `NewSession` out to a full row so one INSERT statement covers every column.
+ *
+ * Explicit `undefined` is dropped rather than spread over the default: the named-parameter bind
+ * rejects `undefined`, so `{ transcript_path: undefined }` would throw instead of taking the DDL
+ * default the caller clearly meant.
+ */
 function completeSession(session: NewSession): SessionRow {
+  const given = Object.fromEntries(
+    Object.entries(session).filter(([, value]) => value !== undefined),
+  ) as NewSession;
   return {
     transcript_path: null,
     private: 0,
@@ -309,7 +318,7 @@ function completeSession(session: NewSession): SessionRow {
     last_attempt_exit: null,
     last_attempt_errors: null,
     updated_at: new Date().toISOString(),
-    ...session,
+    ...given,
   };
 }
 
@@ -362,6 +371,11 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     "SELECT * FROM checkpoints WHERE session_ulid = ? ORDER BY n",
   );
 
+  // `updateSession` sits behind `recordAttempt`, `resetAfterCheckpoint` and `giveUp`, i.e. the
+  // Stop path's 5 s budget, and there are only as many distinct statements as there are patch
+  // shapes — so they are compiled once and reused rather than on every call.
+  const updateStatements = new Map<string, Database.Statement<Bindable[]>>();
+
   function updateSession(
     ulid: string,
     patch: Partial<Omit<SessionRow, "ulid">>,
@@ -377,10 +391,12 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     if (entries.length === 0) return selectByUlid.get(ulid);
 
     const assignments = entries.map(([column]) => `${column} = ?`).join(", ");
-    db.prepare(`UPDATE sessions SET ${assignments} WHERE ulid = ?`).run(
-      ...entries.map(([, value]) => value),
-      ulid,
-    );
+    let statement = updateStatements.get(assignments);
+    if (!statement) {
+      statement = db.prepare<Bindable[]>(`UPDATE sessions SET ${assignments} WHERE ulid = ?`);
+      updateStatements.set(assignments, statement);
+    }
+    statement.run(...entries.map(([, value]) => value), ulid);
     return selectByUlid.get(ulid);
   }
 

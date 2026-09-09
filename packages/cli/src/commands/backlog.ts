@@ -6,16 +6,18 @@
  * it is the command's final P1 behaviour, so no later slot replaces this file.
  */
 
+import { EXIT_USAGE } from "../exit-codes.js";
+
 /** Sub-commands the P2 UI will call. Listed so `--help` documents the reserved surface. */
 export const BACKLOG_ACTIONS = ["accept", "discard", "done", "edit", "assign", "rank"] as const;
 
 /** The message the contract fixes for every P1 invocation. */
 export const BACKLOG_MESSAGE = "not available until P2";
 
-/** @returns the process exit code — always 1 in P1. */
-export function backlogCommand(): number {
+/** @returns the process exit code — always {@link EXIT_USAGE} in P1. */
+export async function backlogCommand(): Promise<number> {
   // stderr, not stdout: the command exits non-zero and a caller piping stdout must not receive
   // this line as data.
   process.stderr.write(`workledger backlog: ${BACKLOG_MESSAGE}\n`);
-  return 1;
+  return EXIT_USAGE;
 }
