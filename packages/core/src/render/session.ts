@@ -39,8 +39,13 @@
  *    `blocked_by` is optional: an absent key renders nothing, and a present-but-empty list
  *    renders `; blocked_by: none` — which is how the §4.1 example's third line reads.
  *
- * Attribute runs are consumed right to left over a closed set of keys, so the prose that precedes
- * them is whatever is left over rather than something matched by a pattern.
+ * Attribute runs are consumed right to left over a closed set of keys, and a key is only consumed
+ * when its value is plausible for that key, so the prose that precedes them is whatever the known
+ * keys did not claim rather than something matched by a pattern.
+ *
+ * A line that matches none of the forms — a hand-typed entry, prose left under a heading — is
+ * neither guessed at nor deleted: it surfaces in {@link ParsedSession.unparsed} and is re-emitted
+ * verbatim at the foot of its own section.
  *
  * This module is pure: no Node built-ins, no clock, no id minting. The caller supplies the stamp
  * and the resolved backlog ids.
@@ -64,6 +69,7 @@ import {
   requiresGoal,
 } from "../schema.js";
 import { parseFrontmatter, stringifyFrontmatter } from "../frontmatter.js";
+import { BACKLOG_ID_PATTERN } from "../ids.js";
 import {
   ATTR_SEPARATOR,
   REF_ARROW,
@@ -147,6 +153,19 @@ export interface NoteLine extends SessionLine {
 /** How a Remaining item relates to the backlog item it names. */
 export type ResolvedRel = "new" | "updates" | "closes";
 
+/** The four body sections, keyed the way {@link ParsedSession} exposes them. */
+export type SessionSectionName = "goal" | "done" | "remaining" | "notes";
+
+/**
+ * A body line that does not match its section's form — a hand-typed entry, or prose someone left
+ * under a heading. It is kept verbatim and re-emitted rather than guessed at, and surfaced here so
+ * the CLI can warn about a file that has drifted from what the renderer writes.
+ */
+export interface UnparsedLine {
+  section: SessionSectionName;
+  line: string;
+}
+
 /** The backlog id a Remaining item resolved to, decided by the CLI before rendering. */
 export interface ResolvedRef {
   id: string;
@@ -167,6 +186,11 @@ export interface ParsedSession {
   done: DoneLine[];
   remaining: RemainingLine[];
   notes: NoteLine[];
+  /**
+   * Lines that did not match their section's form, in the order they were read. They are re-emitted
+   * verbatim at the foot of their own section on the next write, so a hand edit is never deleted.
+   */
+  unparsed: UnparsedLine[];
   /** Body text before the first recognized heading, verbatim. Empty for a CLI-written file. */
   preamble: string;
   /** Blocks under headings this build does not know, verbatim, kept so a write is not lossy. */
@@ -326,8 +350,17 @@ function splitBody(body: string): {
 
 /**
  * Consume a trailing run of `key: value` attributes right to left over `keys` (canonical order).
- * Returns the leftover head and the attributes found. Nothing here looks at the prose: the head
- * is simply whatever the known keys did not claim.
+ * Returns the leftover head and the attributes found.
+ *
+ * Two guards keep prose from being mistaken for evidence, both of which resolve in favour of the
+ * *rightmost* reading — the renderer always puts the attributes last, so the last candidate is the
+ * real one:
+ *
+ * 1. If the matched segment carries the same key again later (`files: fake.ts files: real.ts`,
+ *    which is what rendering a text that itself ends in ` · files: fake.ts` produces), the split
+ *    happens at the rightmost occurrence and everything before it goes back into the head.
+ * 2. The value has to be {@link plausible} for its key. An implausible one is prose, and the
+ *    segment stays in the head.
  */
 function takeAttributes(
   rest: string,
@@ -336,24 +369,44 @@ function takeAttributes(
 ): { head: string; attributes: Map<string, string> } {
   const segments = rest.split(separator);
   const attributes = new Map<string, string>();
+  const heads: string[] = [];
   let si = segments.length - 1;
   let ki = keys.length - 1;
   while (si > 0 && ki >= 0) {
     const key = keys[ki]!;
-    const value = readAttribute(segments[si]!, key);
-    if (value !== undefined) {
-      attributes.set(key, value);
-      si -= 1;
+    const claimed = readAttribute(segments[si]!, key);
+    if (claimed !== undefined) {
+      // The same key again inside the value means the prose ended in a key-shaped run.
+      const marker = ` ${key}: `;
+      const at = claimed.lastIndexOf(marker);
+      const value = at === -1 ? claimed : claimed.slice(at + marker.length);
+      if (plausible(key, value)) {
+        attributes.set(key, value);
+        if (at !== -1) heads.unshift(`${key}: ${claimed.slice(0, at)}`);
+        si -= 1;
+      }
     }
     ki -= 1;
   }
-  return { head: segments.slice(0, si + 1).join(separator), attributes };
+  return { head: [...segments.slice(0, si + 1), ...heads].join(separator), attributes };
 }
 
-/** Is `value` a plausible value for `key`? Used to reject a prose match on the head segment. */
+/**
+ * Is `value` a plausible value for `key`? This is what stops agent prose that happens to be shaped
+ * like an attribute from being read as one — a fabricated repo path reaching P2's provenance panel
+ * is worse than a line that parses as prose.
+ */
 function plausible(key: string, value: string): boolean {
   if (key === "verified") return (VERIFIED as readonly string[]).includes(value);
   if (key === "commit") return COMMIT_PATTERN.test(value);
+  if (key === "files") {
+    const files = splitList(value);
+    // Every member must look like a path, not like more prose carrying another key.
+    return files.length > 0 && files.every((file) => !/\s(?:files|commit|verified):\s/.test(file));
+  }
+  if (key === "blocked_by") {
+    return value === NO_BLOCKERS || splitList(value).every((id) => BACKLOG_ID_PATTERN.test(id));
+  }
   return value.length > 0;
 }
 
@@ -454,9 +507,12 @@ function parseNoteLine(line: string): NoteLine | undefined {
 /**
  * Read a session file into its frontmatter and its body lines.
  *
- * A line that does not match its section's form is skipped rather than guessed at — the brief and
- * the UI want the lines they can bind to a checkpoint, and a hand-edited stray is not one. Nothing
- * is lost on a write: {@link appendCheckpoint} re-emits the raw lines it read.
+ * A line that does not match its section's form is not guessed at — the brief and the UI want the
+ * lines they can bind to a checkpoint, and a hand-edited stray is not one. It is not dropped
+ * either: it comes back in {@link ParsedSession.unparsed} and {@link appendCheckpoint} re-emits it
+ * verbatim at the foot of its own section, the same way an unknown `##` heading survives in
+ * {@link ParsedSession.extra}. The one thing a write does not preserve is blank lines *inside* a
+ * section: those are structural, and the renderer decides them.
  *
  * @throws {RenderError} when the frontmatter is missing, unparseable, or fails `SessionFrontmatter`.
  */
@@ -473,11 +529,16 @@ export function parseSessionText(text: string): ParsedSession {
   const frontmatter = validate(SessionFrontmatterSchema, parsed.data, "the session frontmatter", "invalid-document");
   const sections = splitBody(parsed.body);
 
-  const collect = <T>(lines: string[], parse: (line: string) => T | undefined): T[] => {
+  const unparsed: UnparsedLine[] = [];
+  const collect = <T>(
+    section: SessionSectionName,
+    parse: (line: string) => T | undefined,
+  ): T[] => {
     const out: T[] = [];
-    for (const line of lines) {
+    for (const line of sections[section]) {
       const value = parse(line);
-      if (value !== undefined) out.push(value);
+      if (value === undefined) unparsed.push({ section, line });
+      else out.push(value);
     }
     return out;
   };
@@ -485,10 +546,11 @@ export function parseSessionText(text: string): ParsedSession {
   return {
     frontmatter,
     data: parsed.data,
-    goal: collect(sections.goal, parseGoalLine),
-    done: collect(sections.done, parseDoneLine),
-    remaining: collect(sections.remaining, parseRemainingLine),
-    notes: collect(sections.notes, parseNoteLine),
+    goal: collect("goal", parseGoalLine),
+    done: collect("done", parseDoneLine),
+    remaining: collect("remaining", parseRemainingLine),
+    notes: collect("notes", parseNoteLine),
+    unparsed,
     preamble: sections.preamble,
     extra: sections.extra,
   };
@@ -561,15 +623,28 @@ export function appendCheckpoint(
     ]);
   }
 
+  const strays = (section: SessionSectionName): string[] =>
+    session.unparsed.filter((entry) => entry.section === section).map((entry) => entry.line);
+
+  // A payload goal *replaces* the section — a stale hand-written goal is not kept alongside the
+  // new one. With no goal in the payload the whole section is kept, strays included.
   const goal =
     body.goal === undefined
-      ? session.goal.map((line) => line.raw)
+      ? [...session.goal.map((line) => line.raw), ...strays("goal")]
       : [renderGoalLine(checkpoint.n, body.goal)];
 
   const doneLines = body.done.map((item) => renderDoneLine(checkpoint.n, item));
-  const remainingLines = body.remaining.map((item, index) =>
-    renderRemainingLine(checkpoint.n, item, resolveRef(item, index, resolvedRefs)),
-  );
+
+  // The `new` and `closes` counts fall out of resolving the refs; there is no second pass.
+  let newItems = 0;
+  let closed = 0;
+  const remainingLines = body.remaining.map((item, index) => {
+    const ref = resolveRef(item, index, resolvedRefs);
+    if (ref.rel === "new") newItems += 1;
+    else if (ref.rel === "closes") closed += 1;
+    return renderRemainingLine(checkpoint.n, item, ref);
+  });
+
   const noteLines = body.notes.map((note) => renderNoteLine(checkpoint.n, note));
 
   const data = { ...session.data };
@@ -583,22 +658,18 @@ export function appendCheckpoint(
     renderBody(
       {
         goal,
-        done: [...doneLines, ...session.done.map((line) => line.raw)],
-        remaining: [...remainingLines, ...session.remaining.map((line) => line.raw)],
-        notes: [...session.notes.map((line) => line.raw), ...noteLines],
+        done: [...doneLines, ...session.done.map((line) => line.raw), ...strays("done")],
+        remaining: [
+          ...remainingLines,
+          ...session.remaining.map((line) => line.raw),
+          ...strays("remaining"),
+        ],
+        notes: [...session.notes.map((line) => line.raw), ...noteLines, ...strays("notes")],
       },
       session.preamble,
       session.extra,
     ),
   );
-
-  let newItems = 0;
-  let closed = 0;
-  for (let index = 0; index < body.remaining.length; index += 1) {
-    const rel = resolveRef(body.remaining[index]!, index, resolvedRefs).rel;
-    if (rel === "new") newItems += 1;
-    else if (rel === "closes") closed += 1;
-  }
 
   return {
     text: rendered,

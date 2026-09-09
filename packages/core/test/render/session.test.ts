@@ -624,3 +624,140 @@ describe("packages/core/src/render purity", () => {
     expect(Object.keys(renderSources).length).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("hand-edited lines survive a write (CR blocker)", () => {
+  const STRAY_DONE = "- a bare hand-written done line";
+  const STRAY_NOTES = "trailing junk paragraph";
+
+  /** The cp-1 golden with a stray under `## Done` and a prose paragraph under `## Notes`. */
+  function handEdited(): string {
+    return golden("checkpoint-1.out")
+      .replace("## Done\n", `## Done\n${STRAY_DONE}\n`)
+      .replace(/\n$/, `\n${STRAY_NOTES}\nsecond line of the same paragraph\n`);
+  }
+
+  it("surfaces a line that matches no form instead of guessing at it", () => {
+    const parsed = parseSessionText(handEdited());
+    expect(parsed.unparsed).toEqual([
+      { section: "done", line: STRAY_DONE },
+      { section: "notes", line: STRAY_NOTES },
+      { section: "notes", line: "second line of the same paragraph" },
+    ]);
+    // The lines that do parse are unaffected by the strays around them.
+    expect(parsed.done).toHaveLength(1);
+    expect(parsed.notes).toHaveLength(1);
+  });
+
+  it("re-emits a stray under `## Done` and prose under `## Notes` on the next append", () => {
+    const appended = appendCheckpoint(handEdited(), PAYLOAD_2, CP2, REFS_2).text;
+    expect(appended).toContain(STRAY_DONE);
+    expect(appended).toContain(STRAY_NOTES);
+    expect(appended).toContain("second line of the same paragraph");
+    // At the foot of its own section, not adrift in another one.
+    const doneBlock = appended.split("## Done\n")[1]!.split("\n\n")[0]!;
+    expect(doneBlock.split("\n").at(-1)).toBe(STRAY_DONE);
+    expect(appended.split("## Notes\n")[1]!.trimEnd().split("\n").slice(-2)).toEqual([
+      STRAY_NOTES,
+      "second line of the same paragraph",
+    ]);
+  });
+
+  it("preserves both byte for byte across three appends", () => {
+    let text = handEdited();
+    for (const [n, stamp] of [CP2, CP3, { ...CP3, n: 4 }].entries()) {
+      text = appendCheckpoint(text, PAYLOAD_2, { ...stamp, n: n + 2 }, REFS_2).text;
+      expect(text).toContain(`\n${STRAY_DONE}\n`);
+      expect(text).toContain(`\n${STRAY_NOTES}\nsecond line of the same paragraph\n`);
+    }
+    // Position is stable once the strays have settled at the foot of their sections.
+    const again = appendCheckpoint(text, PAYLOAD_2, { ...CP3, n: 5 }, REFS_2).text;
+    expect(parseSessionText(again).unparsed).toEqual(parseSessionText(text).unparsed);
+    expect(parseSessionText(again).frontmatter.checkpoints).toHaveLength(5);
+  });
+
+  it("a payload goal replaces a hand-written goal rather than keeping both", () => {
+    const withProseGoal = golden("checkpoint-1.out").replace(
+      "## Goal\n",
+      "## Goal\nsomeone typed the goal as bare prose\n",
+    );
+    expect(parseSessionText(withProseGoal).unparsed).toContainEqual({
+      section: "goal",
+      line: "someone typed the goal as bare prose",
+    });
+
+    const replaced = appendCheckpoint(
+      withProseGoal,
+      { goal: "the real goal", done: [], remaining: [], notes: [] } as unknown as CheckpointPayload,
+      CP2,
+    ).text;
+    expect(replaced).not.toContain("bare prose");
+    expect(parseSessionText(replaced).goal).toHaveLength(1);
+
+    // With no goal in the payload the section is kept whole, prose included.
+    const kept = appendCheckpoint(withProseGoal, PAYLOAD_2, CP2, REFS_2).text;
+    expect(kept).toContain("someone typed the goal as bare prose");
+  });
+});
+
+describe("prose shaped like evidence never becomes evidence (CR important 1)", () => {
+  it("does not let ` · files: fake.ts` in the text swallow the real files list", () => {
+    const text = appendCheckpoint(
+      golden("checkpoint-1.in"),
+      {
+        goal: "g",
+        done: [
+          {
+            text: "Did a thing · files: fake.ts",
+            files: ["real.ts", "also.ts"],
+            verified: "tests-passed",
+          },
+        ],
+        remaining: [],
+        notes: [],
+      } as unknown as CheckpointPayload,
+      CP1,
+    ).text;
+
+    const [done] = parseSessionText(text).done;
+    expect(done?.files).toEqual(["real.ts", "also.ts"]);
+    expect(done?.text).toBe("Did a thing · files: fake.ts");
+    expect(done?.verified).toBe("tests-passed");
+  });
+
+  it("keeps an implausible commit or verified value as prose", () => {
+    const parsed = parseSessionText(
+      golden("checkpoint-1.out").replace(
+        "## Done\n",
+        "## Done\n- [cp 1] Talked about it · commit: not-a-hash · verified: tests-passed\n",
+      ),
+    );
+    const [done] = parsed.done;
+    expect(done?.commit).toBeUndefined();
+    expect(done?.text).toBe("Talked about it · commit: not-a-hash");
+    expect(done?.verified).toBe("tests-passed");
+  });
+
+  it("keeps a prose `blocked_by` out of the parse rather than inventing backlog ids", () => {
+    const parsed = parseSessionText(
+      golden("checkpoint-1.out").replace(
+        "## Remaining\n",
+        "## Remaining\n- [cp 1] → WL-01J9AB00000000000000000000 (new) t; why: w; blocked_by: waiting on ops\n",
+      ),
+    );
+    // `waiting on ops` is not a list of backlog ids, so the suffix run is not an attribute run at
+    // all: the line degrades to prose whole. Conservative on purpose — a wrong `blocked_by` would
+    // show up in P2 as a dependency that does not exist.
+    const [first] = parsed.remaining;
+    expect(first?.blockedBy).toBeUndefined();
+    expect(first?.why).toBeUndefined();
+    expect(first?.ref).toBe("WL-01J9AB00000000000000000000");
+    expect(first?.text).toBe("t; why: w; blocked_by: waiting on ops");
+  });
+
+  it("recovers a hand-edited `verified` that carries trailing spaces", () => {
+    const parsed = parseSessionText(
+      golden("checkpoint-1.out").replace("verified: not-verified", "verified: not-verified   "),
+    );
+    expect(parsed.done[0]?.verified).toBe("not-verified");
+  });
+});

@@ -40,8 +40,6 @@ export class RenderError extends Error {
   }
 }
 
-/** The `- [cp <n>] ` prefix every Goal, Done, and Remaining line carries (`x-body.line-prefix`). */
-export const LINE_PREFIX = "- ";
 /** Separator between the evidence attributes of a Done line: U+00B7 with a space either side. */
 export const ATTR_SEPARATOR = " · ";
 /** The arrow that opens a Remaining line's backlog reference (`x-body.remaining-ref-form`). */
@@ -76,10 +74,13 @@ export function readCpPrefix(line: string): { n: number; rest: string } | undefi
  * A `key: value` pair from an attribute run, or `undefined` when `segment` does not start with
  * `<key>: `. Used to walk a Done or Remaining line right to left over known keys, so no part of
  * the parse ever has to guess where prose ends.
+ *
+ * The value is right-trimmed so a hand-edited `verified: tests-passed   ` is still recognized as
+ * the enum member it obviously is rather than dropped from the parse over trailing spaces.
  */
 export function readAttribute(segment: string, key: string): string | undefined {
   const marker = `${key}: `;
-  return segment.startsWith(marker) ? segment.slice(marker.length) : undefined;
+  return segment.startsWith(marker) ? segment.slice(marker.length).trimEnd() : undefined;
 }
 
 /** Split a comma-joined list back into its members, dropping empties. */

@@ -10,6 +10,9 @@ export * from "./tokens.js";
 export * from "./brief.js";
 export * from "./secretscan-patterns.js";
 export * from "./secretscan.js";
-export * from "./render/common.js";
+// `render/common.js` holds the parse internals (`readAttribute`, `splitList`, `validate`, …); only
+// the error type belongs in the published surface, so it is re-exported by name rather than with
+// `export *` — the `publish dry-run` job pins whatever ships here.
+export { RenderError, type RenderErrorCode } from "./render/common.js";
 export * from "./render/session.js";
 export * from "./render/backlog.js";
