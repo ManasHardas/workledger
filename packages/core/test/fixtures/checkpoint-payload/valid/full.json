@@ -1,0 +1,52 @@
+{
+  "goal": "Ship the zod contracts for P1 and the byte-identical JSON Schema export.",
+  "done": [
+    {
+      "text": "Wrote the zod schemas for CheckpointPayload, SessionFrontmatter and BacklogItem.",
+      "files": ["packages/core/src/schema.ts", "packages/core/src/index.ts"],
+      "commit": "0447dab",
+      "verified": "tests-passed"
+    },
+    {
+      "text": "Added the JSON Schema exporter.",
+      "commit": "3e718739a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "verified": "not-verified"
+    },
+    {
+      "text": "Wired the parity fixtures.",
+      "files": ["packages/core/test/fixtures/checkpoint-payload/valid/full.json"],
+      "verified": "tests-failed"
+    }
+  ],
+  "remaining": [
+    {
+      "text": "Add the frontmatter round trip.",
+      "why": "Slot 3 depends on a parser that preserves unknown keys.",
+      "new": true
+    },
+    {
+      "text": "Close out the exporter parity work.",
+      "why": "The three frozen artifacts now regenerate byte for byte.",
+      "ref": "WL-01JQZX5N7K8M9P0QRSTVWXYZAB",
+      "rel": "closes",
+      "blocked_by": ["WL-01JQZX5N7K8M9P0QRSTVWXYZAC"]
+    },
+    {
+      "text": "Extend the exporter to P2 contracts.",
+      "why": "Keeps one generator for every phase.",
+      "ref": "WL-01JQZX5N7K8M9P0QRSTVWXYZAD",
+      "rel": "updates"
+    }
+  ],
+  "notes": [
+    { "type": "discovery", "text": "zod 4 ships z.toJSONSchema, so no extra dependency is needed." },
+    {
+      "type": "decision",
+      "text": "The exporter composes zod output with hand-maintained fragments.",
+      "by": "agent",
+      "reason": "zod cannot emit $id, x-limits or the cross-field anyOf/oneOf blocks."
+    },
+    { "type": "blocker", "text": "None." },
+    { "type": "question", "text": "Should Config get a frozen JSON Schema in P2?" }
+  ]
+}

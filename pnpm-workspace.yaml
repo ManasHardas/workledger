@@ -1,3 +1,7 @@
 packages:
   - "packages/*"
   - "apps/*"
+# tsx pulls esbuild, whose postinstall is not needed: the platform binary ships as an
+# optional dependency. Declared explicitly so `pnpm install` stays warning-free.
+allowBuilds:
+  esbuild: false
