@@ -4,3 +4,5 @@
  * `packages/cli` and `packages/server`.
  */
 export * from "./schema.js";
+export * from "./ids.js";
+export * from "./frontmatter.js";

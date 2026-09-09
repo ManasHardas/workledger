@@ -328,14 +328,21 @@ describe("packages/core purity", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("declares zod as its only runtime import", () => {
+  /**
+   * The allowlist of third-party runtime imports. Both entries are dependency-free packages
+   * whose browser builds import nothing from Node: `zod` for validation, `yaml` for frontmatter.
+   * Adding a row here is a deliberate act — check the candidate's own `require`/`import` graph
+   * for Node built-ins first, the way `gray-matter` (which `require`s `fs`) and `ulid` (whose
+   * `node` export condition imports `node:crypto`) were rejected.
+   */
+  it("imports nothing outside the pure-dependency allowlist", () => {
     const specifiers = new Set<string>();
     for (const source of Object.values(coreSources)) {
       for (const [, specifier] of source.matchAll(/from\s+"([^"]+)"/g)) {
         if (!specifier!.startsWith(".")) specifiers.add(specifier!);
       }
     }
-    expect([...specifiers]).toEqual(["zod"]);
+    expect([...specifiers].sort()).toEqual(["yaml", "zod"]);
   });
 });
 
