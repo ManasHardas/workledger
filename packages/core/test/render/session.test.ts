@@ -14,6 +14,8 @@ import {
   renderNoteLine,
 } from "../../src/index.js";
 
+import { PURITY_IMPORT_RE } from "../purity.js";
+
 /**
  * Golden files are loaded through `import.meta.glob` rather than `node:fs`: `packages/core` is
  * pure TypeScript by contract and the eslint fence covers `packages/core/**` — tests included.
@@ -611,7 +613,7 @@ describe("packages/core/src/render purity", () => {
   it("imports no Node built-ins", () => {
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(renderSources)) {
-      for (const [, specifier] of source.matchAll(/from\s+"([^"]+)"/g)) {
+      for (const [, specifier] of source.matchAll(PURITY_IMPORT_RE)) {
         if (
           specifier!.startsWith("node:") ||
           ["fs", "path", "os", "crypto", "url", "child_process"].includes(specifier!)

@@ -11,6 +11,31 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "default": "./dist/schema.js"
+    },
+    "./ids": {
+      "types": "./dist/ids.d.ts",
+      "import": "./dist/ids.js",
+      "default": "./dist/ids.js"
+    },
+    "./frontmatter": {
+      "types": "./dist/frontmatter.d.ts",
+      "import": "./dist/frontmatter.js",
+      "default": "./dist/frontmatter.js"
+    },
+    "./brief": {
+      "types": "./dist/brief.d.ts",
+      "import": "./dist/brief.js",
+      "default": "./dist/brief.js"
+    },
+    "./render/*": {
+      "types": "./dist/render/*.d.ts",
+      "import": "./dist/render/*.js",
+      "default": "./dist/render/*.js"
+    },
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",

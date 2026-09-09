@@ -10,8 +10,6 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, wri
 import path from "node:path";
 import process from "node:process";
 
-import { parseItem } from "@workledger/core";
-
 /** The ledger directory inside an enabled repo. */
 export const LEDGER_DIR = ".workledger";
 
@@ -147,7 +145,7 @@ export function fileSize(file: string): number | undefined {
  * to tell an agent which ids it may use, and one corrupt file must not make every checkpoint in
  * the repo fail. `doctor` is where a corrupt ledger file is reported.
  */
-export function listOpenBacklogIds(root: string): string[] {
+export async function listOpenBacklogIds(root: string): Promise<string[]> {
   const dir = ledgerPaths(root).backlog;
   let entries: string[];
   try {
@@ -155,6 +153,12 @@ export function listOpenBacklogIds(root: string): string[] {
   } catch {
     return [];
   }
+  // Imported here rather than at the top of the file: `parseItem` reaches `yaml` through
+  // core's frontmatter module, ~29 ms of module-init the `hook Stop` allow path cannot afford
+  // (plans/feature-p1-data-flow.md §6). Only the callers that actually read the backlog pay it,
+  // and the deep specifier keeps the barrel's zod schemas out of it entirely.
+  const { parseItem } = await import("@workledger/core/render/backlog");
+
   const ids: string[] = [];
   for (const entry of entries) {
     if (!entry.endsWith(".md")) continue;

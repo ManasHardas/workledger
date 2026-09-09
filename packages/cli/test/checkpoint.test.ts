@@ -224,7 +224,7 @@ describe("workledger checkpoint", () => {
     const item = readTextFile(path.join(fixture.backlogDir, `${minted}.md`));
     expect(item).toBeDefined();
     expect(item).toContain("status: proposed");
-    expect(listOpenBacklogIds(fixture.root)).toEqual([minted]);
+    expect(await listOpenBacklogIds(fixture.root)).toEqual([minted]);
 
     const db = openIndex({ home: fixture.home });
     try {
@@ -303,7 +303,7 @@ describe("workledger checkpoint", () => {
     expect(readTextFile(path.join(fixture.backlogDir, `${updated}.md`))).toContain(
       "- [cp 1] Still going.",
     );
-    expect(listOpenBacklogIds(fixture.root)).toEqual([updated]);
+    expect(await listOpenBacklogIds(fixture.root)).toEqual([updated]);
   });
 
   it("an unknown WL ref exits 1 and lists the open ids on stderr", async () => {
@@ -625,14 +625,14 @@ describe("ledger-fs", () => {
     expect(statSync(file).isFile()).toBe(true);
   });
 
-  it("skips backlog files that do not parse and returns ids sorted", () => {
+  it("skips backlog files that do not parse and returns ids sorted", async () => {
     const fixture = setup();
     seedBacklogItem(fixture, backlogIdOf(42));
     seedBacklogItem(fixture, backlogIdOf(41));
     writeFileSync(path.join(fixture.backlogDir, "broken.md"), "not a ledger file\n", "utf8");
     writeFileSync(path.join(fixture.backlogDir, "ignored.txt"), "---\n---\n", "utf8");
 
-    expect(listOpenBacklogIds(fixture.root)).toEqual([backlogIdOf(41), backlogIdOf(42)]);
+    expect(await listOpenBacklogIds(fixture.root)).toEqual([backlogIdOf(41), backlogIdOf(42)]);
   });
 
   it("returns undefined for a file that is not there", () => {
