@@ -1,0 +1,37 @@
+{
+  "name": "@workledger/api-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The LedgerSource interface and LocalServerSource \u2014 the UI's only data dependency. Isomorphic: fetch and EventSource, no Node built-ins.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@workledger/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.19.5",
+    "@types/node": "^24.13.3",
+    "@workledger/server": "workspace:*",
+    "hono": "^4.10.3"
+  }
+}
