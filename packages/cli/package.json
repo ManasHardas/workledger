@@ -1,0 +1,35 @@
+{
+  "name": "workledger",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Local observer for coding-agent sessions: checkpoint digests, ledger, backlog.",
+  "license": "MIT",
+  "bin": {
+    "workledger": "./bin/workledger"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "import": "./dist/main.js",
+      "default": "./dist/main.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/main.d.ts",
+  "files": ["dist", "bin"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@workledger/core": "workspace:*",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1"
+  }
+}

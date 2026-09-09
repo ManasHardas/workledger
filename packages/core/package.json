@@ -1,0 +1,29 @@
+{
+  "name": "@workledger/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Pure-TypeScript domain for workledger: schema, validation, rendering, brief, secret scan.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.5.4"
+  }
+}
