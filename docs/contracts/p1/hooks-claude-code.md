@@ -12,13 +12,13 @@ Merged additively into `<repo>/.claude/settings.json`; existing hooks are preser
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "workledger hook SessionStart", "timeout": 10 } ] }
+      { "hooks": [ { "type": "command", "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook SessionStart; fi", "timeout": 10 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "workledger hook Stop", "timeout": 10 } ] }
+      { "hooks": [ { "type": "command", "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook Stop; fi", "timeout": 10 } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "workledger hook SessionEnd", "timeout": 10 } ] }
+      { "hooks": [ { "type": "command", "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook SessionEnd; fi", "timeout": 10 } ] }
     ]
   }
 }
@@ -28,9 +28,11 @@ Merged additively into `<repo>/.claude/settings.json`; existing hooks are preser
 - `SessionEnd` hooks "share a 1.5-second budget; if you set a longer per-hook timeout, Claude Code
   raises the budget to match, up to 60 seconds." The 10 s timeout raises it; the hook still targets
   well under 1 s.
-- The command is resolved on `PATH`. If `workledger` is not installed the shell returns 127; Claude
-  Code treats non-2 non-zero exits as a failed hook and proceeds. `init` writes the command as
-  `command -v workledger >/dev/null && workledger hook <Event>` so an absent binary is a clean 0.
+- The command is resolved on `PATH`. `init` writes each command as
+  `if command -v workledger >/dev/null 2>&1; then exec workledger hook <Event>; fi`
+  so an absent binary exits 0 with no output (an `if` with a false condition and no `else` exits
+  0), while `exec` preserves the CLI's exit code, including the Stop block's 2. The plain
+  `A && B` form is wrong: it exits 1 when the binary is absent.
 
 ## Inputs consumed (stdin JSON)
 

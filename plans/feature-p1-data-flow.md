@@ -37,19 +37,29 @@ Stop  (every assistant turn)
   if blocks_since_checkpoint == 0:
       if bytes_since < B and minutes_since < M and turns_since < T → allow
       else → BLOCK #1: exit 2; stderr = instruction(ulid, open ids); blocks_since = 1;
-             last_block_turn = turns_total; trigger = first crossed of bytes, minutes, turns
+             last_block_turn = turns_total; last_block_trigger = first crossed of bytes, minutes, turns
   elif blocks_since_checkpoint == 1:
-      if last_attempt_at is null or last_attempt_at < block time  → allow (agent ignored; keep counting)
-      elif last_attempt_exit != 0 → BLOCK #2: same instruction + "previous attempt failed:" + errors;
-                                    blocks_since = 2
-  else (blocks_since >= 2)         → allow; frontmatter checkpoint_failures += 1; blocks_since = 0
+      if last_attempt_at is null or last_attempt_at < block time  → allow (agent ignored; keep counting;
+                                    blocks_since stays 1 so no further block until a checkpoint lands
+                                    or the counters are reset by the give-up rule below)
+      elif last_attempt_exit != 0 → BLOCK #2: same instruction + "previous attempt failed:" +
+                                    last_attempt_errors; blocks_since = 2
+      else                        → allow (attempt succeeded; `checkpoint` already reset blocks_since to 0)
+  else (blocks_since >= 2)         → allow; frontmatter checkpoint_failures += 1; give up for now:
+                                    blocks_since = 0, turns_since = 0, last_offset = size,
+                                    last_checkpoint_at = now (thresholds must re-accumulate before
+                                    another block, so a block is never immediately repeated)
+  ignored-block give-up: if blocks_since == 1 and turns_total - last_block_turn >= T
+                                  → same give-up reset without incrementing checkpoint_failures
+                                    (the agent ignored the block for a full turn threshold; start over)
 
 checkpoint (agent-invoked)
-  on validation/secret failure: index.last_attempt_at = now, last_attempt_exit = code, errors cached
+  on validation/secret failure: index.last_attempt_at = now, last_attempt_exit = code,
+                                last_attempt_errors = the stderr text (field paths only, never values)
   on success: n = count(checkpoints)+1; offset = size(transcript); turns = turns_total (cumulative)
   render + write; index: insert checkpoints(n); turns_since = 0; blocks_since = 0;
   last_offset = offset; last_checkpoint_at = now; last_attempt_exit = 0
-  trigger = pending block's trigger if one is open, else `manual`
+  trigger = index.last_block_trigger if blocks_since > 0, else `manual`
 
 SessionEnd(reason)
   ended = now; end_reason = map(reason); status = ended

@@ -43,7 +43,7 @@ Slots 2–6 are `packages/core` and disjoint by file; slots 7–10 are `packages
 **Anchor estimate:** bootstrap 40–80k slot total (no prior; record actuals in `velocity.json`).
 
 **Files:**
-- Create: root `package.json` (private, `packageManager: pnpm@10`), `pnpm-workspace.yaml` (`packages/*`, `apps/*`), `tsconfig.base.json` (strict, `moduleResolution: bundler`, ES2022), `vitest.workspace.ts`, `eslint.config.js`
+- Create: root `package.json` (private, `packageManager: pnpm@11` (the installed major; bump when the machine does)), `pnpm-workspace.yaml` (`packages/*`, `apps/*`), `tsconfig.base.json` (strict, `moduleResolution: bundler`, ES2022), `vitest.workspace.ts`, `eslint.config.js`
 - Create: `packages/core/package.json` (`type: module`, `exports`, no runtime deps beyond zod), `packages/core/src/index.ts`
 - Create: `packages/cli/package.json` (`bin: { workledger: ./bin/workledger }`, deps: core, better-sqlite3, gray-matter, ulid, commander), `packages/cli/bin/workledger` (node shebang → `dist/main.js`), `packages/cli/src/main.ts` (commander program with `--version`)
 - Test: `packages/core/test/smoke.test.ts`, `packages/cli/test/smoke.test.ts`

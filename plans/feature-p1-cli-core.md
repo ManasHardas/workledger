@@ -32,10 +32,12 @@ Total estimate: **3–4 sessions** (bootstrap, no priors).
 Five artifacts in one PR (orchestrator self-merges). This project has no HTTP API and no database
 migration in P1, so the template's artifacts map as follows:
 
-1. **Payload and file contracts** (`packages/core/src/schema.ts` as zod, exported to
-   `docs/contracts/p1/checkpoint-payload.schema.json`, `session-frontmatter.schema.json`,
-   `backlog-item.schema.json`): the shapes in §Data model below. The JSON Schema files are the
-   generated artifact build agents read; the zod source is the truth.
+1. **Payload and file contracts** (`docs/contracts/p1/checkpoint-payload.schema.json`,
+   `session-frontmatter.schema.json`, `backlog-item.schema.json`): the shapes in §Data model
+   below. The JSON Schema files are the frozen contract. `packages/core/src/schema.ts` (zod, slot
+   2) must accept and reject the same inputs (parity fixtures), and its exporter, which may merge
+   hand-maintained fragments for cross-field constraints that zod cannot emit, must reproduce the
+   files byte for byte; a diff is a contract amendment, never an edit to the frozen files.
 2. **CLI contract** (`docs/contracts/p1/cli.md`): every P1 command with arguments, stdin/stdout/
    stderr, exit codes, and timing budget (§API surface below).
 3. **Hook contract** (`docs/contracts/p1/hooks-claude-code.md`): the input fields consumed and the
@@ -95,13 +97,14 @@ branch: main
 author: { name: "…", email: "…", dome_user: null }
 started: 2026-09-09T14:02:11Z
 ended: null
-end_reason: null                   # clean | clear | logout | crashed | unknown
+end_reason: null                   # clean | clear | resume | logout | crashed | unknown
 status: open                       # open | ended | crashed | repaired
 private: false
 source: live                       # live | backfill
 model: null
-checkpoints: []                    # { n, at, turns, transcript_offset, trigger }
+checkpoints: []                    # { n, at, turns (cumulative), transcript_offset, trigger }
 needs_repair: false
+checkpoint_failures: 0
 ```
 
 ```yaml
@@ -142,8 +145,8 @@ CREATE TABLE sessions (
   last_offset INTEGER NOT NULL DEFAULT 0,
   turns_total INTEGER NOT NULL DEFAULT 0, turns_since_checkpoint INTEGER NOT NULL DEFAULT 0,
   last_checkpoint_at TEXT,
-  last_block_turn INTEGER, blocks_since_checkpoint INTEGER NOT NULL DEFAULT 0,
-  last_attempt_at TEXT, last_attempt_exit INTEGER,
+  last_block_turn INTEGER, last_block_trigger TEXT, blocks_since_checkpoint INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT, last_attempt_exit INTEGER, last_attempt_errors TEXT,
   updated_at TEXT NOT NULL,
   UNIQUE (harness, harness_session_id)
 );
@@ -170,14 +173,14 @@ workledger init [--repo <path>] [--yes]
   # detect harnesses + git identity; list candidate repos from session stores;
   # create .workledger/{config.yaml,README.md,sessions/,backlog/}; merge hooks into
   # .claude/settings.json (project-level) showing a diff and asking unless --yes
-  exit: 0 ok · 2 nothing to do · 1 error
+  exit: 0 ok (including "already enabled") · 1 error
 
 workledger hook <SessionStart|Stop|SessionEnd>      # stdin: Claude Code hook JSON
   stdout: hook JSON per docs/contracts/p1/hooks-claude-code.md (or nothing)
   exit: always 0 (fail open); deny is expressed in JSON, not exit code
   budget: < 100 ms p95 on the allow path
 
-workledger checkpoint [--session <ulid>]           # stdin: CheckpointPayload JSON
+workledger checkpoint [--session <ulid>] [--dry-run]   # stdin: CheckpointPayload JSON
   # session resolved from --session (the block instruction and the brief both name the ulid),
   # else WORKLEDGER_SESSION, else the single open session for this repo in the index;
   # two or more open sessions is a usage error that lists them
@@ -191,6 +194,9 @@ workledger brief [--repo <path>] [--max-tokens N]
 workledger doctor
   stdout: per harness: binary found, store readable, hook files present and current; CLI version
   exit: 0 all good · 2 warnings · 1 broken
+
+workledger backlog <accept|discard|done|edit|assign|rank> …
+  reserved; P1 registers the command and exits 1 with "not available until P2"
 ```
 
 Hook output shapes (frozen at Wave 0 from the live docs, 2026-09-09; full text in
@@ -238,7 +244,8 @@ Stop (every assistant turn)                       turns_total++ ; turns_since++
   blocks_since_checkpoint == 1:
      no `checkpoint` attempt since block           → allow; agent ignored it; counters keep running
      attempt failed (last_attempt_exit ≠ 0)        → BLOCK #2 with the validation errors appended
-  blocks_since_checkpoint ≥ 2                      → allow; frontmatter checkpoint_failures++
+  blocks_since_checkpoint ≥ 2                      → allow; checkpoint_failures++; reset counters as if
+                                                      a checkpoint landed (no immediate re-block)
 `workledger checkpoint` success                    → stamp n; turns_since = 0; blocks = 0; offset = size
 
 SessionEnd(reason) → ended, end_reason, status ended; needs_repair = turns_since > stale_turns

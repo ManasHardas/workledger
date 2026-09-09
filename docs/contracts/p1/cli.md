@@ -13,8 +13,9 @@ Global environment:
 | `WORKLEDGER_PRIVATE=1` | `SessionStart` marks the session private: boundary record only, no brief, Stop never blocks. |
 | `WORKLEDGER_SESSION` | Session ulid for `checkpoint` when the index lookup is ambiguous. |
 
-Exit codes are shared: `0` ok · `1` validation or usage error · `2` reserved for hook block ·
-`3` secret detected · `4` not an enabled repo.
+Exit codes: `0` ok · `1` validation or usage error · `3` secret detected · `4` not an enabled
+repo. Exit `2` has two meanings by command: from `hook Stop` it is the block; from `doctor` it is
+"warnings". No other command exits 2.
 
 ## `workledger init [--repo <path>] [--yes] [--no-backfill]`
 
@@ -50,6 +51,9 @@ Steps, in order, each failing fast:
    `<json-path>: <message>`; an unknown `ref` prints `open backlog ids: WL-…, WL-…`.
 3. Secret scan the payload. On a finding: stderr `secret detected at <json-path> (<pattern>)`,
    exit `3`, nothing written. The matched text is never printed.
+   On any failure in steps 2–3 the index records `last_attempt_at`, `last_attempt_exit`, and
+   `last_attempt_errors` (the stderr text, which never contains values) so the Stop hook can
+   decide between a retry block and giving up (data-flow §2).
 4. Compute the stamp: `n = last n + 1`, `at = now (UTC, ISO 8601)`, `turns` and
    `transcript_offset` from the index and the transcript file's current size, `trigger` from the
    index (`turns`, `bytes`, `minutes`) or `manual` when the command was run without a pending block.
