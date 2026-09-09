@@ -7,29 +7,18 @@
   "bin": {
     "workledger": "./bin/workledger"
   },
-  "exports": {
-    ".": {
-      "types": "./dist/main.d.ts",
-      "import": "./dist/main.js",
-      "default": "./dist/main.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "types": "./dist/main.d.ts",
-  "files": ["dist", "bin"],
+  "files": ["dist/main.js", "bin"],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node ../../scripts/bundle-cli.mjs",
     "clean": "tsc -b --clean",
     "test": "vitest run"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@types/node": "^22",
     "@workledger/core": "workspace:*",
     "commander": "^15.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22"
   }
 }

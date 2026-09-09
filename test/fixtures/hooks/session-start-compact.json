@@ -1,0 +1,9 @@
+{
+  "session_id": "5be4b928-0e64-4bb2-8a9a-d006fce8b9ce",
+  "transcript_path": "/home/user/.claude/projects/-home-user-Projects/5be4b928-0e64-4bb2-8a9a-d006fce8b9ce.jsonl",
+  "cwd": "/home/user/Projects/workledger",
+  "hook_event_name": "SessionStart",
+  "source": "compact",
+  "model": "claude-opus-4-6-20260401",
+  "permission_mode": "default"
+}

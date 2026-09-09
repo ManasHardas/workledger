@@ -14,6 +14,21 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Repo tooling under scripts/ is plain Node ESM, not TypeScript, so `no-undef` is live for it
+    // (typescript-eslint switches that rule off for .ts). Declaring the handful of Node globals
+    // these scripts actually use keeps the rule useful instead of turning it off wholesale.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      sourceType: "module",
+      globals: {
+        Buffer: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        process: "readonly",
+      },
+    },
+  },
+  {
     files: ["packages/core/**/*.ts"],
     rules: {
       "no-restricted-imports": [

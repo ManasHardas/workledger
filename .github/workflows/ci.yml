@@ -1,0 +1,114 @@
+name: CI
+
+# Clause #9 rule 1 — docs, plans and orchestrator files never change build correctness, and the
+# session-close ritual touches them on every session. Both triggers carry the same ignore list.
+on:
+  pull_request:
+    # `ready_for_review` is not one of the default activity types. Without it the draft gate on
+    # `publish-dry-run` (Clause #9 rule 3) is a one-way door: the job skips while the PR is a
+    # draft and never gets a chance to run when `gh pr ready` flips it.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'plans/**'
+      - '**/*.md'
+      - '.orchestrator/**'
+      - 'docs/**'
+      - 'LICENSE'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'plans/**'
+      - '**/*.md'
+      - '.orchestrator/**'
+      - 'docs/**'
+      - 'LICENSE'
+
+# Clause #9 rule 2 — a new push on the same ref makes the previous run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # No Docker anywhere in this project (CLAUDE.md): jobs run directly on the GitHub-hosted runner
+  # with actions/setup-node. No container:, no services:.
+  NODE_VERSION: '22'
+
+jobs:
+  # Clause #9 rules 3+4 — cheap (well under 3 min), so no draft gate, and it doubles as the
+  # main-push canary that catches a direct-to-main commit.
+  verify:
+    name: lint · build · test · coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # scripts/coverage-gate.mjs diffs against the base branch; a shallow clone has no
+          # merge base to diff against.
+          fetch-depth: 0
+
+      # Before setup-node, so `cache: pnpm` can find the pnpm binary. No `version:` input —
+      # the action reads `packageManager` from package.json (pnpm@11.1.3).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm -r build
+
+      - run: pnpm test:coverage
+
+      - name: Changed-lines coverage gate (70%)
+        env:
+          # On a pull request, measure against the PR's own base branch; on a main-push there is
+          # no base branch and the script degrades to a report (GITHUB_EVENT_NAME=push).
+          COVERAGE_BASE_REF: >-
+            ${{ github.event_name == 'pull_request'
+                && format('origin/{0}', github.event.pull_request.base.ref)
+                || 'origin/main' }}
+        run: node scripts/coverage-gate.mjs
+
+      - name: Fixture secret scan (zero findings)
+        run: node scripts/check-fixtures.mjs
+
+  # Clause #9 rule 3 — draft gate. Clause #9 rule 4 — pull_request only; the squash-merge commit
+  # on main has the same diff the PR already packed, so this does not re-run there.
+  publish-dry-run:
+    name: publish dry-run (pack file list)
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      # Packs `workledger` and asserts the tarball is exactly bin/ + dist/ + package.json
+      # (+ README.md / LICENSE when present) and that the package declares no runtime deps.
+      - name: Pack and assert the published file list
+        run: node scripts/check-pack.mjs --dest /tmp/pack
+
+      # The published bin must run with nothing installed beside it — proof that bundling core
+      # into dist/main.js actually removed the `workspace:*` dependency rather than hiding it.
+      - name: Run the packed CLI with no node_modules
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/pack/workledger-*.tgz -C /tmp/pack
+          test ! -e /tmp/pack/package/node_modules
+          node /tmp/pack/package/bin/workledger --version
