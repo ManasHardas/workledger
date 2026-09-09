@@ -455,6 +455,21 @@
       "files_touched": 20,
       "wall_clock_min": 45,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 22,
+      "issue": 7,
+      "agent_role": "backend",
+      "class": "service-module first-of-class (golden)",
+      "tokens_implementer": 417943,
+      "tokens_reviewers": 256608,
+      "review_iterations": 2,
+      "files_touched": 16,
+      "wall_clock_min": 50,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }

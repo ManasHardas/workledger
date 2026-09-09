@@ -55,7 +55,12 @@
   "x-body": {
     "sections": ["## Goal", "## Done", "## Remaining", "## Notes"],
     "line-prefix": "- [cp <n>] ",
-    "remaining-ref-form": "→ WL-<ulid> (new|updates|closes)",
-    "note-form": "- <type> [cp <n>]<' by <by>' for decisions>: <text><'; reason: <reason>' for decisions>"
+    "goal-form": "- [cp <n>] <goal>; the Goal section holds exactly one line, replaced (not appended) whenever a payload carries a goal",
+    "section-order": "Done and Remaining are newest-checkpoint-first; Notes is chronological; payload order is kept within one checkpoint",
+    "done-form": "- [cp <n>] <text> files: <a>, <b> · commit: <hash> · verified: <v>; attributes in that order joined by ' · ' (U+00B7 with a space either side); files and commit omitted when absent; verified always present",
+    "remaining-form": "- [cp <n>] → WL-<ulid> (new|updates|closes) <text>; why: <why>; then '; blocked_by: <ids joined by \", \">' only when the payload carries the key, 'none' when present and empty",
+    "note-form": "- <type> [cp <n>]<' by <by>' for decisions>: <text><'; reason: <reason>' for decisions>",
+    "unparsed-lines": "a line matching no form is preserved verbatim at the foot of its own section and exposed by the parser as unparsed[]; blank lines inside a section are structural and not preserved",
+    "amended": "2026-09-09 amendment 2: goal-form, section-order, done-form, remaining-form, unparsed-lines frozen from PR #22 golden files"
   }
 }

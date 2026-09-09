@@ -126,22 +126,29 @@ directly; the UI edits through the CLI):
 
 ```markdown
 ## Goal
-<one or two lines, in the human's terms; revised if it changes>
+- [cp 1] Make large uploads reliable without changing the synchronous API.
 
 ## Done
 - [cp 2] Added retry to the upload client. files: src/upload.ts, src/upload.test.ts · commit: a1b2c3d · verified: tests-passed
 - [cp 1] Reproduced the timeout with a 40 MB fixture. files: fixtures/big.bin · verified: not-verified
 
 ## Remaining
-- [cp 2] → WL-01J9AB (new) Add a size limit before upload; why: server rejects >50 MB with no message
-- [cp 2] → WL-01J8ZZ (closes) Retry on 502 was the open item from Monday
-- [cp 1] → WL-01J9AC (new) Ask ops whether the 50 MB limit is configurable; blocked_by: none
+- [cp 2] → WL-01J9ABCDEFGHJKMNPQRSTVWXYZ (new) Add a size limit before upload; why: server rejects >50 MB with no message
+- [cp 2] → WL-01J8ZZCDEFGHJKMNPQRSTVWXYZ (closes) Retry on 502 was the open item from Monday; why: the retry now covers it
+- [cp 1] → WL-01J9ACCDEFGHJKMNPQRSTVWXYZ (new) Ask ops whether the 50 MB limit is configurable; why: the limit may be policy, not code; blocked_by: none
 
 ## Notes
 - discovery [cp 1]: The upload service strips Content-Length on redirect; retries must re-stream.
 - decision [cp 2] by human: Keep uploads synchronous for now; reason: async path needs the queue work first.
 - blocker [cp 2]: Staging has no 50 MB fixture; cannot verify the limit path.
 - question [cp 2]: Should partial uploads be resumable, or is restart acceptable?
+```
+
+(Example corrected 2026-09-09, amendment 2: full 26-character ULIDs, the Goal line carries
+`[cp n]`, every Remaining line carries `; why:`. Done and Remaining are newest-first, Notes
+chronological. The frozen forms live in `docs/contracts/p1/session-frontmatter.schema.json`
+`x-body`.)
+
 ```
 
 Every line carries `[cp n]`, which binds it to a checkpoint and therefore to a transcript span

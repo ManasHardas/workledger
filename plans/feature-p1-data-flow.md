@@ -58,7 +58,9 @@ checkpoint (agent-invoked)
                                 last_attempt_errors = the stderr text (field paths only, never values)
   on success: n = count(checkpoints)+1; offset = size(transcript); turns = turns_total (cumulative)
   render + write; index: insert checkpoints(n); turns_since = 0; blocks_since = 0;
-  last_offset = offset; last_checkpoint_at = now; last_attempt_exit = 0
+  last_offset = offset; last_checkpoint_at = now; last_attempt_exit = 0;
+  last_attempt_errors = null; last_attempt_at = now   (a stale failure must not trigger BLOCK #2
+                                                       for a checkpoint that landed; amendment 2)
   trigger = index.last_block_trigger if blocks_since > 0, else `manual`
 
 SessionEnd(reason)
@@ -92,8 +94,13 @@ SessionEnd(reason)
   rename path as `checkpoint`; a truncated SessionEnd leaves the previous frontmatter intact and
   the index row open, which P3's orphan scan reconciles.
 - **Index rebuild** (`packages/cli/src/index/rebuild.ts`) reconstructs `sessions` and
-  `checkpoints` from frontmatter; counters reset to zero, `last_offset` to the last checkpoint's
-  offset. This is the recovery path for a deleted or corrupted index.
+  `checkpoints` from frontmatter. The *since* counters (`turns_since_checkpoint`,
+  `blocks_since_checkpoint`) reset to zero; `turns_total` is restored from the last checkpoint's
+  cumulative `turns` so the next checkpoint's `turns` never regresses; `last_offset` is the last
+  checkpoint's offset. Two ledger files with the same `(harness, harness_session_id)` (the state a
+  lost index followed by a `resume` produces) do not abort the rebuild: the file with the newest
+  `started` wins (then more checkpoints, then the earlier filename) and the loser is reported in
+  `problems`. This is the recovery path for a deleted or corrupted index. (Amendment 2.)
 
 ## 4. Provenance binding
 

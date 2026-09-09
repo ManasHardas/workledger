@@ -20,6 +20,11 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
   or the backlog edit commands.
 - **Dogfood:** once `workledger checkpoint` works, this repo is an enabled repo and every session
   records checkpoints here (DL-14).
+- **Concurrent agents never share `/tmp` filenames.** Write PR bodies, review bodies, and any
+  scratch file to a per-agent path (e.g. `$(mktemp -d)/pr-body.md`), never a fixed `/tmp/*.md`.
+  In S1 two agents clobbered each other's `/tmp/prbody.md` and one PR was merged with another
+  PR's body (`Closes #10` on PR #22), so its issue had to be closed by hand.
+- **Never remove a worktree from inside it.** Merge and clean up from the repo root.
 
 ## Orchestration (agentwaves)
 
