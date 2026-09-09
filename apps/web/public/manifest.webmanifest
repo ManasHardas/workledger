@@ -1,0 +1,19 @@
+{
+  "name": "workledger",
+  "short_name": "workledger",
+  "description": "The local ledger of your coding-agent sessions.",
+  "start_url": "./#/ledger",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fbfbfa",
+  "theme_color": "#2f6b4f",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

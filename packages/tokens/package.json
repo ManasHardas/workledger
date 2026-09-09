@@ -1,0 +1,25 @@
+{
+  "name": "@workledger/tokens",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "workledger design tokens (W3C design-tokens JSON) and the Tailwind preset + CSS custom properties generated from them.",
+  "license": "MIT",
+  "exports": {
+    "./tokens.json": "./tokens.json",
+    "./tokens.css": "./tokens.css",
+    "./tailwind.preset.js": "./tailwind.preset.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "tokens.json",
+    "tokens.css",
+    "tailwind.preset.js"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build-preset.mjs"
+  }
+}
