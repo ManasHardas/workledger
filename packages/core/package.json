@@ -14,7 +14,9 @@
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -24,6 +26,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "yaml": "2.9.0",
     "zod": "4.5.4"
   }
 }
