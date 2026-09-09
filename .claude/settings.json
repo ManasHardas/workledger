@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook SessionStart; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook Stop; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v workledger >/dev/null 2>&1; then exec workledger hook SessionEnd; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
