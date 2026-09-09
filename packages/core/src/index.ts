@@ -8,3 +8,5 @@ export * from "./ids.js";
 export * from "./frontmatter.js";
 export * from "./tokens.js";
 export * from "./brief.js";
+export * from "./secretscan-patterns.js";
+export * from "./secretscan.js";
