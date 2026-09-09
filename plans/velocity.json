@@ -2,5 +2,32 @@
   "schema_version": 1,
   "description": "Velocity log for PM agent. One entry per agent dispatch or PR merge. Read agents/pm.md for semantics.",
   "entries": [
+    {
+      "session": 1,
+      "wave": "0",
+      "kind": "dispatch",
+      "agent_role": "pm-designer",
+      "dispatch_kind": "phase-sanity-check",
+      "tokens_total": 88525,
+      "tool_uses": 8,
+      "wall_clock_min": 3,
+      "issue": 2,
+      "pr": 1,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "P1 phase-spec sanity check; 5 blockers, 8 gaps, 3 coverage holes; all folded into PR #1"
+    },
+    {
+      "session": 1,
+      "wave": "0.5",
+      "kind": "dispatch",
+      "agent_role": "infra",
+      "dispatch_kind": "wave-0.5-issue-planning",
+      "tokens_total": 77640,
+      "tool_uses": 15,
+      "wall_clock_min": 2,
+      "issue": 2,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "filed #3, #4"
+    }
   ]
 }
