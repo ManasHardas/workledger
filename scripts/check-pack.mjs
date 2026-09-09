@@ -6,6 +6,10 @@
 // checking the tarball checks the publish. It catches the two failures that only show up after a
 // release — src/, tests or tsconfig leaking into the tarball, and a `dist/` that never got built.
 //
+// `dist/web/**` — the Vite-built UI shell — is allowed by prefix rather than by exact name
+// (Vite hashes asset filenames), with `dist/web/index.html` required and the shell's gzipped
+// total asserted against WEB_GZIP_CAP_BYTES so "allowed by prefix" cannot mean "unbounded".
+//
 // It also asserts the *packed* manifest — the one a consumer installs, not the one in the
 // worktree — is exactly `PUBLISHED_FIELDS` from scripts/bundle-cli.mjs, with no `devDependencies`
 // and no `scripts`, and runtime dependencies equal to `EXPECTED_RUNTIME_DEPS` (`better-sqlite3`
@@ -25,8 +29,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   EXPECTED_RUNTIME_DEPS,
   PUBLISHED_FIELDS,
+  WEB_GZIP_CAP_BYTES,
   assertRuntimeDeps,
   migrationFiles,
+  webGzipBytes,
 } from "./bundle-cli.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -38,7 +44,15 @@ const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
  * does not ship and at this machine's pnpm store layout — and `dist/main.d.ts`, which imports
  * `commander` from a package that no longer declares it.
  */
-const REQUIRED_FILES = ["bin/workledger", "dist/main.js", "package.json"];
+const REQUIRED_FILES = ["bin/workledger", "dist/main.js", "dist/web/index.html", "package.json"];
+/**
+ * Prefixes whose contents are allowed without being listed file by file. `dist/web/` is Vite
+ * output — hashed asset names change on every build, so an exact list would be a lockfile nobody
+ * could maintain. `dist/web/index.html` is in REQUIRED_FILES above, which is the part that
+ * actually has to be there for `workledger serve` to serve anything; the size cap below is what
+ * keeps "allowed" from meaning "unbounded".
+ */
+const ALLOWED_PREFIXES = ["dist/web/"];
 /**
  * The index migrations, read from `packages/cli/src/index/migrations` rather than listed here so
  * that adding `0002_*.sql` does not also need an edit in this file. They are data the runner
@@ -86,7 +100,9 @@ async function main(argv) {
 
   const required = [...REQUIRED_FILES, ...(await requiredMigrations())];
   const allowed = new Set([...required, ...OPTIONAL_FILES]);
-  const unexpected = stripped.filter((e) => !allowed.has(e));
+  const unexpected = stripped.filter(
+    (e) => !allowed.has(e) && !ALLOWED_PREFIXES.some((prefix) => e.startsWith(prefix)),
+  );
   const missing = required.filter((e) => !stripped.includes(e));
 
   console.log(`check-pack: ${path.basename(tarballPath)} — ${stripped.length} files`);
@@ -141,10 +157,24 @@ async function main(argv) {
     failed = true;
   }
 
+  // The shell is allowed into the tarball by prefix, so this is the bound on what that permits.
+  // Reported on every run, not only on failure: the number is the point.
+  const web = await webGzipBytes();
+  const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+  if (web.bytes > WEB_GZIP_CAP_BYTES) {
+    console.error(
+      `check-pack: dist/web is OVER THE SIZE CAP — ${web.bytes} bytes gzipped ` +
+        `(${kib(web.bytes)}) against a ${kib(WEB_GZIP_CAP_BYTES)} cap.`,
+    );
+    failed = true;
+  }
+
   if (failed) return 1;
   const deps = EXPECTED_RUNTIME_DEPS.length === 0 ? "no runtime deps" : EXPECTED_RUNTIME_DEPS.join(", ");
   console.log(
-    `check-pack: file list exact, manifest is [${Object.keys(packed).join(", ")}], ${deps}`,
+    `check-pack: file list exact, manifest is [${Object.keys(packed).join(", ")}], ${deps}, ` +
+      `dist/web ${web.files} file(s) / ${web.bytes} bytes gzipped (${kib(web.bytes)} of ` +
+      `${kib(WEB_GZIP_CAP_BYTES)} cap)`,
   );
   return 0;
 }
