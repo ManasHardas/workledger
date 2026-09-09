@@ -393,10 +393,11 @@ TypeScript monorepo (pnpm workspaces):
 |---|---|---|
 | `packages/core` | Ledger schema (zod), checkpoint validation, markdown rendering and parsing, brief generation, secret scan, id generation | Pure TypeScript, no Node-only APIs, so it runs in the CLI, the server, the web app, and a future React Native app |
 | `packages/tokens` | Design tokens (W3C design-tokens JSON): color, spacing, type, radius; exported to a Tailwind preset and, later, a React Native theme | Single source of truth synced from Figma variables |
-| `packages/api-client` | Typed client for the local server's HTTP and SSE endpoints | Isomorphic; shared by web and mobile |
+| `packages/api-client` | A `LedgerSource` interface (list sessions, get session, list backlog, edit backlog, subscribe to changes, jobs) with three implementations: `LocalServerSource` (HTTP + SSE to `packages/server`), `CardFSSource` (reads chunked ledger documents from Dome cardFS and writes edits back), and later `CloudSyncSource` | Isomorphic; the UI depends only on the interface, never on a server being present |
 | `packages/cli` | `workledger` binary: `init`, `hook`, `checkpoint`, `brief`, `serve`, `backfill`, `repair`, `doctor`; harness adapters | Node; `better-sqlite3` for the local index; `gray-matter` for frontmatter |
 | `packages/server` | Hono app: file watcher over `.workledger/`, index, jobs, REST plus server-sent events | Node; started by `workledger serve` |
-| `apps/web` | React 19, Vite, Tailwind, shadcn/ui components built on the tokens; mobile-first responsive layouts; installable as a PWA; keyboard shortcuts on desktop only | Browser |
+| `apps/web` | React 19, Vite, Tailwind, shadcn/ui components built on the tokens; mobile-first responsive layouts; installable as a PWA; keyboard shortcuts on desktop only; hash-based routing; every asset bundled, no CDN or web-font requests | Browser; must also run inside an iframe in a secure context |
+| `apps/card` | The Dome card target: a Vite entry that boots `dome-embedded-app-sdk` in exactly one file, resolves identity and `canWrite` from the SDK, selects `CardFSSource`, and renders `apps/web`'s screens; carries `manifest-card.json` and the cards-ci `release-build.yml` | Browser inside Dome (iOS, Android, web); built as a self-contained static bundle |
 | `apps/mobile` (later) | Expo (React Native) app on the same `core`, `api-client`, and `tokens`; native components, not RN Web | Added when the cloud sync exists; not in v1 |
 
 Rejected: an Expo universal app from day one (RN Web compromises a keyboard-dense desktop UI and
@@ -413,7 +414,40 @@ language; revisit only if Node startup latency in hooks becomes a measured probl
 - Until designs exist, the web app uses the default token set and an unstyled-but-usable layout;
   the plan should schedule the Figma pass after the Ledger and Next views work end to end.
 
-### 14.2 Dogfooding
+### 14.2 Dome card target
+
+The same UI must be hostable as a card inside a Dome (the operator's client platform; constraints
+verified in `~/Projects/dome_workspace`). A card is a self-contained static web bundle in an
+iframe, in a secure context, with identity from the Dome SDK (phone-based user, `owner`,
+`canWrite`), data through cardFS (card-scoped document namespace, user-scoped authorization,
+reads over 5 MB silently dropped) or any HTTPS API with permissive CORS, no server, no external
+assets in `<head>`, released by pushing a `DomeHQ/*` repository's `release` branch through the
+shared cards-ci workflow. What this adds to the design:
+
+- **Publisher**: `workledger publish --target cardfs` renders the repo's `.workledger/` into
+  chunked JSON documents (`ledger.json`, `ledger.2.json`, …, each measured under 5 MB, with a
+  part count on the first) and writes them to the card instance's cardFS namespace. Run by a
+  developer or by CI on push to `main`. The card reads parts in parallel and fails loudly on a
+  missing part rather than showing a shrunken ledger.
+- **Edits from the card**: backlog edits made in the card are written to cardFS as an
+  `edits.json` append-only log with the Dome user as `by`; `workledger pull --from cardfs` on a
+  developer machine replays them through the CLI into the repo files, so history stays one
+  format. Live two-way sync is the cloud mode's job, not the card's.
+- **Identity**: actors gain an optional `dome_user` id next to git name and email; `confirmed_by`
+  and `history[].by` accept either. A repo-level `identities.yaml` maps Dome users to git emails
+  when both are known.
+- **Card behavior**: read-only when `canWrite` is false; no "Now" view (no live sessions reach
+  a card until cloud mode exists); provenance panel shows "transcript on the developer's machine"
+  instead of a span; hash routing so `openDeepLink` can target a session or item.
+- **Repository and release**: `apps/card` lives in this monorepo and is mirrored by `git subtree
+  split` into a `DomeHQ/card-workledger` repository that carries the Dome identity and CI secrets
+  (created by the Dome founder, never by the assistant); release only by pushing that repo's
+  `release` branch, and only after the founder confirms. The personal `manashardas/workledger`
+  remote never sees Dome secrets.
+- **Theme**: `packages/tokens` ships a `dome` theme sampled from Dome's palette (as the sibling
+  cards do in `styles.css`) alongside the default theme.
+
+### 14.3 Dogfooding
 
 This repository enables workledger on itself as soon as the CLI can record a checkpoint
 (milestone 1). Decisions from that point are recorded as `decision` notes in `.workledger/`
@@ -423,10 +457,13 @@ rather than in `docs/decision-log.md` (DL-14).
 
 1. CLI core: `init` (Claude Code only), `hook`, `checkpoint`, ledger rendering, brief. Dogfood in
    `dome_workspace` and this repo.
-2. `serve` and the UI: Ledger, Next with editing, Needs you, provenance panel.
+2. `serve` and the UI: Ledger, Next with editing, Needs you, provenance panel, behind the
+   `LedgerSource` interface from the start.
 3. Orphan scan, repair, backfill with the lookback selector.
 4. Cursor adapter. 5. Codex adapter after verification. 6. Team polish: auto-commit option,
    teammate onboarding path, `doctor`.
+7. Dome card: `CardFSSource`, `publish --target cardfs`, `pull --from cardfs`, `apps/card`,
+   the `dome` theme, and the subtree mirror. 8. Figma pass over the web and card screens.
 
 ## 16. Open questions (not blocking the plan)
 
