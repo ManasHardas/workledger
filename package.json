@@ -10,18 +10,20 @@
     "pnpm": ">=11"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "pnpm -r build",
     "clean": "tsc -b --clean",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "contracts": "pnpm -F @workledger/core build && tsx scripts/export-json-schema.ts"
+    "contracts": "pnpm -F @workledger/core build && tsx scripts/export-json-schema.ts",
+    "version:bump": "node scripts/version.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
     "@vitest/coverage-v8": "^4.1.11",
     "@workledger/core": "workspace:*",
+    "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",

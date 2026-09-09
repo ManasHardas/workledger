@@ -21,15 +21,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node ../../scripts/bundle-cli.mjs",
     "clean": "tsc -b --clean",
     "test": "vitest run"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@types/node": "^22",
     "@workledger/core": "workspace:*",
     "commander": "^15.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22"
   }
 }

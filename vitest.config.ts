@@ -19,7 +19,12 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
-      include: ["src/**/*.ts", "scripts/*.ts"],
+      // Every glob is spelled from the repo root: a project-relative glob does not resolve
+      // against the root config's directory, so `src/**/*.ts` matched nothing and
+      // packages/core/src was silently absent from lcov.info — which would have let
+      // scripts/coverage-gate.mjs score every change to core as "no executable lines".
+      // scripts/coverage-gate.mjs mirrors this list; the two must not drift.
+      include: ["packages/*/src/**/*.ts", "scripts/*.ts"],
       all: true,
     },
   },
