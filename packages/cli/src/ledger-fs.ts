@@ -90,6 +90,26 @@ export function backlogFile(root: string, id: string): string {
   return path.join(ledgerPaths(root).backlog, `${id}.md`);
 }
 
+/**
+ * The `.md` files in one ledger directory, absolute and sorted by filename — which for a
+ * directory of ULID-named files is creation order.
+ *
+ * A directory that does not exist is empty, not an error: `.workledger/backlog/` is created by
+ * the first item, so a freshly enabled repo has none.
+ */
+export function ledgerFiles(dir: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name.endsWith(".md"))
+    .sort()
+    .map((name) => path.join(dir, name));
+}
+
 /** Read a UTF-8 ledger file, or `undefined` when it does not exist. */
 export function readTextFile(file: string): string | undefined {
   try {

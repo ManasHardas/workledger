@@ -2,7 +2,6 @@ import { createRequire } from "node:module";
 
 import { Argument, Command, CommanderError, InvalidArgumentError } from "commander";
 
-import { BACKLOG_ACTIONS } from "./commands/backlog.js";
 import { HOOK_EVENTS } from "./commands/hook-events.js";
 import { EXIT_OK, EXIT_USAGE } from "./exit-codes.js";
 import type { BriefOptions } from "./commands/brief.js";
@@ -50,15 +49,15 @@ function positiveInteger(value: string): number {
  * Every P1 command is registered here with its final argument and option signature from
  * docs/contracts/p1/cli.md, and delegates its body to one file under `src/commands/`. Slots 8–10
  * replace those bodies without editing this file — the watchdog's T-X mitigation for four CLI
- * slots landing in parallel.
+ * slots landing in parallel. P2 adds `backlog` and `note` (docs/contracts/p2/backlog-cli.md) as
+ * pass-throughs that parse their own sub-commands.
  *
  * Each body is reached with `await import()` rather than a static import, and the only values
- * this module pulls eagerly are commander, the exit codes and two argument-choice lists. That is
+ * this module pulls eagerly are commander, the exit codes and one argument-choice list. That is
  * what makes `hook Stop`'s allow path meet its p95 < 100 ms budget (data-flow §6): a static
  * import of `checkpoint.js` puts `@workledger/core` — ~30 ms of zod schema construction and
  * `yaml` module init — into the bundle's top level, where every invocation pays for it. The
- * choice lists live in `commands/backlog.js` and `commands/hook-events.js`, both of which import
- * nothing.
+ * choice list lives in `commands/hook-events.js`, which imports nothing.
  *
  * `exitOverride()` makes commander throw a `CommanderError` instead of calling `process.exit`,
  * so the program is safe to drive from a test worker. `run()` maps the error to an exit code.
@@ -69,6 +68,9 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .description("Local observer for coding-agent sessions.")
     .version(VERSION, "-v, --version", "print the workledger version")
     .helpOption("-h, --help", "print usage")
+    // `backlog` and `note` own their own sub-parsers, so everything after their first operand
+    // has to reach them untouched — `--title`, `--json` and the rest are theirs, not ours.
+    .enablePositionalOptions()
     .exitOverride();
 
   program
@@ -122,16 +124,33 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
       exit.code = await doctorCommand(options);
     });
 
+  // `backlog` and `note` are pass-throughs: the sub-command tables, their flags and their help
+  // live in `commands/backlog.ts` and `commands/note.ts` and are parsed there, on demand. Two
+  // reasons, both structural. Their option surface is wide and per-sub-command, which commander
+  // cannot express from one registration here; and every eager import in this file is paid for
+  // by `hook Stop`, whose allow path has a p95 < 100 ms budget (data-flow §6).
   program
     .command("backlog")
-    .description("reserved for the P2 backlog UI; not available in P1")
-    .addArgument(
-      new Argument("<action>", "backlog action").choices([...BACKLOG_ACTIONS]),
-    )
-    .addArgument(new Argument("[args...]", "action arguments"))
-    .action(async () => {
+    .description("read and edit the backlog; `workledger backlog --help` lists the actions")
+    .addArgument(new Argument("[args...]", "action and its arguments"))
+    .passThroughOptions()
+    .allowUnknownOption()
+    .helpOption(false)
+    .action(async (args: string[]) => {
       const { backlogCommand } = await import("./commands/backlog.js");
-      exit.code = await backlogCommand();
+      exit.code = await backlogCommand(args);
+    });
+
+  program
+    .command("note")
+    .description("act on the notes in a session digest; `workledger note --help` lists the actions")
+    .addArgument(new Argument("[args...]", "action and its arguments"))
+    .passThroughOptions()
+    .allowUnknownOption()
+    .helpOption(false)
+    .action(async (args: string[]) => {
+      const { noteCommand } = await import("./commands/note.js");
+      exit.code = await noteCommand(args);
     });
 
   return program;

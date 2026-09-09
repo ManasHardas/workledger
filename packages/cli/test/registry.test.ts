@@ -5,11 +5,13 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BACKLOG_MESSAGE } from "../src/commands/backlog.js";
 import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 
-/** The six commands `--help` must list, per docs/contracts/p1/cli.md. */
-const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "backlog"];
+/**
+ * The commands `--help` must list: the six from docs/contracts/p1/cli.md plus `note`, which
+ * P2 adds alongside the now-live `backlog` (docs/contracts/p2/backlog-cli.md).
+ */
+const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "backlog", "note"];
 
 /**
  * Every P1 command now has a body, so none of them can be invoked from here: each would read the
@@ -22,7 +24,10 @@ const OPTIONS: Record<string, string[]> = {
   checkpoint: ["--session", "--dry-run"],
   brief: ["--repo", "--max-tokens"],
   doctor: ["--json"],
+  // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
+  // is registered here beyond the pass-through argument.
   backlog: [],
+  note: [],
 };
 
 /** Run the program with stdout and stderr captured. */
@@ -50,23 +55,15 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the six P1 commands", () => {
+  it("registers exactly the seven commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 
-  it("lists all six commands in --help", async () => {
+  it("lists every command in --help", async () => {
     const { code, out } = await invoke(["--help"]);
 
     expect(code).toBe(EXIT_OK);
     for (const name of COMMANDS) expect(out).toContain(name);
-  });
-
-  it("backlog exits 1 with the P2 message", async () => {
-    const { code, err, out } = await invoke(["backlog", "accept", "WL-x"]);
-
-    expect(code).toBe(EXIT_USAGE);
-    expect(err).toContain(BACKLOG_MESSAGE);
-    expect(out).toBe("");
   });
 
   it("carries the contracted options through to each command", () => {
@@ -97,12 +94,23 @@ describe("command registry", () => {
     expect(err).toContain("Allowed choices are");
   });
 
-  it("accepts only the reserved backlog actions", async () => {
+  it("passes backlog and note flags through instead of parsing them", () => {
+    // The T-X guarantee for P2: the sub-command tables live in `src/commands/`, so `main.ts`
+    // must claim neither the operands nor the flags. `test/backlog-ops.test.ts` drives the
+    // bodies against a temp ledger.
+    for (const name of ["backlog", "note"]) {
+      const command = createProgram().commands.find((entry) => entry.name() === name);
+      expect(command?.registeredArguments.map((argument) => argument.name()), name)
+        .toEqual(["args"]);
+      expect(command?.registeredArguments[0]?.variadic, name).toBe(true);
+    }
+  });
+
+  it("returns 1 for an unknown backlog action", async () => {
     const { code, err } = await invoke(["backlog", "frobnicate"]);
 
     expect(code).toBe(EXIT_USAGE);
-    expect(err).toContain("Allowed choices are");
-    expect(err).not.toContain(BACKLOG_MESSAGE);
+    expect(err).toContain("unknown command");
   });
 
   it("awaits an async command body and returns the code it resolves to", async () => {
