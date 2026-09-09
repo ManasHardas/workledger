@@ -155,6 +155,63 @@
       "files_touched": 28,
       "wall_clock_min": 40,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "code-review",
+      "dispatch_kind": "review-round",
+      "issue": 4,
+      "pr": 18,
+      "tokens_total": 124263,
+      "tool_uses": 36,
+      "wall_clock_min": 6,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; 2 blockers (merge regression, PII in fixture), 7 important, 7 nit"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "backend",
+      "dispatch_kind": "build",
+      "class": "service-module sibling-shape",
+      "issue": 6,
+      "pr": 19,
+      "tokens_total": 130356,
+      "tool_uses": 42,
+      "wall_clock_min": 9,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "backend",
+      "dispatch_kind": "build",
+      "class": "service-module first-of-class (credential surface)",
+      "issue": 8,
+      "pr": 20,
+      "tokens_total": 116574,
+      "tool_uses": 38,
+      "wall_clock_min": 12,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 18,
+      "issue": 4,
+      "agent_role": "infra",
+      "class": "CI-YAML thin-infra",
+      "tokens_implementer": 407082,
+      "tokens_reviewers": 124263,
+      "review_iterations": 2,
+      "files_touched": 24,
+      "wall_clock_min": 45,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }
