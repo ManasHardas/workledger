@@ -1,0 +1,53 @@
+# Notifies the downstream skill repo (ManasHardas/agentwaves-skill) when a
+# substantive protocol change lands on main here. The skill repo then bumps
+# its submodule pin via the sync-upstream workflow on its side.
+#
+# REQUIRED SECRET: SKILL_REPO_PAT
+#   - Fine-grained PAT (or classic PAT with "repo" scope)
+#   - Resource access: only ManasHardas/agentwaves-skill
+#   - Permissions: Contents: Read & Write (to dispatch); Metadata: Read
+#   - Configure at: Settings → Secrets and variables → Actions → New repository secret
+#
+# A scheduled fallback runs hourly on the skill-repo side, so a missed
+# dispatch (e.g. secret expiry) doesn't leave the skill indefinitely stale.
+
+name: Notify skill repo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agents/**'
+      - 'dispatch-templates/**'
+      - 'templates/**'
+      - 'scripts/**'
+      - 'CLAUDE.md.snippet'
+
+concurrency:
+  group: notify-skill-repo
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch upstream-protocol-update to agentwaves-skill
+        env:
+          GH_TOKEN: ${{ secrets.SKILL_REPO_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::SKILL_REPO_PAT secret is not set. See workflow file header for setup instructions."
+            exit 1
+          fi
+
+          gh api -X POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/ManasHardas/agentwaves-skill/dispatches \
+            -f event_type=upstream-protocol-update \
+            -f "client_payload[sha]=${{ github.sha }}" \
+            -f "client_payload[short_sha]=$(echo ${{ github.sha }} | cut -c1-7)" \
+            -f "client_payload[message]=${{ github.event.head_commit.message }}" \
+            -f "client_payload[author]=${{ github.event.head_commit.author.name }}" \
+            -f "client_payload[compare_url]=${{ github.event.compare }}"
+
+          echo "::notice::Dispatched upstream-protocol-update to ManasHardas/agentwaves-skill"

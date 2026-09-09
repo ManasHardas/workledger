@@ -17,3 +17,6 @@ build/
 .idea/
 .superpowers/
 coverage/
+
+# agentwaves worktrees
+.worktrees/

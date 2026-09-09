@@ -1,0 +1,58 @@
+# Snippet to paste into your project's CLAUDE.md
+# Encodes the ACTIVE vs DEGRADED operating-mode rules so they auto-load
+# into every conversation context.
+
+## Session operating modes
+
+**Read `plans/next-session.md` FIRST** at any session-start (Session Handoff Document — pre-rendered playbook by PM at prior session-close). Contains pre-rendered slot 1 dispatch brief, compressed priors digest, watchdog framing. If missing OR stale (older than the latest merged PR), fall back to `plans/wave-state.md` (authoritative state) + legacy session-start ritual (PM dispatch). SHD protocol saves 65-95k per session-start. See `.orchestrator/agents/pm.md` §Session Handoff Document protocol for the format.
+
+**Two operating modes — ACTIVE (full PM discipline) vs DEGRADED (PM-skip):**
+
+DEGRADED mode is allowed ONLY when ALL of:
+- All planned slots are narrow-fix or sibling-shape (no first-of-class)
+- All issues filed before session start (no orchestrator scope synthesis)
+- No new contract artifacts (no new endpoints, tables, OpenAPI changes, migrations)
+- Last session closed cleanly (no unresolved fix-cycle)
+
+ACTIVE mode is REQUIRED if ANY of the above conditions fails. ACTIVE mode requires:
+- Stage-2 PM dispatched at session-start + session-close (per `.orchestrator/agents/pm.md`)
+- Wave 0.5 issue planning before any Wave 1 build dispatch (per `.orchestrator/agents/orchestrator.md` §Wave sequence)
+- Dispatch briefs derived from FILED ISSUE BODIES, not orchestrator-synthesized memory
+
+**Source:** retrospective from a real project where PM-skip mode was wrongly applied to a session introducing new pages with new state machines. The orchestrator-synthesized dispatch brief conflated already-shipped endpoints as "future-phase, disable with tooltip"; review agent fired 4 Blockers; ~68k fix-cycle tax incurred. **This rule is now permanent.**
+
+## Session-close guardrails
+
+**`scripts/check-session-close-guardrails.sh` MUST run before the chore-close commit.** Exit 1 = BLOCKER, stop and fix; exit 2 = WARN, acknowledge each warn-line in the chore-close commit body; exit 0 = clean, proceed. Enforces 17 invariants: velocity.json rollup completeness (one `pr_merge` row per build PR), wave-state.md currency, SHD presence for S<N+1>, capacity-log.md entry, clean working tree, clean worktrees, cc_session_id presence (when your harness exposes one), stale-branch cleanup, operating-mode + watchdog declarations in close commit, etc. Cost ~5s + ~200-300 tokens per session; +5-10k with GitHub API checks for issue/branch verification.
+
+Catches the silent execution drift from non-negotiable spec invariants that is invisible during normal development — agents follow stale memory; the spec keeps living in the doc unaltered until someone runs a retrospective and notices the gap. **No bypass** — file an issue against the script if a check is wrong; do not skip the gate. See `.orchestrator/agents/orchestrator.md` §Session-close ritual + `.orchestrator/agents/pm.md` §Session close step 5.
+
+## Wave -1 — adversarial ideation gate (greenfield only, once per project)
+
+On a **new** project, the brainstorming/ideation session that decides what to build is governed by Clause #11 (`.orchestrator/dispatch-templates/clause-11-adversarial-ideation.md`) and is **extremely critical by default**. Five rules: never assume without asking (every assumption is `ASKED` / `RESEARCHED` / `UNVERIFIED`-with-a-kill-criterion, no fourth category); research before assuming; show data, don't tell (no unsourced market sizing or demand claims — "no public data found" is a legitimate finding, an invented estimate is not); argue both sides with symmetric rigor (≥5 specific failure modes with mechanisms and leading indicators across ≥4 categories, then ≥3 evidenced reasons it works); name falsifiable kill criteria and close with a verdict plus the strongest argument against it.
+
+Findings go in `plans/ideation-<slug>.md` (from `.orchestrator/templates/ideation-brief.md`). **`.orchestrator/scripts/check-ideation-gate.sh` must exit 0 before Wave 0 contract freeze begins.** No bypass. Skip entirely on an existing project — phase-boundary ideation keeps the lighter PM/Designer sanity-check.
+
+The gate's checks are structural: they confirm the reasoning was *done*, not that it was *good*. A green gate is not validation.
+
+## Skill-output gitignore recommendations (conditional)
+
+If your harness ships the `superpowers:brainstorming` skill (or similar skills that run a localhost preview server), the skill writes a transient output cache to `.superpowers/brainstorm/<session-id>/` containing HTML preview files plus a `state/` directory with server PIDs and logs. This is ephemeral per-session data — add to your `.gitignore`:
+
+```
+# Superpowers skill output cache (transient, per-session)
+.superpowers/
+```
+
+Only relevant if you use these skills. Skip if your harness doesn't ship them.
+
+## Project-tunable knobs (env vars)
+
+Two env-var prefixes are recognized:
+
+- **`AW_*`** — protocol-wide knobs that change orchestration behavior (e.g. `AW_CI_QUOTA_CONSTRAINED=1` activates the CI-quota-constrained operating sub-mode).
+- **`GUARDRAIL_*`** — knobs specific to `scripts/check-session-close-guardrails.sh`:
+  - `GUARDRAIL_CC_SESSION_GATE=<N>` enables the cc_session_id invariant (check #7) from session N.
+  - `GUARDRAIL_MAIN_CI_GATE=<N>` escalates check #18 (main CI green at session-close) from WARN to BLOCKER starting at session N. Default: WARN-only; sub-10s failures auto-classified as INFO (likely billing-block, not a real red).
+
+See `.orchestrator/README.md` §Environment variables for the full table.
