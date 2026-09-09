@@ -29,9 +29,6 @@ The framework is vendored at `.orchestrator/`; placeholders are resolved per
 `.orchestrator/scripts/check-ideation-gate.sh --file "$PWD/plans/ideation-workledger.md"`.
 Session-close guardrails: `.orchestrator/scripts/check-session-close-guardrails.sh`.
 
-# Snippet to paste into your project's CLAUDE.md
-# Encodes the ACTIVE vs DEGRADED operating-mode rules so they auto-load
-# into every conversation context.
 
 ## Session operating modes
 
