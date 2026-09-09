@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workledger.dev/contracts/p1/backlog-item.schema.json",
+  "title": "BacklogItem",
+  "description": "YAML frontmatter of `.workledger/backlog/WL-<ulid>.md`. Body is free markdown (initially the `why` line). Written only by the CLI. Frozen at P1 Wave 0 (2026-09-09).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "id", "title", "status", "proposed_by", "rank", "created", "updated", "history"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "pattern": "^WL-[0-9A-HJKMNP-TV-Z]{26}$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "status": { "type": "string", "enum": ["proposed", "accepted", "in_progress", "done", "discarded"] },
+    "proposed_by": { "$ref": "#/$defs/Provenance" },
+    "confirmed_by": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/HumanStamp" } ] },
+    "owner": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/Actor" } ] },
+    "priority": { "type": ["string", "null"], "enum": ["p1", "p2", "p3", null] },
+    "rank": { "type": "integer", "default": 0, "description": "Manual order within a status group; shared across the team." },
+    "area": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "blocked_by": { "type": "array", "items": { "type": "string", "pattern": "^WL-[0-9A-HJKMNP-TV-Z]{26}$" }, "default": [] },
+    "done_by": { "oneOf": [ { "type": "null" }, { "$ref": "#/$defs/SessionRef" } ] },
+    "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time" },
+    "history": { "type": "array", "items": { "$ref": "#/$defs/HistoryEntry" } }
+  },
+  "$defs": {
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "dome_user": { "type": ["string", "null"] }
+      }
+    },
+    "HumanStamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "email", "at"],
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "dome_user": { "type": ["string", "null"] },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SessionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session", "checkpoint"],
+      "properties": {
+        "session": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+        "checkpoint": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "session", "checkpoint", "author"],
+      "properties": {
+        "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex"] },
+        "session": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+        "checkpoint": { "type": "integer", "minimum": 1 },
+        "author": { "$ref": "#/$defs/Actor" }
+      }
+    },
+    "HistoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "by", "op"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "by": {
+          "oneOf": [
+            { "$ref": "#/$defs/Actor" },
+            { "$ref": "#/$defs/SessionRef" }
+          ],
+          "description": "A human (Actor) for UI edits; a SessionRef for agent-originated changes."
+        },
+        "op": { "type": "string", "enum": ["create", "edit", "status", "assign", "rank", "merge", "update", "close"] },
+        "diff": { "type": "string", "description": "Human-readable summary of what changed, e.g. 'status: proposed → accepted'." }
+      }
+    }
+  }
+}

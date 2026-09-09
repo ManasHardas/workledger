@@ -6,7 +6,7 @@
 
 **Architecture:** Pure-TypeScript `packages/core` (schema, validation, rendering, brief, secret scan) with all side effects in `packages/cli` (index, files, hook I/O, Claude Code adapter). Hooks fail open and stay under 100 ms on the allow path; the only model involved is the session's own agent, which runs `workledger checkpoint`.
 
-**Tech Stack:** TypeScript 5.9, Node 22 LTS, pnpm 10 workspaces, zod, gray-matter, ulid, better-sqlite3, vitest with coverage, eslint. No Docker. Phase spec: `plans/feature-p1-cli-core.md`. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`.
+**Tech Stack:** TypeScript 5.9, Node ≥ 22, pnpm ≥ 10 workspaces, zod, gray-matter, ulid, better-sqlite3, vitest with coverage, eslint. No Docker. Phase spec: `plans/feature-p1-cli-core.md`. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`.
 
 **Issue numbers:** assigned at Wave 0.5 by the Infra and Backend agents from the dispatch list in the phase spec. Slot headings below carry the intended issue title; the orchestrator substitutes the filed number in each dispatch brief.
 
@@ -197,8 +197,8 @@ Slots 2–6 are `packages/core` and disjoint by file; slots 7–10 are `packages
 - Create: `packages/cli/src/adapters/types.ts` (`HarnessAdapter`: `parseHookInput`, `denyStop(reason)`, `injectContext(text)`, `transcriptSize(path)`)
 - Create: `packages/cli/src/adapters/claude-code.ts` (field names from `docs/contracts/p1/hooks-claude-code.md`)
 - Create: `packages/cli/src/instruction.ts` (versioned checkpoint instruction text with the open-id list interpolated)
-- Create: `packages/cli/src/commands/hook.ts` (SessionStart: create file + index row + set `WORKLEDGER_SESSION` via `additionalContext` note and index; Stop: thresholds and loop guard per the state machine; SessionEnd: close and `needs_repair`; fail-open wrapper; not-enabled-repo fast exit)
-- Test: `packages/cli/test/hook.test.ts` (simulation over `test/fixtures/hooks/*.json`: allow, deny, never-twice, thresholds each, disabled env, non-enabled repo); `packages/cli/test/hook-timing.test.ts` (100 allow-path runs p95 < 100 ms)
+- Create: `packages/cli/src/commands/hook.ts` (SessionStart by `source`: new row for startup/clear, reuse by `(harness, harness_session_id)` for resume/fork/compact; private handling; brief injected with the ulid on its first line. Stop: thresholds, `stop_hook_active` guard, offset rotation, the block/ignored/retry/failed rule per the data-flow doc §2. SessionEnd: `ended`, `end_reason`, `needs_repair` in turns. Fail-open wrapper; not-enabled-repo fast exit; atomic frontmatter writes via `ledger-fs.ts`)
+- Test: `packages/cli/test/hook.test.ts` (simulation over `test/fixtures/hooks/*.json`: allow; block on each threshold with precedence; `stop_hook_active` allows; ignored block never repeats; failed attempt gets one retry then `checkpoint_failures`; resume/fork/compact reuse the row; rotation; `WORKLEDGER_DISABLE`; `WORKLEDGER_PRIVATE`; non-enabled repo; SessionEnd reason mapping and `needs_repair`); `packages/cli/test/hook-timing.test.ts` (Stop allow p95 < 100 ms over 100 runs; SessionStart < 300 ms; SessionEnd < 200 ms over 20 runs)
 
 - [ ] **Step 1: Tests from the phase spec's state machine, one case per transition**
 - [ ] **Step 2: Implement; every exception path exits 0 with one stderr line**
@@ -217,9 +217,9 @@ Slots 2–6 are `packages/core` and disjoint by file; slots 7–10 are `packages
 **Files:**
 - Create: `packages/cli/src/config.ts` (load/merge `.workledger/config.yaml` with defaults; env overrides)
 - Create: `packages/cli/src/settings-merge.ts` (additive merge of the hooks block into `.claude/settings.json`; diff; `.bak`; idempotent)
-- Create: `packages/cli/src/commands/init.ts` (detect harness binaries and stores; list repos from `~/.claude/projects/*` metadata with counts and last activity; create `.workledger/`; write hooks; `--yes`)
+- Create: `packages/cli/src/commands/init.ts` (detect harness binaries and stores; list repos from `~/.claude/projects/*` metadata with counts and last activity; create `.workledger/`; write the hooks block with the absent-CLI no-op command string from the hook contract; print the privacy summary in next steps; `--yes`)
 - Create: `packages/cli/src/commands/doctor.ts`, `packages/cli/src/commands/brief.ts`
-- Test: `packages/cli/test/{init,doctor,settings-merge}.test.ts` with temp `HOME` and temp repo; fixtures with an existing `settings.json` containing other hooks
+- Test: `packages/cli/test/{init,doctor,settings-merge,config}.test.ts` with temp `HOME` and temp repo; fixtures with an existing `settings.json` containing other hooks; a test that runs the written hook command with `PATH` stripped and asserts exit 0 and empty output
 
 - [ ] **Step 1: Tests: merge preserves foreign hooks; second `init` is a no-op; doctor exit codes**
 - [ ] **Step 2: Implement; the diff is shown before any write unless `--yes`**
@@ -227,7 +227,7 @@ Slots 2–6 are `packages/core` and disjoint by file; slots 7–10 are `packages
 
 ---
 
-## Slot 11 — CI and fixture capture (Infra)
+## Slot 11 — CI, packaging, and fixture capture (Infra)
 
 **Class:** CI-YAML thin-infra.
 
@@ -239,9 +239,11 @@ Slots 2–6 are `packages/core` and disjoint by file; slots 7–10 are `packages
 - Create: `.github/workflows/ci.yml` (Clause #9: path filters, concurrency cancel-in-progress, `pnpm install --frozen-lockfile`, lint, `tsc -b`, `vitest --coverage` with a 70% changed-lines gate)
 - Create: `scripts/capture-fixtures.mjs` (copies N recent Claude Code transcripts and recorded hook payloads from this machine into `test/fixtures/`, redacting emails, tokens matching the secret patterns, and absolute home paths; keeps sizes)
 - Create: `test/fixtures/{transcripts,hooks,payloads}/` initial set
+- Create: `npm publish --dry-run` CI job for `packages/cli`; `scripts/version.mjs` (bumps both packages in lockstep); `README.md` install section
 
 - [ ] **Step 1: CI runs green on a no-op PR**
 - [ ] **Step 2: Capture fixtures; verify the secret scan over the fixture directory reports zero findings**
+- [ ] **Step 3: Verify `pnpm -F workledger publish --dry-run` lists only `dist/`, `bin/`, `package.json`, `README.md`**
 
 ---
 

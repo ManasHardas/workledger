@@ -197,7 +197,7 @@ Body: free markdown, initially the "why" line from the checkpoint. Human edits a
    transcript path and offset 0 in the local index.
 3. If `private` is requested (env `WORKLEDGER_PRIVATE=1`, or the config's private path list matches),
    set `private: true` and skip everything else for this session.
-4. Inject the brief (Section 7) as `additionalContext`, capped by `config.brief_max_tokens` (default 2,000).
+4. Inject the brief (Section 7) as `additionalContext`, capped by `config.brief.max_tokens` (default 2,000).
 5. Run the orphan scan (Section 5.5) opportunistically, bounded to 200 ms.
 
 ### 5.2 Stop (every turn)
@@ -289,8 +289,8 @@ Generated deterministically from the ledger, no model:
 - Open `blocker` and `question` notes.
 - Capped at `brief_max_tokens`; when over, drop `proposed` items first, then oldest.
 
-Injected at SessionStart by default; the same text is available from `workledger brief` and a
-"copy brief" button in the UI. It is a toggle in `config.yaml`.
+Injected at SessionStart by default (`config.brief.inject`); the same text is available from
+`workledger brief` and a "copy brief" button in the UI.
 
 ## 8. UI
 

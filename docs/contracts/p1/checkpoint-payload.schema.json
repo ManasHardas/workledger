@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workledger.dev/contracts/p1/checkpoint-payload.schema.json",
+  "title": "CheckpointPayload",
+  "description": "What the session's agent sends on stdin to `workledger checkpoint`. Frozen at P1 Wave 0 (2026-09-09). The zod schema in packages/core/src/schema.ts is the source; its export must reproduce this file byte for byte.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400,
+      "description": "What the human asked for, in the human's terms. Required at checkpoint 1; optional afterwards and replaces the previous goal when present."
+    },
+    "done": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/DoneItem" },
+      "default": []
+    },
+    "remaining": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/RemainingItem" },
+      "default": []
+    },
+    "notes": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/Note" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "DoneItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "verified"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Past tense, one unit of work." },
+        "files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "maxItems": 20, "description": "Repo-relative paths touched." },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "verified": { "type": "string", "enum": ["tests-passed", "tests-failed", "not-verified"] }
+      },
+      "anyOf": [
+        { "required": ["files"], "properties": { "files": { "minItems": 1 } } },
+        { "required": ["commit"] }
+      ],
+      "description": "Needs at least one of a non-empty files list or a commit hash."
+    },
+    "RemainingItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "why"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Imperative next action." },
+        "why": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "new": { "type": "boolean", "const": true },
+        "ref": { "type": "string", "pattern": "^WL-[0-9A-HJKMNP-TV-Z]{26}$" },
+        "rel": { "type": "string", "enum": ["updates", "closes"] },
+        "blocked_by": { "type": "array", "items": { "type": "string", "pattern": "^WL-[0-9A-HJKMNP-TV-Z]{26}$" }, "maxItems": 10 }
+      },
+      "oneOf": [
+        { "required": ["new"], "not": { "anyOf": [ { "required": ["ref"] }, { "required": ["rel"] } ] } },
+        { "required": ["ref", "rel"], "not": { "required": ["new"] } }
+      ],
+      "description": "Either `new: true`, or `ref` + `rel` naming an existing open backlog item. Unknown refs are rejected by the CLI with the list of open ids."
+    },
+    "Note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "type": "string", "enum": ["discovery", "decision", "blocker", "question"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "by": { "type": "string", "enum": ["human", "agent"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300 }
+      },
+      "if": { "properties": { "type": { "const": "decision" } } },
+      "then": { "required": ["by", "reason"] },
+      "description": "Decisions require `by` and `reason`."
+    }
+  },
+  "x-limits": {
+    "maxPayloadBytes": 4096,
+    "note": "The CLI rejects payloads over maxPayloadBytes before parsing. Caps keep checkpoints short."
+  }
+}

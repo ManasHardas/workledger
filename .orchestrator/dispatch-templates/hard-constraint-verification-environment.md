@@ -25,7 +25,7 @@ In the PR description, build agents include:
 
 ```markdown
 - **HARD CONSTRAINT (verification environment):** ✅ Verified on host
-  with Node 22 LTS + pnpm 10 + venv (no `docker cp` / `docker exec`).
+  with Node ≥ 22 + pnpm ≥ 10 + venv (no `docker cp` / `docker exec`).
 ```
 
 OR
