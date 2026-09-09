@@ -7,7 +7,7 @@
   "bin": {
     "workledger": "./bin/workledger"
   },
-  "files": ["dist/main.js", "bin"],
+  "files": ["dist/main.js", "dist/migrations", "bin"],
   "engines": {
     "node": ">=22"
   },
@@ -16,7 +16,11 @@
     "clean": "tsc -b --clean",
     "test": "vitest run"
   },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3"
+  },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22",
     "@workledger/core": "workspace:*",
     "commander": "^15.0.0"

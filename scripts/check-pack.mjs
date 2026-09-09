@@ -7,9 +7,10 @@
 // release — src/, tests or tsconfig leaking into the tarball, and a `dist/` that never got built.
 //
 // It also asserts the declared runtime dependencies equal `EXPECTED_RUNTIME_DEPS` from
-// scripts/bundle-cli.mjs (empty today): `@workledger/core` is `private: true` and reaches the CLI
-// as `workspace:*`, which npm cannot resolve, so the CLI inlines it at build time instead. That
-// one list is where slot 7 adds `better-sqlite3`; this script reads it rather than repeating it.
+// scripts/bundle-cli.mjs (`better-sqlite3` alone): `@workledger/core` is `private: true` and
+// reaches the CLI as `workspace:*`, which npm cannot resolve, so the CLI inlines it at build time
+// instead, and `better-sqlite3` is a native module esbuild cannot inline at all. This script
+// reads that one list rather than repeating it.
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -18,7 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { EXPECTED_RUNTIME_DEPS, assertRuntimeDeps } from "./bundle-cli.mjs";
+import { EXPECTED_RUNTIME_DEPS, assertRuntimeDeps, migrationFiles } from "./bundle-cli.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
@@ -30,6 +31,14 @@ const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
  * `commander` from a package that no longer declares it.
  */
 const REQUIRED_FILES = ["bin/workledger", "dist/main.js", "package.json"];
+/**
+ * The index migrations, read from `packages/cli/src/index/migrations` rather than listed here so
+ * that adding `0002_*.sql` does not also need an edit in this file. They are data the runner
+ * reads at startup, so a tarball missing them is a CLI that cannot open its own index.
+ */
+async function requiredMigrations() {
+  return (await migrationFiles()).map((name) => `dist/migrations/${name}`);
+}
 /** Added by npm automatically when the file exists; allowed, never required. */
 const OPTIONAL_FILES = ["README.md", "LICENSE"];
 
@@ -37,7 +46,7 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
 }
 
-function main(argv) {
+async function main(argv) {
   let dest = null;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--dest") dest = argv[++i];
@@ -67,9 +76,10 @@ function main(argv) {
     .filter((e) => e && !e.endsWith("/"))
     .sort();
 
-  const allowed = new Set([...REQUIRED_FILES, ...OPTIONAL_FILES]);
+  const required = [...REQUIRED_FILES, ...(await requiredMigrations())];
+  const allowed = new Set([...required, ...OPTIONAL_FILES]);
   const unexpected = stripped.filter((e) => !allowed.has(e));
-  const missing = REQUIRED_FILES.filter((e) => !stripped.includes(e));
+  const missing = required.filter((e) => !stripped.includes(e));
 
   console.log(`check-pack: ${path.basename(tarballPath)} — ${stripped.length} files`);
   for (const e of stripped) console.log(`  ${e}`);
@@ -99,7 +109,7 @@ function main(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    process.exitCode = main(process.argv.slice(2));
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     console.error(`check-pack: ${error.message}`);
     process.exitCode = 1;

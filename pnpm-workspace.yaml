@@ -7,3 +7,8 @@ packages:
 # explicitly so `pnpm install` does not write a placeholder here on every run.
 allowBuilds:
   esbuild: false
+  # better-sqlite3 is the CLI's only runtime dependency and the one thing esbuild cannot inline
+  # (a native `.node` binary). Its install script downloads a prebuilt binding for the running
+  # Node ABI, or compiles one with node-gyp when no prebuild matches — either way the package is
+  # unusable without it, so the build must be allowed.
+  better-sqlite3: true
