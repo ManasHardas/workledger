@@ -312,10 +312,14 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
     {
       name: "azure-sas-token",
       // `sig=` alone is far too common — `?sig=verify-the-webhook-signature-header` is not a
-      // credential. The bounded lookbehind demands a sibling SAS parameter (`sv`, `se`, `sp`,
+      // credential — so the match is anchored on a sibling SAS parameter (`sv`, `se`, `sp`,
       // `sr`), which Azure always emits before `sig`.
-      regex:
-        /(?<=[?&](?:sv|se|sp|sr)=[^\s]{0,256})[?&]sig=([A-Za-z0-9%+/_-]{20,}={0,2})/gi,
+      //
+      // Anchored *forward* from that sibling rather than behind `sig=`: a lookbehind puts a
+      // 256-character backward scan on every `?sig=` in the input, which cost 97 ms on CI against
+      // 100 KB of `?sig=…`. Anchoring on the rare parameter instead makes the same adversarial
+      // string free, and bounds the lazy gap at 256 either way.
+      regex: /[?&](?:sv|se|sp|sr)=[^\s]{0,256}?[?&]sig=([A-Za-z0-9%+/_-]{20,}={0,2})/gi,
       description: "Azure shared-access-signature token (`sig=` beside an `sv=`/`se=` parameter).",
       rejectProjectShapes: true,
     },

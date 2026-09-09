@@ -550,6 +550,7 @@ describe("runs in linear time", () => {
     "grafana prefixes with no checksum": fill(`glsa_${"A".repeat(20)} `),
     "doppler prefixes with no third segment": fill("dp.st. "),
     "sig parameters with no sv sibling": fill(`?sig=${"A".repeat(20)} `),
+    "sv parameters that never reach a sig": fill(`?sv=2022-11-02&${"A".repeat(80)} `),
     "keywords followed by a quote run": `api_key${'"'.repeat(SIZE - 7)}`,
     "keyword assignments one character short": fill(`token=${"a1".repeat(5)}b `),
     "env names that are all underscores": fill(`SECRET${"_".repeat(70)}=${"a1".repeat(7)}\n`),
