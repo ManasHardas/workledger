@@ -43,7 +43,13 @@ import { SECRET_PATTERNS, type SecretPattern } from "./secretscan-patterns.js";
  * and never a substring of the input: see the module note on object keys.
  */
 export interface Finding {
-  /** JSON path of the string the match sat in, e.g. `done[0].text`, or the `scanText` label. */
+  /**
+   * JSON path of the string the match sat in, e.g. `done[0].text`, or the `scanText` label.
+   *
+   * An object key appears here only when it is a short plain identifier, is not a long hex run,
+   * and scans clean — so it is safe *to the limit of what this scanner detects*, which is a
+   * weaker claim than "carries no credential". Everything else is positional (`<key#3>`).
+   */
   readonly path: string;
   /**
    * The {@link SecretPattern} name that matched, e.g. `github-token`, or one of the reserved
@@ -100,6 +106,13 @@ const MAX_PATH_SEGMENT = 40;
 /** Keys allowed into a path verbatim — provided they also scan clean. */
 const PLAIN_KEY = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
 
+/**
+ * A long hex run is a valid identifier but is far likelier to be a credential than a field name,
+ * and the scanner cannot always tell (see the 40-hex note on {@link PROJECT_SHAPES}). Keys of
+ * this shape are reported positionally rather than trusted.
+ */
+const HEX_KEY = /^[0-9a-fA-F]{16,}$/;
+
 /** The longest unbroken alphanumeric run a generated credential is expected to contain. */
 const CREDENTIAL_RUN = /[A-Za-z0-9]{16,}/;
 
@@ -117,10 +130,25 @@ const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a
 const PROJECT_SHAPES: readonly RegExp[] = [
   /^WL-[0-9A-HJKMNP-TV-Z]{26}$/, // backlog id
   /^[0-9A-HJKMNP-TV-Z]{26}$/, // ULID
-  /^[0-9a-fA-F]{7,64}$/, // git hash, checksum
+  // Git's canonical hash forms only — lowercase, and at an abbreviation or full SHA-1 length.
+  // Anything else hex is far more likely a credential: a 32- or 48-character hex API key, an
+  // HMAC secret, a 64-character Django `SECRET_KEY`. Rejecting all of 7-64 (revision 2) silently
+  // traded away the entire hex-credential class, which revision 1 caught.
+  //
+  // 40 lowercase hex stays rejected, and that is a real collision: `access_token=<40 hex>` is
+  // byte-identical to `token: <commit sha>`, which Code Review pinned as a false positive. A
+  // false positive there is unrecoverable — data-flow §2 retries the identical input, fails
+  // identically, and gives up with no `--force` — while a false negative degrades. So the
+  // ambiguous length resolves toward the user keeping their checkpoint. `KNOWN_GAPS` says so.
+  /^[0-9a-f]{7,12}$/, // abbreviated git hash
+  /^[0-9a-f]{40}$/, // full SHA-1: a commit hash, or a 40-hex credential we cannot tell apart
   /^\d{4}-\d{2}-\d{2}(?:T[\d:.]{1,15}(?:Z|[+-]\d{2}:?\d{2})?)?$/, // ISO timestamp
   /^\$\{?[A-Za-z_]/, // shell or env-var reference
   /^<[A-Za-z0-9:._-]{1,64}>$/, // <redacted:…> tag and friends
+  // SCREAMING_SNAKE with at least one underscore: an env-var name or a doc placeholder
+  // (`YOUR_TOKEN_HERE`, `NPM_TOKEN`), never a generated credential. The required underscore is
+  // what keeps an all-uppercase base64 blob out of this shape.
+  /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/,
   /^~?[./]{0,2}(?:[A-Za-z0-9._~-]{1,64}\/){1,16}[A-Za-z0-9._~-]{0,64}\.[A-Za-z0-9]{1,10}$/, // path with an extension
   /^@?[A-Za-z0-9._~/-]{1,64}@\d{1,4}\.\d{1,4}\.\d{1,4}/, // package@semver
 ];
@@ -291,7 +319,11 @@ function walk(value: unknown, depth: number, state: WalkState): readonly Finding
  */
 function keySegment(key: string, index: number): { segment: string; findings: readonly Finding[] } {
   const hits = scanText(key, "");
-  const safe = hits.length === 0 && key.length <= MAX_PATH_SEGMENT && PLAIN_KEY.test(key);
+  const safe =
+    hits.length === 0 &&
+    key.length <= MAX_PATH_SEGMENT &&
+    PLAIN_KEY.test(key) &&
+    !HEX_KEY.test(key);
   return { segment: safe ? `.${key}` : `.<key#${index}>`, findings: hits };
 }
 

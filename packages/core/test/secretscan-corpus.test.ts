@@ -139,9 +139,66 @@ const SHORT_PASSWORDS: readonly Case[] = [
   { label: "low-entropy 16 characters", hit: false, text: "password=aaaaaaaabbbbbbb1", reason: "entropy 1.9 bits/char, under the 3.0 floor — filler, not a credential." },
   { label: "repeating pair", hit: false, text: "secret=abababababababababab", reason: "entropy 1.0 bits/char, under the 3.0 floor." },
   { label: "base64 secret", hit: true, text: "secret=aB3cD4eF5gH6iJ7kL8mN9oP0" },
-  { label: "hex secret with a keyword", hit: false, text: "secret=a1b2c3d4e5f6a7b8", reason: "bare hex is rejected by the project-shape filter — a commit hash after the word secret is the commoner shape, and a false positive there costs the user the checkpoint." },
+  { label: "hex secret with a keyword", hit: true, text: "secret=a1b2c3d4e5f6a7b8" },
   { label: "uuid secret", hit: true, text: "client_secret=8a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d" },
   { label: "long generated token", hit: true, text: "auth_token=A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6" },
+];
+
+/**
+ * The Security **re-review** corpus for `54d71ea`: the two regressions revision 2 introduced, the
+ * ten vendor/encoding cases the reviewer probed for the first time, and the Importants. Held
+ * separately from {@link CORPUS} so the original 53-case measurement stays comparable across
+ * revisions.
+ */
+const CORPUS_ROUND_2: readonly Case[] = [
+  // --- B1: hex credentials behind a keyword (a regression against revision 1) --------------
+  { label: "32-hex api_key", hit: true, text: 'api_key="9f8e7d6c5b4a39281706f5e4d3c2b1a0"' },
+  { label: "32-hex API_KEY dotenv", hit: true, text: "API_KEY=9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+  { label: "32-hex client_secret", hit: true, text: "client_secret: 9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+  { label: "32-hex apikey", hit: true, text: "apikey=9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+  { label: "32-hex password", hit: true, text: "password=9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+  { label: "64-hex django SECRET_KEY", hit: true, text: `SECRET_KEY=${hex(64)}` },
+  { label: "64-hex DJANGO_SECRET_KEY quoted", hit: true, text: `DJANGO_SECRET_KEY="${hex(64)}"` },
+  { label: "32-hex api_key in a url query", hit: true, text: "https://api.example.com/v1?api_key=9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+  {
+    label: "40-hex access_token",
+    hit: false,
+    text: "access_token=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+    reason: "40 lowercase hex is byte-identical to a SHA-1 commit hash, which Code Review pinned as a must-not-flag. A false positive there is unrecoverable (data-flow §2 retries the same input and gives up, and cli.md has no --force) while a false negative degrades, so the ambiguous length resolves toward the user keeping the checkpoint.",
+  },
+  {
+    label: "40-hex GITHUB_TOKEN",
+    hit: false,
+    text: "GITHUB_TOKEN=9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+    reason: "same SHA-1 collision as the 40-hex access_token above.",
+  },
+
+  // --- B2: npm placeholder false positives ---------------------------------------------------
+  { label: "npmrc env-var reference", hit: false, text: "//registry.npmjs.org/:_authToken=${NPM_TOKEN}", reason: "the canonical correct .npmrc line, not a credential — an FP here costs the user the checkpoint." },
+  { label: "npmrc bare env-var reference", hit: false, text: "_authToken=$NPM_TOKEN", reason: "env-var reference, not a credential." },
+  { label: "npmrc redaction marker", hit: false, text: "set _authToken=<redacted:npm>", reason: "the output of this project's own redactor: the one string guaranteed to hold no credential." },
+  { label: "npmrc doc placeholder", hit: false, text: "docs say to write _authToken=YOUR_TOKEN_HERE in .npmrc", reason: "SCREAMING_SNAKE doc placeholder, not a credential." },
+
+  // --- I1, I2, I3 ----------------------------------------------------------------------------
+  { label: "bare AWS secret access key", hit: true, text: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+  { label: "bare AWS secret in a note", hit: true, text: "notes: rotate wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY next week" },
+  { label: "39-char base64-class repo path", hit: false, text: "packages/core/src/index/migrations/tests", reason: "not a credential — the AWS-secret shape demands a +/ plus mixed case plus a digit, which a path segment lacks." },
+  { label: "azure SAS with an sv sibling", hit: true, text: "https://s.blob.core.windows.net/c/b?sv=2022-11-02&sig=aB3cD4eF5gH6iJ7kL8mN9oP0qR1s%3D" },
+  { label: "non-azure sig parameter", hit: false, text: "?q=foo&sig=needs-twenty-plus-characters-here", reason: "`sig=` alone is a common parameter name; the Azure form requires a sibling sv/se/sp/sr." },
+
+  // --- N1, N2: the seven vendors the re-review probed ----------------------------------------
+  { label: "http basic auth header", hit: true, text: "Authorization: Basic YWRtaW46c3VwZXJTZWNyZXRQYXNzdzByZA==" },
+  { label: "atlassian api token", hit: true, text: `ATATT3xFfGF0${x(30)}` },
+  { label: "hashicorp vault token", hit: true, text: `hvs.CAESIH${x(30)}` },
+  { label: "databricks token", hit: true, text: `dapi${hex(32)}` },
+  { label: "linear api key", hit: true, text: "lin_api_aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV" },
+  { label: "grafana service-account token", hit: true, text: "glsa_aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV_a1b2c3d4" },
+  { label: "doppler service token", hit: true, text: "dp.st.prod.aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV" },
+
+  // --- the three the re-review found already passing ------------------------------------------
+  { label: "cloudflare bearer header", hit: true, text: `Authorization: Bearer ${x(40)}` },
+  { label: "segment write key dotenv", hit: true, text: "SEGMENT_WRITE_KEY=aB3cD4eF5gH6iJ7kL8mN9oP0" },
+  { label: "url-encoded password in a connection string", hit: true, text: "postgres://u:p%40ssw0rd%21X9@db.internal:5432/x" },
 ];
 
 function hits(text: string): boolean {
@@ -178,6 +235,30 @@ describe("security corpus — 53 realistic credentials", () => {
     // window `"private` taken from a `{"private_key": …}` input. The fields are what a caller
     // prints and persists, and they are what the invariant is about.
     for (const c of CORPUS) {
+      for (const finding of scanText(c.text, "corpus")) {
+        for (let i = 0; i + 8 <= c.text.length; i += 1) {
+          const window = c.text.slice(i, i + 8);
+          expect(finding.path, `${c.label} @ ${i}`).not.toContain(window);
+          expect(finding.pattern, `${c.label} @ ${i}`).not.toContain(window);
+        }
+      }
+    }
+  });
+});
+
+describe("security re-review corpus", () => {
+  it("declares a reason for every miss", () => {
+    for (const c of CORPUS_ROUND_2) if (!c.hit) expect(c.reason, c.label).toBeTruthy();
+  });
+
+  for (const c of CORPUS_ROUND_2) {
+    it(`${c.hit ? "catches" : "documents the gap for"} ${c.label}`, () => {
+      expect(hits(c.text)).toBe(c.hit);
+    });
+  }
+
+  it("never leaks a round-2 corpus value into a finding", () => {
+    for (const c of CORPUS_ROUND_2) {
       for (const finding of scanText(c.text, "corpus")) {
         for (let i = 0; i + 8 <= c.text.length; i += 1) {
           const window = c.text.slice(i, i + 8);

@@ -64,6 +64,14 @@ const PLANTED: readonly PlantedCase[] = [
     pattern: "aws-secret-access-key-nearby",
     secret: `the deploy secret is ${"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`,
   },
+  { pattern: "aws-secret-access-key-shape", secret: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+  { pattern: "atlassian-token", secret: `ATATT3xFfGF0${x(30)}` },
+  { pattern: "vault-token", secret: `hvs.CAESIH${x(30)}` },
+  { pattern: "databricks-token", secret: `dapi${hex(32)}` },
+  { pattern: "linear-api-key", secret: `lin_api_${"aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV"}` },
+  { pattern: "grafana-token", secret: `glsa_${"aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV"}_a1b2c3d4` },
+  { pattern: "doppler-token", secret: `dp.st.prod.${"aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV"}` },
+  { pattern: "basic-auth", secret: `Authorization: Basic ${"YWRtaW46c3VwZXJTZWNyZXRQYXNzdzByZA"}==` },
   { pattern: "github-token", secret: `ghp_${x(36)}` },
   { pattern: "github-pat", secret: `github_pat_${x(24)}` },
   { pattern: "slack-token", secret: `xoxb-${"000000000000"}-${x(24)}` },
@@ -83,7 +91,7 @@ const PLANTED: readonly PlantedCase[] = [
   { pattern: "shopify-token", secret: `shpat_${hex(32)}` },
   { pattern: "mailgun-key", secret: `key-${"3ax6xnjp29jd6fds4gc373sgvjxteol0"}` },
   { pattern: "azure-storage-key", secret: `AccountKey=${B64}==` },
-  { pattern: "azure-sas-token", secret: `?sv=2022-11-02&sig=${x(40)}%3D` },
+  { pattern: "azure-sas-token", secret: `?sv=2022-11-02&sig=${"aB3cD4eF5gH6iJ7kL8mN9oP0qR1s"}%3D` },
   { pattern: "docker-config-auth", secret: `{"auths":{"r.example.com":{"auth":"${B64}=="}}}` },
   { pattern: "npm-token", secret: `npm_${x(36)}` },
   { pattern: "npm-auth-token", secret: `//npm.pkg.github.com/:_authToken=8a1b2c3d-4e5f-6a7b-8c9d` },
@@ -209,6 +217,13 @@ describe("object keys are scanned, and never copied into a path", () => {
     expect(findings[0]!.pattern).toBe("npm-token");
   });
 
+  it("treats a long hex key as positional, not as an identifier", () => {
+    // A 32-hex credential used as a key scans clean and is a valid identifier, so without this
+    // it would print verbatim into stderr and into `last_attempt_errors`.
+    const findings = scanValue({ "9f8e7d6c5b4a39281706f5e4d3c2b1a0": `ghp_${x(36)}` });
+    expect(findings.map((f) => f.path)).toEqual(["<key#0>"]);
+  });
+
   it("keeps a plain, clean key verbatim so the contract's path form survives", () => {
     const payload = { notes: [{}, {}, { reason: `deploy uses ghp_${x(36)}` }] };
     expect(formatFindings(scanValue(payload))).toEqual([
@@ -323,6 +338,26 @@ describe("known false-positive shapes are not flagged", () => {
     "keyword naming a file": "secret: docs/contracts/p1/checkpoint-payload.schema.json",
     "keyword naming a timestamp": "token: 2026-09-09T12:34:56.789Z",
     "keyword naming a package": "secret: @workledger/core@0.0.1",
+
+    // --- Security re-review B2: the safe, documented, non-secret forms --------------------
+    // `_authToken=${NPM_TOKEN}` is the line every .npmrc doc tells you to write, and
+    // `<redacted:npm>` is the output of this project's own redactor: the one string guaranteed
+    // to hold no credential.
+    "npmrc pointing at an env var": "//registry.npmjs.org/:_authToken=${NPM_TOKEN}",
+    "npmrc pointing at a bare env var": "_authToken=$NPM_TOKEN",
+    "npmrc holding a redaction marker": "set _authToken=<redacted:npm>",
+    "npmrc doc placeholder": "docs say to write _authToken=YOUR_TOKEN_HERE in .npmrc",
+    "npmrc pointing at a CI secret": "_authToken=${{ secrets.NPM_TOKEN }}",
+
+    // --- Security re-review I2 and the placeholder sweep over the new patterns ------------
+    "signature parameter that is not an Azure SAS": "?q=foo&sig=needs-twenty-plus-characters-here",
+    "webhook signature parameter": "?sig=verify-the-webhook-signature-header",
+    "connection string pointing at an env var": "postgres://u:${PGPASSWORD}@db:5432/x",
+    "connection string pointing at a bare env var": "postgres://u:$PGPASS@db:5432/x",
+    "azure account key pointing at an env var": "AccountKey=${AZURE_KEY};",
+    "gcp private_key holding a redaction marker": '{"private_key":"<redacted:private-key>"}',
+    "bearer pointing at an env var": "Authorization: Bearer $GITHUB_TOKEN",
+    "a repo path that is 39 base64-class characters": "packages/core/src/index/migrations/tests",
   };
 
   for (const [label, text] of Object.entries(CLEAN)) {
@@ -330,6 +365,20 @@ describe("known false-positive shapes are not flagged", () => {
       expect(formatFindings(scanText(text, label))).toEqual([]);
     });
   }
+
+  it("still catches a hex credential at every length a git hash does not occupy", () => {
+    // Security re-review B1: revision 2 rejected all hex from 7 to 64 characters to keep
+    // `token: <commit sha>` quiet, and swallowed the whole hex-credential class with it. Hex is
+    // the commonest credential encoding there is, so the filter is now narrowed to git's own
+    // canonical forms. 12-15 miss on the 16-character run floor; 40 is a genuine collision with
+    // a SHA-1 and resolves toward the user keeping their checkpoint (see KNOWN_GAPS).
+    const hexOf = (n: number) => "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432".repeat(3).slice(0, n);
+    const missed: number[] = [];
+    for (let n = 16; n <= 70; n += 1) {
+      if (scanText(`api_key="${hexOf(n)}"`, "sweep").length === 0) missed.push(n);
+    }
+    expect(missed).toEqual([40]);
+  });
 
   it("finds nothing in a realistic clean checkpoint payload", () => {
     const payload = {
@@ -491,6 +540,16 @@ describe("runs in linear time", () => {
     "url schemes with no userinfo": fill("postgres://host:5432/db "),
     "url userinfo with no at sign": fill(`postgres://${"u".repeat(60)}:${"p".repeat(60)} `),
     "bearer values one character short": fill(`Bearer ${"a".repeat(15)} `),
+    "basic values one character short": fill(`Basic ${"a".repeat(15)} `),
+    "40-char base64 runs with no uppercase": fill(`${"a1/".repeat(13)}a `),
+    "40-char base64 runs with no slash": fill(`${"aB1".repeat(13)}a `),
+    "atlassian prefixes one character short": fill(`ATATT3${"A".repeat(19)} `),
+    "vault prefixes with no dot": fill(`hvs${"A".repeat(20)} `),
+    "databricks prefixes with 31 hex": fill(`dapi${"a1".repeat(15)}b `),
+    "linear prefixes one character short": fill(`lin_api_${"A".repeat(31)} `),
+    "grafana prefixes with no checksum": fill(`glsa_${"A".repeat(20)} `),
+    "doppler prefixes with no third segment": fill("dp.st. "),
+    "sig parameters with no sv sibling": fill(`?sig=${"A".repeat(20)} `),
     "keywords followed by a quote run": `api_key${'"'.repeat(SIZE - 7)}`,
     "keyword assignments one character short": fill(`token=${"a1".repeat(5)}b `),
     "env names that are all underscores": fill(`SECRET${"_".repeat(70)}=${"a1".repeat(7)}\n`),

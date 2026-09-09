@@ -96,8 +96,11 @@ export const KNOWN_GAPS: readonly string[] = Object.freeze([
   "base64-wrapped secrets — a base64'd `ghp_` token is invisible; recursive decode-and-rescan is " +
     "unbounded work and a false-positive engine.",
   "a value split across two fields — structurally undetectable by a per-string scanner.",
-  "bare high-entropy hex or base64 with no keyword and no vendor prefix: a commit hash, a " +
-    "checksum and a ULID all look identical, and a checkpoint carries those constantly.",
+  "bare high-entropy hex with no keyword and no vendor prefix: an abbreviated or full git hash " +
+    "looks identical, and a checkpoint carries those constantly. Bare 40-character base64 with " +
+    "a `+` or `/` IS caught, by `aws-secret-access-key-shape`.",
+  "a 40-character lowercase-hex value behind a credential keyword: byte-identical to a SHA-1 " +
+    "commit hash, which Code Review pinned as a must-not-flag. Other hex lengths ARE caught.",
   "human-chosen passwords shorter than 12 characters, or 12-15 characters with no symbol — see " +
     "the length-floor note on `generic-api-key`.",
   "zero-width characters inside a token degrade rather than defeat detection: the run before the " +
@@ -133,7 +136,11 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
     {
       name: "gcp-service-account",
       // The field name alone is dispositive; the value is never captured.
-      regex: /"private_key(?:_id)?"\s{0,8}:\s{0,8}"[^"\n]{8,}/g,
+      // No `rejectProjectShapes`: a real `private_key_id` *is* 40 lowercase hex, which that filter
+      // reads as a commit hash. The field name is dispositive here, so the only exclusions needed
+      // are the two safe forms — a `<redacted:…>` marker and a `${VAR}` reference — and the
+      // leading-character lookahead does that without a value filter.
+      regex: /"private_key(?:_id)?"\s{0,8}:\s{0,8}"(?![<$])[^"\n]{8,}/g,
       description: "GCP service-account JSON carrying a `private_key` or `private_key_id` field.",
     },
 
@@ -168,6 +175,47 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
       rejectProjectShapes: true,
     },
     {
+      name: "aws-secret-access-key-shape",
+      // A bare 40-character AWS secret, with no keyword anywhere near it. Four bounded lookaheads
+      // (40 characters each) demand what a hash, a checksum, a ULID and a path segment all lack:
+      // a base64 `+` or `/`, plus mixed case, plus a digit. Bounded, so still linear.
+      regex:
+        /(?<![A-Za-z0-9+/])(?=[A-Za-z0-9+/]{0,39}[+/])(?=[A-Za-z0-9+/]{0,39}[A-Z])(?=[A-Za-z0-9+/]{0,39}[a-z])(?=[A-Za-z0-9+/]{0,39}\d)[A-Za-z0-9+/]{40}(?![A-Za-z0-9+/=])/g,
+      description: "A bare 40-character base64 AWS-secret shape, with no keyword nearby.",
+    },
+    {
+      name: "atlassian-token",
+      regex: /\bATATT3[A-Za-z0-9_=-]{20,}/g,
+      description: "Atlassian API token (`ATATT3…`).",
+    },
+    {
+      name: "vault-token",
+      regex: /\bhv[sb]\.[A-Za-z0-9_-]{20,}/g,
+      description: "HashiCorp Vault service or batch token (`hvs.`, `hvb.`).",
+    },
+    {
+      name: "databricks-token",
+      regex: /\bdapi[0-9a-f]{32}\b/g,
+      description: "Databricks personal access token (`dapi` and 32 hex characters).",
+    },
+    {
+      name: "linear-api-key",
+      regex: /\blin_api_[A-Za-z0-9]{32,}\b/g,
+      description: "Linear API key (`lin_api_`).",
+    },
+    {
+      name: "grafana-token",
+      regex: /\bglsa_[A-Za-z0-9]{20,}_[0-9a-f]{6,10}\b/g,
+      description: "Grafana service-account token (`glsa_<token>_<checksum>`).",
+    },
+    {
+      name: "doppler-token",
+      // The class admits `.` because a Doppler token carries its environment as another segment:
+      // `dp.st.prod.<token>`.
+      regex: /\bdp\.(?:st|ct|sa|scim|audit)\.[A-Za-z0-9._-]{20,}/g,
+      description: "Doppler service, CLI, service-account, SCIM, or audit token (`dp.st.…`).",
+    },
+    {
       name: "github-token",
       regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,255}\b/g,
       description: "GitHub personal, OAuth, user-to-server, server-to-server, or refresh token.",
@@ -195,8 +243,9 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
     },
     {
       name: "telegram-bot-token",
-      // `{30,40}`, not the `{33}` the shape is usually written as: the Security reviewer's own
-      // corpus token carries 32 characters after `AA`, so a fixed count misses real tokens.
+      // `{30,40}`, not a fixed count: the suffix length is not actually guaranteed by Telegram,
+      // and fabricated example tokens in the wild carry 32-35 characters after `AA`. A range
+      // costs nothing here because the `<digits>:AA` prefix is what identifies the shape.
       regex: /\b\d{8,10}:AA[A-Za-z0-9_-]{30,40}\b/g,
       description: "Telegram bot token (`<bot id>:AA…`).",
     },
@@ -256,18 +305,25 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
       name: "azure-storage-key",
       // Not `^`-anchored: an Azure connection string is one long semicolon-separated line, so
       // `env-secret-assignment` can never see it.
-      regex: /\bAccountKey\s{0,8}=\s{0,8}[A-Za-z0-9+/]{40,100}={0,2}/gi,
+      regex: /\bAccountKey\s{0,8}=\s{0,8}([A-Za-z0-9+/]{40,100}={0,2})/gi,
       description: "Azure Storage account key inside a connection string (`AccountKey=`).",
+      rejectProjectShapes: true,
     },
     {
       name: "azure-sas-token",
-      regex: /[?&]sig=[A-Za-z0-9%+/_-]{20,}={0,2}/gi,
-      description: "Azure shared-access-signature token (the `sig=` parameter).",
+      // `sig=` alone is far too common — `?sig=verify-the-webhook-signature-header` is not a
+      // credential. The bounded lookbehind demands a sibling SAS parameter (`sv`, `se`, `sp`,
+      // `sr`), which Azure always emits before `sig`.
+      regex:
+        /(?<=[?&](?:sv|se|sp|sr)=[^\s]{0,256})[?&]sig=([A-Za-z0-9%+/_-]{20,}={0,2})/gi,
+      description: "Azure shared-access-signature token (`sig=` beside an `sv=`/`se=` parameter).",
+      rejectProjectShapes: true,
     },
     {
       name: "docker-config-auth",
-      regex: /"auth"\s{0,8}:\s{0,8}"[A-Za-z0-9+/]{16,}={0,2}"/g,
+      regex: /"auth"\s{0,8}:\s{0,8}"([A-Za-z0-9+/]{16,}={0,2})"/g,
       description: "Docker registry credential in a `config.json` `auth` field (base64 user:pass).",
+      rejectProjectShapes: true,
     },
     {
       name: "npm-token",
@@ -278,8 +334,13 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
       name: "npm-auth-token",
       // The key name alone is dispositive, whatever the value looks like — an `.npmrc`
       // `_authToken` is a credential by definition.
-      regex: /_authToken\s{0,8}=\s{0,8}["']?[^\s"';]{8,}/gi,
+      // The key name is dispositive for a *value*, but not for `_authToken=${NPM_TOKEN}` — the
+      // canonical correct line every .npmrc doc tells you to write — nor for the project's own
+      // `<redacted:…>` marker. No entropy floor: the key name still does the work for real
+      // tokens, whatever shape they take.
+      regex: /_authToken\s{0,8}=\s{0,8}["']?([^\s"';]{8,})/gi,
       description: "An `.npmrc` `_authToken=` line, whatever shape the token itself has.",
+      rejectProjectShapes: true,
     },
     {
       name: "url-credentials",
@@ -287,8 +348,9 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
       // Longest scheme alternatives first so `mongodb+srv` is not shadowed by `mongodb`.
       // The value is never captured.
       regex:
-        /\b(?:postgresql|postgres|mysql|mongodb\+srv|mongodb|rediss|redis|amqps|amqp|https|http):\/\/[^\s:/@]{1,64}:[^\s/@]{3,64}@/gi,
+        /\b(?:postgresql|postgres|mysql|mongodb\+srv|mongodb|rediss|redis|amqps|amqp|https|http):\/\/[^\s:/@]{1,64}:([^\s/@]{3,64})@/gi,
       description: "URL userinfo carrying a password (`postgres://user:pass@host`, `https://…`).",
+      rejectProjectShapes: true,
     },
     {
       name: "bearer-token",
@@ -296,6 +358,15 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = Object.freeze(
       // `[A-Za-z0-9._~+/-]` excludes `=`, so `{16,}=*` has no ambiguous split to backtrack through.
       regex: /\bBearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)/g,
       description: "An `Authorization: Bearer` credential.",
+      rejectProjectShapes: true,
+    },
+    {
+      name: "basic-auth",
+      // Symmetric with `bearer-token` directly above: same header, same sink, and the base64
+      // payload decodes to `user:password`.
+      regex: /\bBasic[ \t]+([A-Za-z0-9+/]{16,}={0,2})/g,
+      description: "An `Authorization: Basic` credential (base64 `user:password`).",
+      rejectProjectShapes: true,
     },
 
     // --- keyword-anchored heuristics ------------------------------------------------------
