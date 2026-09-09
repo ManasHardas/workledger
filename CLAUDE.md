@@ -28,6 +28,14 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
 
 ## Orchestration (agentwaves)
 
+**Clause #12 — Lean mode is in force** (`.orchestrator/dispatch-templates/clause-12-lean-mode.md`):
+one reviewer per PR by default (Security added only for credential/transcript/outside-ledger
+surfaces, SRE only for stated timing budgets), one fix-cycle then merge or split, Blockers-only
+reviews under 150 words, builder reports under 100 words, no side quests, no new process
+artifacts, merge on green, paperwork batched at session close, direct commits for amendments.
+The operator wants P1 finished in the next 4–5 sessions.
+
+
 The framework is vendored at `.orchestrator/`; placeholders are resolved per
 `plans/agentwaves-stack-map.md`. Start any build session with the paste-line at the top of
 `plans/next-session.md`. The ideation gate script must be given an absolute path:

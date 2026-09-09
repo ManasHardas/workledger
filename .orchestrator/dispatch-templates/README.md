@@ -60,3 +60,7 @@ Implement issue **#<N>** — `<issue title>`. Read full spec via `gh issue view 
 
 [What you want the agent to report back]
 ```
+
+## Clause #12 — Lean mode (PERMANENT)
+
+`clause-12-lean-mode.md`. Operator directive, 2026-09-09: one reviewer per PR by default, one fix-cycle then merge or split, reviews under 150 words and Blockers-only, five-line issues, builder reports under 100 words, no side quests, no new process artifacts, merge on green, paperwork batched at session close, direct commits for amendments and chore-closes. Paste its body into every dispatch brief.
