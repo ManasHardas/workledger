@@ -19,3 +19,16 @@ export { resolvedNotes, toBacklogView, toSessionView } from "./views.js";
 export type { BacklogView, Line, NoteLine, NoteRef, RemainingLine, SessionView } from "./views.js";
 export { ApiError } from "./errors.js";
 export type { ErrorBody } from "./errors.js";
+export { KeyedMutex } from "./mutex.js";
+export { isOpError, opErrorDetails } from "./ops.js";
+export type {
+  BacklogOps,
+  EditPatch,
+  ItemResult,
+  MergeResult,
+  OpContext,
+  OpError,
+  OpErrorCode,
+  ResolveNoteResult,
+  ResolvedNoteRef,
+} from "./ops.js";

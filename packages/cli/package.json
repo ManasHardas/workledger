@@ -30,6 +30,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22",
     "@workledger/core": "workspace:*",
+    "@workledger/server": "workspace:*",
     "commander": "^15.0.0"
   }
 }

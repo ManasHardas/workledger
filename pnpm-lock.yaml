@@ -146,6 +146,9 @@ importers:
       '@workledger/core':
         specifier: workspace:*
         version: link:../core
+      '@workledger/server':
+        specifier: workspace:*
+        version: link:../server
       commander:
         specifier: ^15.0.0
         version: 15.0.0

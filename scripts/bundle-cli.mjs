@@ -31,6 +31,14 @@ const OUTFILE = path.join(CLI_DIR, "dist", "main.js");
 const CORE_DIR = path.join(REPO_ROOT, "packages", "core", "src");
 const CORE_SRC = path.join(CORE_DIR, "index.ts");
 /**
+ * `@workledger/server`, aliased to its source for the same reason core is: it is `private: true`
+ * and reaches the CLI as `workspace:*`, so a published tarball could never resolve it, and its
+ * `exports` map points at a `dist/` the bundle must not depend on having been built. `workledger
+ * serve` is the only importer, and it reaches it through an `await import()`, so hono and the
+ * read model stay out of the Stop hook's startup path.
+ */
+const SERVER_SRC = path.join(REPO_ROOT, "packages", "server", "src", "index.ts");
+/**
  * Every `@workledger/core` specifier the CLI may use, aliased to core's *source*.
  *
  * The deep specifiers exist for the Stop hook's budget (plans/feature-p1-data-flow.md §6): the
@@ -42,6 +50,7 @@ const CORE_SRC = path.join(CORE_DIR, "index.ts");
 const CORE_SUBPATHS = ["schema", "ids", "frontmatter", "brief", "render/session", "render/backlog"];
 const CORE_ALIAS = {
   "@workledger/core": CORE_SRC,
+  "@workledger/server": SERVER_SRC,
   ...Object.fromEntries(
     CORE_SUBPATHS.map((sub) => [`@workledger/core/${sub}`, path.join(CORE_DIR, `${sub}.ts`)]),
   ),
