@@ -1,0 +1,110 @@
+/**
+ * Shared vocabulary for the two ledger renderers.
+ *
+ * Both `render/session.ts` and `render/backlog.ts` are pure text-in/text-out: they never touch
+ * the filesystem, never read a clock, and never mint an id. Every timestamp and every ULID is
+ * handed in by `packages/cli`, which is what makes a rendered file reproducible from its inputs
+ * and what keeps `packages/core` inside its purity fence (CLAUDE.md).
+ */
+import { formatIssuePath } from "../schema.js";
+
+import type { ZodType } from "zod";
+
+
+/** The reason a render was refused. Mapped to CLI exit codes by `packages/cli`. */
+export type RenderErrorCode =
+  /** The file handed in is not a valid ledger artifact of the expected kind. */
+  | "invalid-document"
+  /** The payload, stamp, or patch handed in does not satisfy its schema. */
+  | "invalid-input"
+  /** Checkpoint `n` is already recorded in this session file (see the idempotency rule). */
+  | "duplicate-checkpoint"
+  /** A Remaining item names a backlog id the caller did not resolve. */
+  | "unresolved-ref";
+
+/**
+ * A render that cannot proceed. Distinct from `FrontmatterError` (a malformed `---` block) and
+ * from a zod failure (a malformed payload) so the CLI can tell "your input is wrong" from
+ * "the file on disk is wrong" without string matching.
+ */
+export class RenderError extends Error {
+  readonly code: RenderErrorCode;
+  /** Zero or more `path: message` lines, shaped for stderr the way `schema.ts` shapes them. */
+  readonly details: readonly string[];
+
+  constructor(message: string, code: RenderErrorCode, details: readonly string[] = []) {
+    super(message);
+    this.name = "RenderError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+/** The `- [cp <n>] ` prefix every Goal, Done, and Remaining line carries (`x-body.line-prefix`). */
+export const LINE_PREFIX = "- ";
+/** Separator between the evidence attributes of a Done line: U+00B7 with a space either side. */
+export const ATTR_SEPARATOR = " · ";
+/** The arrow that opens a Remaining line's backlog reference (`x-body.remaining-ref-form`). */
+export const REF_ARROW = "→";
+
+/**
+ * Collapse a scalar to something that can live on one line.
+ *
+ * The schemas cap `text`, `why`, and `reason` by length but not by content, so an agent may send
+ * a payload with an embedded newline — which would otherwise split one logical entry into two
+ * lines and make `[cp n]` provenance ambiguous for the second. Every run of whitespace becomes a
+ * single space and the result is trimmed. This is the only normalization the renderers apply to
+ * agent text; nothing else is rewritten or escaped.
+ */
+export function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/** Render `[cp <n>]`, the token that binds a line to a transcript span (data-flow §4). */
+export function cpTag(n: number): string {
+  return `[cp ${n}]`;
+}
+
+/** Parse a leading `- [cp <n>] `; returns the number and the rest, or `undefined` if absent. */
+export function readCpPrefix(line: string): { n: number; rest: string } | undefined {
+  const match = /^- \[cp (\d+)\] /.exec(line);
+  if (match === null) return undefined;
+  return { n: Number(match[1]), rest: line.slice(match[0].length) };
+}
+
+/**
+ * A `key: value` pair from an attribute run, or `undefined` when `segment` does not start with
+ * `<key>: `. Used to walk a Done or Remaining line right to left over known keys, so no part of
+ * the parse ever has to guess where prose ends.
+ */
+export function readAttribute(segment: string, key: string): string | undefined {
+  const marker = `${key}: `;
+  return segment.startsWith(marker) ? segment.slice(marker.length) : undefined;
+}
+
+/** Split a comma-joined list back into its members, dropping empties. */
+export function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+/**
+ * Validate `value` through a zod schema, re-throwing a failure as a {@link RenderError} whose
+ * `details` are the `path: message` lines `schema.ts` shapes for stderr.
+ */
+export function validate<T>(
+  schema: ZodType<T>,
+  value: unknown,
+  what: string,
+  code: RenderErrorCode,
+): T {
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  throw new RenderError(
+    `${what} is not valid`,
+    code,
+    result.error.issues.map((issue) => `${formatIssuePath(issue.path)}: ${issue.message}`),
+  );
+}
