@@ -19,7 +19,7 @@ export default defineConfig({
     ],
   },
   test: {
-    projects: ["packages/*", "scripts"],
+    projects: ["packages/*", "scripts", "apps/web"],
     // Test *files* run one at a time. `packages/cli/test/hook-timing.test.ts` asserts a
     // wall-clock contract — the Stop hook's p95 < 100 ms including Node startup
     // (plans/feature-p1-data-flow.md §6) — and a budget measured while four other workers are

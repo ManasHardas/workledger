@@ -1,0 +1,25 @@
+@import "tailwindcss";
+@import "@workledger/tokens/tokens.css";
+@config "../tailwind.config.js";
+
+/*
+ * Everything below reads a token. The light/dark swap is the media query inside tokens.css —
+ * nothing in the app branches on the theme (design spec §14.1).
+ */
+html {
+  font-size: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--wl-color-background);
+  color: var(--wl-color-foreground);
+  font-family: var(--wl-font-family-sans);
+  font-size: var(--wl-font-size-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre {
+  font-family: var(--wl-font-family-mono);
+}

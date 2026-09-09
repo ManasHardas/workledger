@@ -29,6 +29,30 @@ export default tseslint.config(
     },
   },
   {
+    // `packages/tokens/scripts/*.mjs` is plain Node ESM like `scripts/*.mjs` above, and gets the
+    // same treatment: declare the globals it uses rather than switching `no-undef` off.
+    files: ["packages/tokens/scripts/**/*.mjs"],
+    languageOptions: {
+      sourceType: "module",
+      globals: { URL: "readonly", console: "readonly" },
+    },
+  },
+  {
+    // The service worker runs in ServiceWorkerGlobalScope, not in a window and not in Node.
+    files: ["apps/web/public/sw.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        caches: "readonly",
+        fetch: "readonly",
+        self: "readonly",
+        Promise: "readonly",
+        Response: "readonly",
+        URL: "readonly",
+      },
+    },
+  },
+  {
     files: ["packages/core/**/*.ts"],
     rules: {
       "no-restricted-imports": [
