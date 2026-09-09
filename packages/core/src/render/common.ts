@@ -32,12 +32,33 @@ export class RenderError extends Error {
   /** Zero or more `path: message` lines, shaped for stderr the way `schema.ts` shapes them. */
   readonly details: readonly string[];
 
-  constructor(message: string, code: RenderErrorCode, details: readonly string[] = []) {
-    super(message);
+  constructor(
+    message: string,
+    code: RenderErrorCode,
+    details: readonly string[] = [],
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
     this.name = "RenderError";
     this.code = code;
     this.details = details;
   }
+}
+
+/**
+ * Wrap a failure from `frontmatter.ts` as a {@link RenderError} without throwing away what makes
+ * a corrupt ledger file debuggable.
+ *
+ * `parseFrontmatter` computes a 1-based document line; interpolating only its message would force
+ * the CLI to string-match a message it just built to recover that number — the coupling `details`
+ * exists to avoid. So the line goes into `details` in the same `<where>: <message>` shape, and the
+ * original error is threaded through as `cause`.
+ */
+export function documentError(what: string, error: unknown): RenderError {
+  const message = error instanceof Error ? error.message : String(error);
+  const line = (error as { line?: unknown }).line;
+  const details = typeof line === "number" ? [`line ${line}: ${message}`] : [];
+  return new RenderError(`${what}: ${message}`, "invalid-document", details, { cause: error });
 }
 
 /** Separator between the evidence attributes of a Done line: U+00B7 with a space either side. */
@@ -63,11 +84,18 @@ export function cpTag(n: number): string {
   return `[cp ${n}]`;
 }
 
-/** Parse a leading `- [cp <n>] `; returns the number and the rest, or `undefined` if absent. */
+/**
+ * Parse a leading `- [cp <n>] `; returns the number and the rest, or `undefined` if absent.
+ *
+ * `n` is a join key for the brief and for P2's UI, so a value past `Number.MAX_SAFE_INTEGER` is
+ * treated as an unrecognized line rather than silently handed on as a float.
+ */
 export function readCpPrefix(line: string): { n: number; rest: string } | undefined {
   const match = /^- \[cp (\d+)\] /.exec(line);
   if (match === null) return undefined;
-  return { n: Number(match[1]), rest: line.slice(match[0].length) };
+  const n = Number(match[1]);
+  if (!Number.isSafeInteger(n)) return undefined;
+  return { n, rest: line.slice(match[0].length) };
 }
 
 /**

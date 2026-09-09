@@ -34,7 +34,7 @@ import {
   SessionRef as SessionRefSchema,
 } from "../schema.js";
 import { parseFrontmatter, stringifyFrontmatter } from "../frontmatter.js";
-import { RenderError, cpTag, oneLine, validate } from "./common.js";
+import { cpTag, documentError, oneLine, validate } from "./common.js";
 
 /** The arrow that separates the old and new value in a `history[].diff` (spec §4.2). */
 const DIFF_ARROW = "→";
@@ -184,10 +184,7 @@ export function parseItem(text: string): ParsedItem {
   try {
     parsed = parseFrontmatter(text);
   } catch (error) {
-    throw new RenderError(
-      `not a backlog item: ${error instanceof Error ? error.message : String(error)}`,
-      "invalid-document",
-    );
+    throw documentError("not a backlog item", error);
   }
   const frontmatter = validate(
     BacklogItemSchema,

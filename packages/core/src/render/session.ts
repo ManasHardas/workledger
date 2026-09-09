@@ -47,6 +47,22 @@
  * neither guessed at nor deleted: it surfaces in {@link ParsedSession.unparsed} and is re-emitted
  * verbatim at the foot of its own section.
  *
+ * Two other ways the file that comes back is not byte-for-byte the file a human wrote, both
+ * deliberate and both content-preserving: blank lines *inside* a known section are structural and
+ * are decided by the renderer, and a block under a heading this build does not know is re-emitted
+ * below `## Notes` rather than wherever it sat.
+ *
+ * ## Cost
+ *
+ * `appendCheckpoint` re-parses and re-stringifies the whole file, so one append is linear in file
+ * size and a session's appends are quadratic *cumulatively* — the frontmatter's `checkpoints[]`
+ * array is re-emitted every time and nothing caps it. One CLI process does one append, so the
+ * quadratic term is never paid by a single invocation. Measured on the host (Node 25.9.0) at 2
+ * done / 2 remaining / 2 notes per checkpoint: 2.0 ms at 50 checkpoints, **6.7 ms at 200
+ * checkpoints** (101 KB, 2,226 lines; ~0.7% of the §6 `checkpoint < 1 s` budget), 17.2 ms at 500.
+ * At 500 checkpoints `checkpoints[]` is 44% of the file — past that, a reader is in territory
+ * nobody has measured.
+ *
  * This module is pure: no Node built-ins, no clock, no id minting. The caller supplies the stamp
  * and the resolved backlog ids.
  */
@@ -75,6 +91,7 @@ import {
   REF_ARROW,
   RenderError,
   cpTag,
+  documentError,
   oneLine,
   readAttribute,
   readCpPrefix,
@@ -521,10 +538,7 @@ export function parseSessionText(text: string): ParsedSession {
   try {
     parsed = parseFrontmatter(text);
   } catch (error) {
-    throw new RenderError(
-      `not a session file: ${error instanceof Error ? error.message : String(error)}`,
-      "invalid-document",
-    );
+    throw documentError("not a session file", error);
   }
   const frontmatter = validate(SessionFrontmatterSchema, parsed.data, "the session frontmatter", "invalid-document");
   const sections = splitBody(parsed.body);

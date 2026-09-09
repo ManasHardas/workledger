@@ -761,3 +761,32 @@ describe("prose shaped like evidence never becomes evidence (CR important 1)", (
     expect(parsed.done[0]?.verified).toBe("not-verified");
   });
 });
+
+describe("errors stay debuggable (SRE important 2)", () => {
+  it("threads the frontmatter error's document line and cause through RenderError", () => {
+    try {
+      parseSessionText("---\nid: [unclosed\n---\nbody\n");
+      expect.unreachable("expected a RenderError");
+    } catch (error) {
+      const rendered = error as RenderError;
+      expect(rendered.code).toBe("invalid-document");
+      expect(rendered.cause).toBeInstanceOf(Error);
+      // The line is recoverable without string-matching the message we just built.
+      expect(rendered.details.some((detail) => /^line \d+: /.test(detail))).toBe(true);
+    }
+  });
+
+  it("treats a checkpoint number past MAX_SAFE_INTEGER as an unrecognized line", () => {
+    const parsed = parseSessionText(
+      golden("checkpoint-1.out").replace(
+        "## Done\n",
+        "## Done\n- [cp 99999999999999999999] not a real checkpoint\n",
+      ),
+    );
+    expect(parsed.done.map((line) => line.cp)).toEqual([1]);
+    expect(parsed.unparsed).toContainEqual({
+      section: "done",
+      line: "- [cp 99999999999999999999] not a real checkpoint",
+    });
+  });
+});
