@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workledger.dev/contracts/p1/session-frontmatter.schema.json",
+  "title": "SessionFrontmatter",
+  "description": "YAML frontmatter of `.workledger/sessions/<ulid>.md`. Written only by the CLI. Frozen at P1 Wave 0 (2026-09-09).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "id", "harness", "harness_session_id", "repo", "author", "started", "status", "private", "source", "checkpoints"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "ULID assigned at SessionStart." },
+    "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex"] },
+    "harness_session_id": { "type": "string", "minLength": 1 },
+    "repo": { "type": "string", "minLength": 1, "description": "First git remote's host/path without scheme or .git, else the directory basename." },
+    "branch": { "type": ["string", "null"] },
+    "author": { "$ref": "#/$defs/Actor" },
+    "started": { "type": "string", "format": "date-time" },
+    "ended": { "type": ["string", "null"], "format": "date-time" },
+    "end_reason": { "type": ["string", "null"], "enum": ["clean", "clear", "resume", "logout", "crashed", "unknown", null] },
+    "status": { "type": "string", "enum": ["open", "ended", "crashed", "repaired"] },
+    "private": { "type": "boolean" },
+    "source": { "type": "string", "enum": ["live", "backfill"] },
+    "model": { "type": ["string", "null"] },
+    "needs_repair": { "type": "boolean", "default": false },
+    "checkpoint_failures": { "type": "integer", "minimum": 0, "default": 0, "description": "Times a block was followed by a failed checkpoint attempt and a retry that also failed." },
+    "checkpoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Checkpoint" }
+    }
+  },
+  "$defs": {
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "dome_user": { "type": ["string", "null"] }
+      }
+    },
+    "Checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "at", "turns", "transcript_offset", "trigger"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "turns": { "type": "integer", "minimum": 0, "description": "Cumulative Stop events seen in this session at the time of the checkpoint; per-checkpoint deltas are derived by subtraction." },
+        "transcript_offset": { "type": "integer", "minimum": 0, "description": "Byte size of the transcript file when the checkpoint was recorded; the span for checkpoint n is [offset(n-1), offset(n))." },
+        "trigger": { "type": "string", "enum": ["bytes", "minutes", "turns", "manual", "end", "repair", "backfill", "extract"], "description": "P1 emits bytes, minutes, turns, manual. The rest are reserved for P3 so the enum does not need a schema_version bump. Precedence when several thresholds cross at once: bytes, minutes, turns." }
+      }
+    }
+  },
+  "x-body": {
+    "sections": ["## Goal", "## Done", "## Remaining", "## Notes"],
+    "line-prefix": "- [cp <n>] ",
+    "remaining-ref-form": "→ WL-<ulid> (new|updates|closes)",
+    "note-form": "- <type> [cp <n>]<' by <by>' for decisions>: <text><'; reason: <reason>' for decisions>"
+  }
+}

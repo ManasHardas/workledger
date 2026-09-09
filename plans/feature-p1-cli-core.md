@@ -138,9 +138,14 @@ history: []                        # { at, by, op, diff }
 CREATE TABLE sessions (
   ulid TEXT PRIMARY KEY, repo_path TEXT NOT NULL, harness TEXT NOT NULL,
   harness_session_id TEXT NOT NULL, transcript_path TEXT, status TEXT NOT NULL,
-  last_offset INTEGER NOT NULL DEFAULT 0, turns_since_checkpoint INTEGER NOT NULL DEFAULT 0,
-  last_checkpoint_at TEXT, last_denied_at TEXT, last_denied_turn INTEGER,
-  updated_at TEXT NOT NULL
+  private INTEGER NOT NULL DEFAULT 0,
+  last_offset INTEGER NOT NULL DEFAULT 0,
+  turns_total INTEGER NOT NULL DEFAULT 0, turns_since_checkpoint INTEGER NOT NULL DEFAULT 0,
+  last_checkpoint_at TEXT,
+  last_block_turn INTEGER, blocks_since_checkpoint INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT, last_attempt_exit INTEGER,
+  updated_at TEXT NOT NULL,
+  UNIQUE (harness, harness_session_id)
 );
 CREATE TABLE checkpoints (
   session_ulid TEXT NOT NULL, n INTEGER NOT NULL, at TEXT NOT NULL,
@@ -173,7 +178,9 @@ workledger hook <SessionStart|Stop|SessionEnd>      # stdin: Claude Code hook JS
   budget: < 100 ms p95 on the allow path
 
 workledger checkpoint [--session <ulid>]           # stdin: CheckpointPayload JSON
-  # session resolved from WORKLEDGER_SESSION env (set by SessionStart) or --session
+  # session resolved from --session (the block instruction and the brief both name the ulid),
+  # else WORKLEDGER_SESSION, else the single open session for this repo in the index;
+  # two or more open sessions is a usage error that lists them
   stdout: "checkpoint <n> recorded: <d> done, <r> remaining, <q> questions"
   stderr: validation errors, one per line, with the open WL ids on unknown-ref errors
   exit: 0 ok · 1 validation failed · 3 secret detected (field named, value never printed)
@@ -186,14 +193,22 @@ workledger doctor
   exit: 0 all good · 2 warnings · 1 broken
 ```
 
-Hook output shapes (frozen at Wave 0 from the live docs):
+Hook output shapes (frozen at Wave 0 from the live docs, 2026-09-09; full text in
+`docs/contracts/p1/hooks-claude-code.md`):
 
 ```json
-// SessionStart
+// SessionStart: inject the brief
 { "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": "<brief>" } }
-// Stop (deny → agent continues with the instruction)
-{ "hookSpecificOutput": { "hookEventName": "Stop", "permissionDecision": "deny",
-    "permissionDecisionReason": "<checkpoint instruction with open WL ids>" } }
+```
+
+```
+// Stop: allow = exit 0, no output.
+// Stop: block (request a checkpoint) = exit code 2, the checkpoint instruction on stderr.
+//   Docs: "The blocking message is the reason from your JSON's blocking decision when it makes
+//   one, and your stderr text otherwise." The exit-code path is used because the JSON field
+//   name differs between documentation sections.
+// Stop input `stop_hook_active: true` means a Stop hook already blocked this attempt; the hook
+//   then always allows (documented loop guard), in addition to the index never-twice guard.
 ```
 
 Reviewer trio per Clause #6: `checkpoint`, `hook`, and `init` are full-trio (they consume agent
@@ -204,18 +219,33 @@ scaffold and CI are CR-only. See `plans/agentwaves-stack-map.md` §Clauses adapt
 
 ## Hook state machine (replaces the FE flow section)
 
+Authoritative detail: `plans/feature-p1-data-flow.md` §2. Summary:
+
 ```
-SessionStart ──▶ session file created, index row, brief injected
-                       │
-   ┌───────────────────┴────────────── every Stop ───────────────────────────┐
-   │ turns++ ; bytes = size(transcript) - last_offset ; mins = now - last_cp   │
-   │ if last_denied_turn == turns-1 and no checkpoint since  → allow (skipped) │
-   │ elif bytes<B and mins<M and turns<T                     → allow           │
-   │ else                                                    → deny(instruction)│
-   └──────────────────────────────────────────────────────────────────────────┘
-                       │  agent runs `workledger checkpoint` → stamps n, resets counters
-SessionEnd ──▶ status ended; needs_repair if transcript grew > stale_turns since last cp
+SessionStart(source)
+  startup|clear      → new ulid, frontmatter, index row (offset = current transcript size)
+  resume|fork|compact→ reuse the row whose (harness, harness_session_id) matches; else new ulid
+  private (env or private_paths) → boundary record only; no brief; Stop never blocks
+  then inject brief as additionalContext (first line names the session ulid)
+
+Stop (every assistant turn)                       turns_total++ ; turns_since++
+  disabled | private | not enabled repo            → allow
+  stop_hook_active == true                         → allow (documented loop guard)
+  size(transcript) < last_offset                   → last_offset = size (rotation), continue
+  blocks_since_checkpoint == 0:
+     thresholds not crossed                        → allow
+     crossed (bytes, then minutes, then turns)     → BLOCK #1 (exit 2, instruction with ulid + open ids)
+  blocks_since_checkpoint == 1:
+     no `checkpoint` attempt since block           → allow; agent ignored it; counters keep running
+     attempt failed (last_attempt_exit ≠ 0)        → BLOCK #2 with the validation errors appended
+  blocks_since_checkpoint ≥ 2                      → allow; frontmatter checkpoint_failures++
+`workledger checkpoint` success                    → stamp n; turns_since = 0; blocks = 0; offset = size
+
+SessionEnd(reason) → ended, end_reason, status ended; needs_repair = turns_since > stale_turns
 ```
+
+"Never block twice in a row" therefore means: never block twice for an agent that ignored the
+first block; one retry is allowed when the agent tried and the CLI rejected the payload.
 
 ---
 
@@ -230,7 +260,8 @@ Infra agent decomposes into ~4 issues:
 3. Fixture capture — `scripts/capture-fixtures.mjs` that copies and scrubs real Claude Code
    transcripts and hook payloads from this machine into `test/fixtures/` (secrets and emails
    redacted; sizes kept).
-4. Packaging — `npm publish --dry-run` job, version script, `README` install section.
+4. Packaging — `npm publish --dry-run` CI job, version script, `README` install section
+   (same slot as issue 2 in the implementation plan: slot 11 is CI + packaging + fixtures).
 
 Backend agent decomposes into ~9 issues:
 
@@ -247,9 +278,11 @@ Backend agent decomposes into ~9 issues:
    exit codes; tests via fixtures.
 8. `cli/adapters/claude-code` + `cli/hook` — payload parsing, thresholds, loop guard, deny and
    inject JSON, fail-open wrapper, timing test; hook-simulation tests over recorded payloads.
-9. `cli/init` + `cli/doctor` — detection, repo listing from session stores (metadata only),
-   `.workledger/` creation, settings merge with diff and confirm, doctor checks; tests with a temp
-   home and temp repo.
+9. `cli/init` + `cli/doctor` + `cli/brief` + `cli/config` — config loader with defaults;
+   detection; repo listing from session stores (metadata only); `.workledger/` creation; settings
+   merge with diff, `.bak`, and confirm; the hook command string with the absent-CLI no-op and a
+   test for it; a printed privacy summary in `init`'s next steps; doctor checks; the `brief`
+   command; tests with a temp home and temp repo.
 
 Frontend agent: none in P1 (first Frontend dispatch is P2).
 
@@ -259,18 +292,23 @@ Frontend agent: none in P1 (first Frontend dispatch is P2).
 
 - [ ] `pnpm install && pnpm test` green on a clean clone; coverage gate at 70% on changed files.
 - [ ] `workledger init` in a temp repo creates `.workledger/` and a `.claude/settings.json` hooks
-      block that round-trips through Claude Code's settings loader without error.
+      block matching `docs/contracts/p1/hooks-claude-code.md`; a real `claude -p` session started
+      in that repo fires `SessionStart` (observed as an index row), which is the loader round-trip.
+- [ ] With the CLI absent from `PATH`, every hook command exits 0 with no output.
 - [ ] A scripted headless Claude Code session in that repo produces a session file with ≥1
       checkpoint, a proposed backlog item, and a `[cp n]` stamp whose transcript offset lies inside
       the transcript file.
-- [ ] `Stop` allow path p95 < 100 ms over 100 simulated invocations; deny never fires twice in a row.
+- [ ] `Stop` allow path p95 < 100 ms over 100 simulated invocations; `SessionStart` < 300 ms;
+      `SessionEnd` < 200 ms; a block never repeats for an agent that ignored it; one retry block
+      fires when the CLI rejected the payload; `stop_hook_active: true` always allows.
+- [ ] `WORKLEDGER_PRIVATE=1` yields a boundary-only session record, no brief, and no block.
 - [ ] `workledger checkpoint` rejects each invalid fixture with the documented exit code and
       message; a payload containing a fixture secret exits 3 and prints only the field name.
 - [ ] `workledger brief` output is byte-identical across two runs on the same ledger and respects
       the token cap.
 - [ ] This repository and `~/Projects/dome_workspace` are enabled; at least three real sessions
       in each have recorded checkpoints before phase close (Wave 3.5).
-- [ ] HARD CONSTRAINT honored across all PRs (host verification with Node 22 LTS + pnpm 10, stated).
+- [ ] HARD CONSTRAINT honored across all PRs (host verification with Node ≥ 22 + pnpm ≥ 10, stated).
 - [ ] Clause #3 honored on every Backend PR.
 
 ---

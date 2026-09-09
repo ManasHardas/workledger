@@ -10,8 +10,8 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
 - **Remote:** `origin` is `git@github.com-personal:manashardas/workledger.git` (personal identity).
   Push to it without asking. Never add a Dome remote, Dome credentials, or the Dome git identity
   here; the future Dome card mirror is a separate `DomeHQ/*` repo with its own rules.
-- **Stack:** TypeScript only (Node 22 LTS, pnpm 10). No Docker in this project; the HARD
-  CONSTRAINT's verification path is "on the host with Node 22 LTS + pnpm 10", stated in every PR.
+- **Stack:** TypeScript only (Node ≥ 22, pnpm ≥ 10; this machine has Node 25 and pnpm 11). No Docker in this project; the HARD
+  CONSTRAINT's verification path is "on the host with Node ≥ 22 + pnpm ≥ 10", stated in every PR.
 - **`packages/core` stays pure:** no Node APIs, no filesystem, no SQLite. Side effects live in
   `packages/cli` and `packages/server`.
 - **The ledger is files; the index is a cache.** Nothing in `~/.workledger/` is ever the source of

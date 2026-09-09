@@ -22,7 +22,7 @@ placeholders; this file records how each resolves here, and the substitutions al
 | `<migrations-versions-dir>` | `packages/server/src/index/migrations/` | SQLite index only; the ledger files carry a `schema_version` in frontmatter instead |
 | `<api-codegen-output>` | `packages/api-client/src/generated/` | P2 onward; in P1 the generated artifact is the JSON Schema under `docs/contracts/p1/` |
 | `<full-stack-up-command>` | `pnpm dev` | |
-| `<runtime-version>` | Node 22 LTS + pnpm 10 | |
+| `<runtime-version>` | Node ≥ 22 + pnpm ≥ 10 | |
 
 ## Role mapping
 
@@ -40,7 +40,7 @@ placeholders; this file records how each resolves here, and the substitutions al
 - **Clause #3 (test file in initial commit)**: test path is `packages/<pkg>/test/<scope>.test.ts`;
   the 70% gate is vitest coverage on changed files, wired by Infra in P1.
 - **HARD CONSTRAINT (verification environment)**: this project has no Docker. The clause reduces to
-  "verify on the host with Node 22 LTS + pnpm 10 and state it in the PR". The docker prohibitions
+  "verify on the host with Node ≥ 22 + pnpm ≥ 10 and state it in the PR". The docker prohibitions
   still apply if a container is ever introduced.
 - **Clause #6 (reviewer trio)**: "auth pathway" here means anything that writes outside
   `.workledger/` (hook installation into `.claude/settings.json`), anything that injects text into
