@@ -31,7 +31,6 @@ import { checkpointInstruction } from "../instruction.js";
 import {
   findRepoRoot,
   isEnabled,
-  ledgerPaths,
   listOpenBacklogIds,
   readTextFile,
   sessionFile,
@@ -267,62 +266,19 @@ async function createSession(ctx: Context, size: number | undefined): Promise<st
  * `workledger checkpoint --session <ulid>` (hooks-claude-code.md §Outputs emitted).
  *
  * Built without a `now`: `buildBrief` stamps a `generated` line only when it is given one, and
- * an unchanged ledger should produce a byte-identical injection.
+ * an unchanged ledger should produce a byte-identical injection. The ledger read is
+ * `commands/brief.ts`'s `readBriefInput`, shared with `workledger brief` so the injected text
+ * and the printed one cannot drift apart.
  */
 async function buildSessionBrief(ctx: Context, ulid: string): Promise<string | undefined> {
-  const { root } = ctx;
-  const [{ buildBrief }, { parseItem }, { parseSessionText }] = await Promise.all([
+  const [{ buildBrief }, { readBriefInput }] = await Promise.all([
     import("@workledger/core/brief"),
-    import("@workledger/core/render/backlog"),
-    import("@workledger/core/render/session"),
+    import("./brief.js"),
   ]);
-  const { readdirSync } = await import("node:fs");
-  const path = (await import("node:path")).default;
-  const paths = ledgerPaths(root);
-
-  /** Ledger `.md` files in one directory, or none when the directory is absent. */
-  const ledgerFiles = (dir: string): string[] => {
-    try {
-      return readdirSync(dir)
-        .filter((name) => name.endsWith(".md"))
-        .map((name) => path.join(dir, name));
-    } catch {
-      return [];
-    }
-  };
-
-  // `buildBrief` does its own filtering, ordering and capping (data-flow §5), so every readable
-  // file is handed over; a file that does not parse is skipped rather than thrown on, the same
-  // rule `listOpenBacklogIds` follows — one corrupt file must not cost a session its brief.
-  const backlog = [];
-  for (const file of ledgerFiles(paths.backlog)) {
-    const text = readTextFile(file);
-    if (text === undefined) continue;
-    try {
-      backlog.push({ frontmatter: parseItem(text).frontmatter });
-    } catch {
-      continue;
-    }
-  }
-
-  const sessions = [];
-  for (const file of ledgerFiles(paths.sessions)) {
-    const text = readTextFile(file);
-    if (text === undefined) continue;
-    try {
-      const parsed = parseSessionText(text);
-      sessions.push({
-        frontmatter: parsed.frontmatter,
-        done: parsed.done.map((line) => line.text),
-        notes: parsed.notes.map((line) => ({ type: line.type, text: line.text, cp: line.cp })),
-      });
-    } catch {
-      continue;
-    }
-  }
+  const input = await readBriefInput(ctx.root);
 
   try {
-    return buildBrief({ backlog, sessions }, { maxTokens: ctx.config.brief.max_tokens, sessionId: ulid });
+    return buildBrief(input, { maxTokens: ctx.config.brief.max_tokens, sessionId: ulid });
   } catch (error) {
     // A `max_tokens` below the brief's floor is a config problem, not a reason to fail the hook.
     ctx.io.stderr(`workledger: hook SessionStart: brief not injected (${describe(error)})`);

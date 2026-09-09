@@ -12,11 +12,18 @@ import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "backlog"];
 
 /**
- * Commands whose bodies slot 10 still replaces. `backlog` is final in P1; `checkpoint` (#11) and
- * `hook` (#12) are built — running either from here would read stdin and write the ledger of
- * whatever repo the suite runs in, so their registration is asserted by introspection instead.
+ * Every P1 command now has a body, so none of them can be invoked from here: each would read the
+ * ledger, the index or stdin of whatever repo the suite runs in. Registration is asserted by
+ * introspection instead, and the bodies are driven against temp repos in their own test files.
  */
-const STUBS = ["init", "brief", "doctor"];
+const OPTIONS: Record<string, string[]> = {
+  init: ["--repo", "--yes", "--no-backfill"],
+  hook: [],
+  checkpoint: ["--session", "--dry-run"],
+  brief: ["--repo", "--max-tokens"],
+  doctor: ["--json"],
+  backlog: [],
+};
 
 /** Run the program with stdout and stderr captured. */
 async function invoke(argv: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -54,39 +61,19 @@ describe("command registry", () => {
     for (const name of COMMANDS) expect(out).toContain(name);
   });
 
-  it.each(STUBS)("%s exits 1 with 'not implemented'", async (name) => {
-    const { code, err, out } = await invoke([name]);
-
-    expect(code).toBe(EXIT_USAGE);
-    expect(err).toContain("not implemented");
-    expect(err).toContain(`workledger ${name}`);
-    expect(out).toBe("");
-  });
-
-  it("backlog exits 1 with the P2 message, not 'not implemented'", async () => {
+  it("backlog exits 1 with the P2 message", async () => {
     const { code, err, out } = await invoke(["backlog", "accept", "WL-x"]);
 
     expect(code).toBe(EXIT_USAGE);
     expect(err).toContain(BACKLOG_MESSAGE);
-    expect(err).not.toContain("not implemented");
     expect(out).toBe("");
   });
 
-  it("carries the contracted options through to each command", async () => {
-    // A signature error would surface as commander's "unknown option" exit 1 with no body run,
-    // so reaching the stub's message is what proves the option is registered.
-    for (const argv of [
-      ["init", "--repo", "/tmp/x", "--yes", "--no-backfill"],
-      ["brief", "--repo", "/tmp/x", "--max-tokens", "500"],
-      ["doctor", "--json"],
-    ]) {
-      const { code, err } = await invoke(argv);
-      expect(err, argv.join(" ")).toContain("not implemented");
-      expect(code, argv.join(" ")).toBe(EXIT_USAGE);
+  it("carries the contracted options through to each command", () => {
+    for (const command of createProgram().commands) {
+      expect(command.options.map((option) => option.long), command.name())
+        .toEqual(OPTIONS[command.name()]);
     }
-
-    const checkpoint = createProgram().commands.find((command) => command.name() === "checkpoint");
-    expect(checkpoint?.options.map((option) => option.long)).toEqual(["--session", "--dry-run"]);
   });
 
   it("rejects a --max-tokens value that is not a positive integer", async () => {
