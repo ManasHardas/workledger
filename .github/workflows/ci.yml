@@ -4,6 +4,10 @@ name: CI
 # session-close ritual touches them on every session. Both triggers carry the same ignore list.
 on:
   pull_request:
+    # `ready_for_review` is not one of the default activity types. Without it the draft gate on
+    # `publish-dry-run` (Clause #9 rule 3) is a one-way door: the job skips while the PR is a
+    # draft and never gets a chance to run when `gh pr ready` flips it.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - 'plans/**'
       - '**/*.md'
