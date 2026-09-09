@@ -10,6 +10,8 @@ is `{ name, email }` from the repo's git config (refuse with exit 1 if empty). E
 workledger backlog accept  <WL-id>                         # proposed|in_progress → accepted; sets confirmed_by
 workledger backlog discard <WL-id>                         # any → discarded
 workledger backlog done    <WL-id>                         # any → done; done_by stays null (human closure)
+workledger backlog start   <WL-id>                         # accepted → in_progress
+workledger backlog restore <WL-id>                         # discarded → proposed; done → accepted (reopen)
 workledger backlog edit    <WL-id> [--title T] [--body B] [--priority p1|p2|p3|none] [--area a,b]
 workledger backlog assign  <WL-id> [--owner "Name <email>" | --none]
 workledger backlog rank    <WL-id> <n>
@@ -25,4 +27,5 @@ workledger note resolve    <session-ulid> <cp> <index> --decision "text"
 Exit codes: 0 ok · 1 usage/validation (unknown id, illegal transition) · 4 not an enabled repo.
 State machine for `status`: `proposed → accepted|discarded|done`, `accepted → in_progress|done|discarded`,
 `in_progress → done|discarded|accepted`, `done → accepted` (reopen), `discarded → proposed` (restore).
-Illegal transitions exit 1 with the allowed targets listed.
+Illegal transitions exit 1 with the allowed targets listed. (`start` and `restore` added 2026-09-09; the
+P2 API gains `POST /api/backlog/:id/start` and `/restore` with the same semantics.)

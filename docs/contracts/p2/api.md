@@ -34,6 +34,8 @@ type Health        = { cli: string; repo: string; harnesses: DoctorEntry[]; inde
 | POST | `/api/backlog/:id/accept` | | `BacklogView` |
 | POST | `/api/backlog/:id/discard` | | `BacklogView` |
 | POST | `/api/backlog/:id/done` | | `BacklogView` (`done_by: null`, history `op: status`) |
+| POST | `/api/backlog/:id/start` | | `BacklogView` (accepted → in_progress) |
+| POST | `/api/backlog/:id/restore` | | `BacklogView` (discarded → proposed; done → accepted) |
 | POST | `/api/backlog/:id/edit` | `{ title?, body?, priority?: "p1"|"p2"|"p3"|null, area?: string[] }` | `BacklogView` |
 | POST | `/api/backlog/:id/assign` | `{ owner: Actor|null }` | `BacklogView` |
 | POST | `/api/backlog/:id/rank` | `{ rank: number }` | `BacklogView` |
