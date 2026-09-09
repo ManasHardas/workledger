@@ -62,7 +62,19 @@ jobs:
 
       - run: pnpm lint
 
-      - run: pnpm -r build
+      # `pnpm build`, not `pnpm -r build`: apps/web and packages/cli do not depend on each other,
+      # so pnpm's topological order does not sequence them, and the CLI bundle has to copy an
+      # already-built apps/web/dist into packages/cli/dist/web. The root script pins that order.
+      # It also builds apps/web, and `pnpm test:coverage` below runs its vitest project (the root
+      # vitest.config.ts lists "apps/web" in `projects`), so the shell is built and tested here.
+      - run: pnpm build
+
+      # Fails loudly when the shipped UI shell grows past 1 MB gzipped
+      # (plans/feature-p2-data-flow.md §Assets and packaging). `pnpm build` already enforces this;
+      # this is the named step so a breach reads as a size failure in the checks list rather than
+      # as a line buried in the build log.
+      - name: Web shell gzipped size cap (1 MB)
+        run: pnpm build:web-size
 
       - run: pnpm test:coverage
 
@@ -97,12 +109,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm -r build
+      - run: pnpm build
 
       # Packs `workledger` and asserts the tarball is exactly bin/ + dist/ + package.json
-      # (+ README.md / LICENSE when present), and that the *packed* manifest is exactly
-      # PUBLISHED_FIELDS — no `devDependencies`, no `scripts`, and exactly the runtime
-      # dependencies scripts/bundle-cli.mjs expects (`better-sqlite3`).
+      # (+ README.md / LICENSE when present, + dist/web/** for the UI shell), and that the
+      # *packed* manifest is exactly PUBLISHED_FIELDS — no `devDependencies`, no `scripts`, and
+      # exactly the runtime dependencies scripts/bundle-cli.mjs expects (`better-sqlite3`).
+      # It also reports dist/web's gzipped total against the 1 MB cap.
       - name: Pack and assert the published file list and manifest
         run: node scripts/check-pack.mjs --dest /tmp/pack
 
@@ -120,6 +133,7 @@ jobs:
           cd /tmp/consumer
           npm install --omit=dev
           test -f dist/migrations/0001_init.sql
+          test -f dist/web/index.html
           node bin/workledger --version
 
       # `--version` never touches the database, so the step above proves the file list and the

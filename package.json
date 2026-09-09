@@ -10,7 +10,8 @@
     "pnpm": ">=11"
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -F 'web...' build && pnpm -r --filter '!web' build",
+    "build:web-size": "node scripts/bundle-cli.mjs web-size",
     "clean": "tsc -b --clean",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

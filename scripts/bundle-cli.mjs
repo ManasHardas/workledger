@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// usage: node scripts/bundle-cli.mjs [bundle | strip-manifest | restore-manifest]
-// Bundle packages/cli into a single self-contained dist/main.js (default), or swap its manifest
-// for the published one and back (the `prepack` / `postpack` pair — see PUBLISHED_FIELDS below).
+// usage: node scripts/bundle-cli.mjs [bundle | web-size | strip-manifest | restore-manifest]
+// Bundle packages/cli into a single self-contained dist/main.js plus the `apps/web` shell in
+// dist/web/ (default), report the shell's gzipped size against its cap (`web-size`), or swap the
+// manifest for the published one and back (the `prepack` / `postpack` pair — see PUBLISHED_FIELDS).
 //
 // Why bundle: `@workledger/core` is `private: true` and reaches the CLI as `workspace:*`. A
 // published `workledger` tarball that declared that dependency would be uninstallable — npm
@@ -15,8 +16,9 @@
 // `@workledger/core` is aliased to its *source*, matching vitest.config.ts: a stale or absent
 // packages/core/dist can never turn into a mystifying red or a false green.
 
-import { copyFile, cp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -52,6 +54,114 @@ const CORE_ALIAS = {
  */
 export const MIGRATIONS_SRC = path.join(REPO_ROOT, "packages", "cli", "src", "index", "migrations");
 export const MIGRATIONS_OUT = path.join(CLI_DIR, "dist", "migrations");
+
+/**
+ * The built `apps/web` shell. Like the migrations it is data as far as esbuild is concerned, so
+ * it is copied rather than bundled: `workledger serve` reads it from `dist/web/` relative to the
+ * bundle, exactly as it reads `dist/migrations/`.
+ *
+ * The copy is *not* the whole of `apps/web/dist`. Vite is configured with `sourcemap: true` for
+ * local debugging, and shipping those maps would both leak this machine's paths and blow the
+ * gzipped budget below for bytes no consumer can use — the same reasoning that keeps
+ * `sourcemap: false` on dist/main.js.
+ */
+export const WEB_SRC = path.join(REPO_ROOT, "apps", "web", "dist");
+export const WEB_OUT = path.join(CLI_DIR, "dist", "web");
+
+/**
+ * Gzipped cap for the whole of dist/web (plans/feature-p2-data-flow.md §Assets and packaging).
+ * Measured gzipped because that is what a consumer's `npm install` pulls over the wire and what
+ * `workledger serve` sends to the browser; the tarball is gzipped too.
+ */
+export const WEB_GZIP_CAP_BYTES = 1024 * 1024;
+
+/** Files copied into dist/web are the shell minus its sourcemaps. */
+function isShippableWebFile(name) {
+  return !name.endsWith(".map");
+}
+
+/** Every file under `dir`, as paths relative to it, sorted. */
+async function walk(dir, prefix = "") {
+  const found = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) found.push(...(await walk(path.join(dir, entry.name), rel)));
+    else found.push(rel);
+  }
+  return found.sort();
+}
+
+/**
+ * Copy the built `apps/web` shell into dist/web, returning the files written.
+ *
+ * A missing `apps/web/dist` is a hard error, not a skip: a silently web-less bundle is a
+ * `workledger serve` that 404s the UI, and nothing downstream would notice until a user did.
+ * Vite has no reason to run before esbuild in pnpm's topological order — `apps/web` and
+ * `packages/cli` do not depend on each other — so the root `build` script sequences them, and
+ * this is the assertion that the sequencing actually happened.
+ */
+async function copyWeb() {
+  try {
+    await stat(path.join(WEB_SRC, "index.html"));
+  } catch {
+    throw new Error(
+      `apps/web is not built — ${path.relative(REPO_ROOT, WEB_SRC)}/index.html is missing. ` +
+        "Run `pnpm build` from the repo root (it builds apps/web before the CLI bundle), or " +
+        "`pnpm -F web build` first.",
+    );
+  }
+  // Removed first, for the same reason as dist/migrations: a hashed asset dropped from a later
+  // Vite build must not linger in dist/ and get shipped forever.
+  await rm(WEB_OUT, { recursive: true, force: true });
+  const files = (await walk(WEB_SRC)).filter(isShippableWebFile);
+  for (const rel of files) {
+    await cp(path.join(WEB_SRC, rel), path.join(WEB_OUT, rel), { recursive: true });
+  }
+  return files;
+}
+
+/**
+ * Total gzipped size of dist/web, gzipping each file on its own. Per-file rather than one stream
+ * over the concatenation because that is how the bytes actually travel: the browser fetches each
+ * asset separately and gets each one gzipped separately, so a single-stream figure would
+ * under-report by crediting cross-file redundancy that no transport realises.
+ */
+export async function webGzipBytes() {
+  const files = await walk(WEB_OUT);
+  let total = 0;
+  for (const rel of files) {
+    total += gzipSync(await readFile(path.join(WEB_OUT, rel))).byteLength;
+  }
+  return { files: files.length, bytes: total };
+}
+
+/** Report dist/web's gzipped total and fail when it is over the cap. */
+async function checkWebSize() {
+  let report;
+  try {
+    report = await webGzipBytes();
+  } catch {
+    console.error(
+      `bundle-cli: ${path.relative(REPO_ROOT, WEB_OUT)} does not exist — run \`pnpm build\` first.`,
+    );
+    return 1;
+  }
+  const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+  const line =
+    `dist/web — ${report.files} file(s), ${report.bytes} bytes gzipped ` +
+    `(${kib(report.bytes)} of ${kib(WEB_GZIP_CAP_BYTES)} cap)`;
+  if (report.bytes > WEB_GZIP_CAP_BYTES) {
+    console.error(
+      `bundle-cli: OVER THE SIZE CAP — ${line}. The web shell must stay under ` +
+        `${WEB_GZIP_CAP_BYTES} bytes gzipped (plans/feature-p2-data-flow.md §Assets and ` +
+        "packaging). Drop a dependency, split a route, or raise the cap deliberately in " +
+        "WEB_GZIP_CAP_BYTES with a note saying why.",
+    );
+    return 1;
+  }
+  console.log(`bundle-cli: ${line}`);
+  return 0;
+}
 
 /** Migration filenames, in the order the runner applies them. Read by scripts/check-pack.mjs. */
 export async function migrationFiles() {
@@ -180,11 +290,13 @@ async function main(argv) {
     console.error(`bundle-cli: unexpected argument "${rest[0]}" — commands take none`);
     return 1;
   }
+  if (command === "web-size") return checkWebSize();
   if (command === "strip-manifest") return stripManifest();
   if (command === "restore-manifest") return restoreManifest();
   if (command !== "bundle") {
     console.error(
-      `bundle-cli: unknown command "${command}" — expected bundle, strip-manifest or restore-manifest`,
+      `bundle-cli: unknown command "${command}" — expected bundle, web-size, strip-manifest or ` +
+        "restore-manifest",
     );
     return 1;
   }
@@ -246,14 +358,21 @@ async function main(argv) {
     return 1;
   }
 
+  const web = await copyWeb();
+
   const deps = EXPECTED_RUNTIME_DEPS.length === 0 ? "0 runtime deps" : EXPECTED_RUNTIME_DEPS.join(", ");
   console.log(
     `bundle-cli: ${path.relative(REPO_ROOT, OUTFILE)} — ${bytes} bytes, ${deps}, ` +
-      `${migrations.length} migration(s)`,
+      `${migrations.length} migration(s), ${web.length} web file(s)`,
   );
-  return 0;
+  return checkWebSize();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    console.error(`bundle-cli: ${error.message}`);
+    process.exitCode = 1;
+  }
 }

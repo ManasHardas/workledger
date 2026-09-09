@@ -12,7 +12,7 @@
   "bin": {
     "workledger": "./bin/workledger"
   },
-  "files": ["dist/main.js", "dist/migrations", "bin"],
+  "files": ["dist/main.js", "dist/migrations", "dist/web", "bin"],
   "engines": {
     "node": ">=22"
   },
