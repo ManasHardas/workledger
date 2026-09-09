@@ -265,3 +265,108 @@ export function isPrivatePath(root: string, patterns: readonly string[], home: s
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Full validation — `init` and `doctor` only
+// ---------------------------------------------------------------------------
+
+/**
+ * The `.workledger/config.yaml` `workledger init` writes, verbatim from cli.md
+ * §`.workledger/config.yaml`. It is a string rather than a serialized object on purpose: the
+ * contract fixes the *text*, including the flow mappings and the key order, and a round-trip
+ * through a YAML emitter would quietly reformat it.
+ */
+export const DEFAULT_CONFIG_YAML = [
+  "schema_version: 1",
+  "harnesses: [claude-code]",
+  "thresholds: { bytes: 40000, minutes: 20, turns: 15 }",
+  "brief: { inject: true, max_tokens: 2000 }",
+  "stale_turns: 5",
+  "orphan_minutes: 30",
+  "private_paths: []",
+  "auto_commit: false",
+  "",
+].join("\n");
+
+/** The outcome of validating one repo's `config.yaml` against the `Config` zod schema. */
+export interface ConfigCheck {
+  /** Absolute path of the file that was looked for. */
+  file: string;
+  /** `false` when there is no `config.yaml` at all — missing is not the same as invalid. */
+  present: boolean;
+  /** One line per validation failure, `<path>: <message>`. Empty when the file is valid. */
+  errors: string[];
+  /**
+   * The mapping as it was written, unknown keys and key order intact (cli.md: "Unknown keys are
+   * preserved and ignored"). Present whenever the YAML parsed, valid or not.
+   */
+  raw?: Record<string, unknown>;
+  /** The validated config, defaults filled in. Present only when `errors` is empty. */
+  config?: Record<string, unknown>;
+}
+
+/** Drop a BOM and a leading `---` document-start marker, so the whole file is one mapping. */
+function withoutDocumentStart(text: string): string {
+  const lines = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i]!.trim() === "") i += 1;
+  if (lines[i]?.trimEnd() === "---") lines.splice(i, 1);
+  return lines.join("\n");
+}
+
+/**
+ * Validate `<root>/.workledger/config.yaml` with the real YAML parser and the `Config` zod
+ * schema — the slow, complete path cli.md gives to `doctor` and `init`. The fast
+ * {@link loadConfig} above stays the one the Stop hook uses, and an invalid file is defaults
+ * there rather than an error (cli.md: "reported by `doctor` and treated as defaults by `hook`").
+ *
+ * The YAML is read through core's `parseFrontmatter` — the config file is wrapped in a
+ * frontmatter fence and parsed as the mapping it is — rather than by adding a second `yaml`
+ * dependency to `packages/cli`. Both imports are dynamic because this module is a *static*
+ * import of `commands/hook.ts`, whose allow path must not pull `yaml` or zod
+ * (plans/feature-p1-data-flow.md §6).
+ */
+export async function checkConfigFile(root: string): Promise<ConfigCheck> {
+  const file = configFile(root);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return { file, present: false, errors: [] };
+  }
+
+  const [{ parseFrontmatter }, { Config }] = await Promise.all([
+    import("@workledger/core/frontmatter"),
+    import("@workledger/core/schema"),
+  ]);
+
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = parseFrontmatter(`---\n${withoutDocumentStart(text)}\n---\n`);
+    if (parsed.body.trim() !== "") {
+      return {
+        file,
+        present: true,
+        errors: ["config.yaml must be a single YAML mapping; found a `---` document separator"],
+      };
+    }
+    raw = parsed.data;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // The wrapper fence is an implementation detail; the user's file has no frontmatter.
+    return { file, present: true, errors: [detail.replace(/(?:the )?frontmatter block/g, "config.yaml")] };
+  }
+
+  const result = Config.safeParse(raw);
+  if (!result.success) {
+    return {
+      file,
+      present: true,
+      raw,
+      errors: result.error.issues.map(
+        (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
+      ),
+    };
+  }
+  return { file, present: true, raw, errors: [], config: result.data };
+}
