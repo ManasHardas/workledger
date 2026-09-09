@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Local observer for coding-agent sessions: checkpoint digests, ledger, backlog.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ManasHardas/workledger.git",
+    "directory": "packages/cli"
+  },
   "bin": {
     "workledger": "./bin/workledger"
   },
@@ -14,7 +19,9 @@
   "scripts": {
     "build": "tsc -b && node ../../scripts/bundle-cli.mjs",
     "clean": "tsc -b --clean",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node ../../scripts/bundle-cli.mjs strip-manifest",
+    "postpack": "node ../../scripts/bundle-cli.mjs restore-manifest"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3"

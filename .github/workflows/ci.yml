@@ -100,25 +100,27 @@ jobs:
       - run: pnpm -r build
 
       # Packs `workledger` and asserts the tarball is exactly bin/ + dist/ + package.json
-      # (+ README.md / LICENSE when present) and that the package declares exactly the runtime
+      # (+ README.md / LICENSE when present), and that the *packed* manifest is exactly
+      # PUBLISHED_FIELDS — no `devDependencies`, no `scripts`, and exactly the runtime
       # dependencies scripts/bundle-cli.mjs expects (`better-sqlite3`).
-      - name: Pack and assert the published file list
+      - name: Pack and assert the published file list and manifest
         run: node scripts/check-pack.mjs --dest /tmp/pack
 
       # `better-sqlite3` is a native module esbuild cannot inline, so as of #10 the published
       # package has one runtime dependency and no longer runs with an empty node_modules. This
-      # installs the tarball exactly as `npm i workledger` would and runs the installed bin: it
-      # proves the declared dependency resolves and that dist/migrations shipped. Installing
-      # *inside* the extracted package is deliberately not attempted — `pnpm pack` rewrites the
-      # `workspace:*` reference to `@workledger/core` into an unresolvable `0.0.1`, and a step
-      # that edits the artifact to get green is worse than no step.
+      # runs the install *inside the extracted package* — the case that fails loudest when the
+      # manifest is wrong, because `npm` then has to resolve every dependency the tarball
+      # declares. Before #25 that meant `E404 @workledger/core@0.0.1`; the `prepack` swap is what
+      # makes it pass on the artifact as packed, with no edit to the evidence.
       - name: Install the packed CLI as a consumer would and run it
         run: |
           set -euo pipefail
           mkdir -p /tmp/consumer
-          npm install --omit=dev --prefix /tmp/consumer /tmp/pack/workledger-*.tgz
-          test -f /tmp/consumer/node_modules/workledger/dist/migrations/0001_init.sql
-          node /tmp/consumer/node_modules/workledger/bin/workledger --version
+          tar -xzf /tmp/pack/workledger-*.tgz -C /tmp/consumer --strip-components=1
+          cd /tmp/consumer
+          npm install --omit=dev
+          test -f dist/migrations/0001_init.sql
+          node bin/workledger --version
 
       # `--version` never touches the database, so the step above proves the file list and the
       # bin, not the native binding — deleting node_modules/better-sqlite3 still exits 0. This
