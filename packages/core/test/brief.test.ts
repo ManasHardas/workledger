@@ -9,7 +9,12 @@ import type {
   BriefSession,
   NoteType,
 } from "../src/index.js";
-import { BRIEF_MAX_SESSIONS, buildBrief, estimateTokens } from "../src/index.js";
+import {
+  BRIEF_MAX_SESSIONS,
+  MIN_BRIEF_MAX_TOKENS,
+  buildBrief,
+  estimateTokens,
+} from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -139,8 +144,22 @@ describe("buildBrief determinism", () => {
   };
 
   it("output is byte-identical across two runs on the same ledger", () => {
-    const first = buildBrief(input, { maxTokens: 2000, now: NOW, sessionId: ulid(10) });
-    const second = buildBrief(input, { maxTokens: 2000, now: NOW, sessionId: ulid(10) });
+    // `plans/feature-p1-cli-core.md` states this of `workledger brief`, which passes no `now` —
+    // so pinning `now` here would test a path the criterion is not about. Two runs separated by
+    // a real clock tick must agree.
+    const first = buildBrief(input, { maxTokens: 2000 });
+    const start = Date.now();
+    while (Date.now() === start) {
+      /* spin until the millisecond ticks over */
+    }
+    const second = buildBrief(input, { maxTokens: 2000 });
+    expect(second).toBe(first);
+    expect(first).not.toContain("generated");
+  });
+
+  it("is byte-identical across two runs with a sessionId too", () => {
+    const first = buildBrief(input, { maxTokens: 2000, sessionId: ulid(10) });
+    const second = buildBrief(input, { maxTokens: 2000, sessionId: ulid(10) });
     expect(second).toBe(first);
   });
 
@@ -354,19 +373,23 @@ describe("buildBrief session line", () => {
 
   it("keeps the session line even at a cap far below the ledger's size", () => {
     // The ulid is how the agent addresses `workledger checkpoint`; it is never the thing dropped.
-    const brief = buildBrief(largeLedger(), { maxTokens: 40, now: NOW, sessionId: id });
+    const brief = buildBrief(largeLedger(), {
+      maxTokens: MIN_BRIEF_MAX_TOKENS,
+      now: NOW,
+      sessionId: id,
+    });
     expect(brief).toContain(`workledger session ${id}`);
   });
 
-  it("falls back to the wall clock only for the generated line when now is absent", () => {
-    const before = Date.now();
-    const brief = buildBrief(EMPTY, { maxTokens: 2000 });
-    const after = Date.now();
-    const stamp = /^workledger brief · generated (.+)$/.exec(brief.split("\n")[0]!)?.[1];
-    expect(stamp).toBeDefined();
-    const parsed = Date.parse(stamp!);
-    expect(parsed).toBeGreaterThanOrEqual(before);
-    expect(parsed).toBeLessThanOrEqual(after);
+  it("emits the generated stamp only when now is passed, and reads no clock otherwise", () => {
+    const stamped = buildBrief(EMPTY, { maxTokens: 2000, now: NOW });
+    expect(stamped).toContain(`workledger brief · generated ${NOW}`);
+
+    const unstamped = buildBrief(EMPTY, { maxTokens: 2000 });
+    expect(unstamped).not.toContain("generated");
+    expect(unstamped.split("\n")[0]).toBe(
+      "Nothing open: no backlog items, no recorded sessions.",
+    );
   });
 });
 
@@ -427,41 +450,37 @@ describe("buildBrief cap", () => {
     const after = countEntries(capped);
     expect(reported).toBe(before - after);
 
-    const one = buildBrief(
-      {
-        backlog: [
-          backlogItem({ n: 1, title: "keep-me-accepted", status: "accepted", rank: 1 }),
-          backlogItem({ n: 2, title: "drop-me-proposed", status: "proposed", rank: 2 }),
-        ],
-        sessions: [],
-      },
-      { maxTokens: capFor("keep", "drop-me-proposed"), now: NOW },
-    );
+    // Singular: the loosest cap on the staged ledger drops exactly one item.
+    const one = tightestCapWhere((brief) => brief.includes("omitted (brief cap)")).brief;
     expect(one).toContain("… 1 item omitted (brief cap)");
+  });
+
+  it("rejects a maxTokens below the brief's irreducible floor", () => {
+    expect(MIN_BRIEF_MAX_TOKENS).toBe(64);
+    for (const bad of [MIN_BRIEF_MAX_TOKENS - 1, 0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => buildBrief(EMPTY, { maxTokens: bad })).toThrow(RangeError);
+      expect(() => buildBrief(EMPTY, { maxTokens: bad })).toThrow(/at least 64/);
+    }
+    expect(() => buildBrief(EMPTY, { maxTokens: MIN_BRIEF_MAX_TOKENS })).not.toThrow();
+  });
+
+  it("holds the cap at the floor with every optional part present", () => {
+    // The floor is the session line plus the generated stamp plus the footer; nothing below
+    // MIN_BRIEF_MAX_TOKENS is accepted, so this is the worst case the guarantee has to survive.
+    const brief = buildBrief(largeLedger(), {
+      maxTokens: MIN_BRIEF_MAX_TOKENS,
+      now: NOW,
+      sessionId: ulid(7),
+    });
+    expect(estimateTokens(brief)).toBeLessThanOrEqual(MIN_BRIEF_MAX_TOKENS);
+    expect(brief).toContain(`workledger session ${ulid(7)}`);
+    expect(brief).toContain("omitted (brief cap)");
   });
 });
 
 /** Every droppable line: backlog items, Done lines and notes. */
 function countEntries(brief: string): number {
   return brief.split("\n").filter((line) => line.startsWith("  ")).length;
-}
-
-/** The loosest cap at which `marker` has been dropped from the two-item ledger above. */
-function capFor(_label: string, marker: string): number {
-  for (let cap = 200; cap >= 1; cap -= 1) {
-    const brief = buildBrief(
-      {
-        backlog: [
-          backlogItem({ n: 1, title: "keep-me-accepted", status: "accepted", rank: 1 }),
-          backlogItem({ n: 2, title: "drop-me-proposed", status: "proposed", rank: 2 }),
-        ],
-        sessions: [],
-      },
-      { maxTokens: cap, now: NOW },
-    );
-    if (!brief.includes(marker)) return cap;
-  }
-  throw new Error(`no cap dropped ${marker}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +547,7 @@ function tightestCapWhere(predicate: (brief: string) => boolean): {
   cap: number;
   brief: string;
 } {
-  for (let cap = 400; cap >= 1; cap -= 1) {
+  for (let cap = 400; cap >= MIN_BRIEF_MAX_TOKENS; cap -= 1) {
     const brief = buildBrief(stagedLedger(), { maxTokens: cap, now: NOW });
     if (predicate(brief)) return { cap, brief };
   }
@@ -576,28 +595,34 @@ describe("buildBrief drop order", () => {
     expect(fourth.cap).toBeLessThan(third.cap);
   });
 
-  it("past data-flow §5 it drops accepted work oldest-first and the last session's Done lines", () => {
+  it("past data-flow §5 it drops accepted work oldest-first, the last session's Done lines last", () => {
     // The contract's drop order stops at the second most recent session. These two stages are
     // this module's extension, and exist so `maxTokens` is a guarantee rather than a hope.
     const accepted = tightestCapWhere((brief) => !brief.includes("ACCEPTED-OLD"));
+    expect(accepted.brief).not.toContain("DONE-SECOND");
     expect(accepted.brief).toContain("ACCEPTED-NEW");
     expect(accepted.brief).toContain("DONE-FIRST");
 
-    const last = tightestCapWhere((brief) => !brief.includes("DONE-FIRST"));
-    expect(last.brief).not.toContain("ACCEPTED-NEW");
-    expect(last.brief).toContain("omitted (brief cap)");
-    expect(last.brief).not.toContain("Nothing open");
+    // The most recent session's Done lines outlive everything else in the plan.
+    const floor = buildBrief(stagedLedger(), { maxTokens: MIN_BRIEF_MAX_TOKENS, now: NOW });
+    expect(floor).toContain("DONE-FIRST");
+    expect(floor).toContain("omitted (brief cap)");
+    expect(floor).not.toContain("Nothing open");
   });
 
-  it("nothing dropped ever comes back as the cap tightens", () => {
+  it("nothing dropped ever comes back as the cap tightens, and the cap always holds", () => {
     let previous: string[] = [...MARKERS];
-    for (let cap = 400; cap >= 5; cap -= 1) {
+    for (let cap = 400; cap >= MIN_BRIEF_MAX_TOKENS; cap -= 1) {
       const brief = buildBrief(stagedLedger(), { maxTokens: cap, now: NOW });
+      // The O(1) size model the drop loop runs on has to agree with the text it finally renders.
+      expect(estimateTokens(brief)).toBeLessThanOrEqual(cap);
       const present = MARKERS.filter((marker) => brief.includes(marker));
       for (const marker of present) expect(previous).toContain(marker);
       previous = present;
     }
-    expect(previous).toEqual([]);
+    // What survives at the floor is a suffix of the drop plan: the last things to be dropped.
+    expect(previous).toEqual([...MARKERS].slice(MARKERS.length - previous.length));
+    expect(previous.length).toBeLessThan(MARKERS.length);
   });
 });
 
@@ -699,3 +724,133 @@ function noteTexts(brief: string): string[] {
     .filter((line) => line.startsWith("  blocker · ") || line.startsWith("  question · "))
     .map((line) => line.split(" · ")[1]!);
 }
+
+// ---------------------------------------------------------------------------
+// Regression: a busy session must not erase the brief (CR+SRE review of PR #21)
+// ---------------------------------------------------------------------------
+
+/** 500 open backlog items and three sessions of 200 Done lines each — the reviewer's fixture. */
+function busyLedger(): BriefInput {
+  const statuses: BacklogStatus[] = ["proposed", "accepted", "in_progress"];
+  const backlog = Array.from({ length: 500 }, (_, i) =>
+    backlogItem({
+      n: i + 1,
+      title: `Backlog item number ${i} with a realistically wordy title`,
+      status: statuses[i % 3]!,
+      rank: i % 40,
+      created: day(i % 30),
+      updated: day((i * 7) % 30),
+    }),
+  );
+  const sessions = Array.from({ length: 3 }, (_, s) =>
+    session({
+      n: 2000 + s,
+      started: day(s + 1),
+      done: Array.from({ length: 200 }, (_, d) => `session ${s} finished unit of work ${d}`),
+    }),
+  );
+  return { backlog, sessions };
+}
+
+describe("buildBrief does not collapse on a long Done section", () => {
+  it("keeps the newest session's most recent Done lines and open backlog at the default cap", () => {
+    // Before the fix the whole `Recent work:` group was one drop step and the most recent
+    // session's group was the last step, so 3 × 200 Done lines at the shipped default of 2,000
+    // reduced the brief to a header and a footer.
+    const brief = buildBrief(busyLedger(), { maxTokens: 2000, now: NOW });
+    expect(estimateTokens(brief)).toBeLessThanOrEqual(2000);
+
+    expect(brief).toContain("Recent work:");
+    // Session 2 is the most recent (started day(3)); its newest Done items survive, its oldest go.
+    expect(brief).toContain("session 2 finished unit of work 199");
+    expect(brief).toContain("session 2 finished unit of work 198");
+    expect(brief).not.toContain("session 2 finished unit of work 0 ");
+
+    expect(brief).toContain("Open backlog:");
+    const shown = titles(brief);
+    expect(shown.length).toBeGreaterThan(10);
+    // The `proposed` items go first, so what is left is `accepted` / `in_progress` work.
+    const statusesShown = new Set(
+      brief
+        .split("\n")
+        .filter((line) => line.startsWith("  WL-"))
+        .map((line) => line.split(" · ")[2]!),
+    );
+    expect(statusesShown.has("proposed")).toBe(false);
+    expect(statusesShown.has("accepted") || statusesShown.has("in_progress")).toBe(true);
+  });
+
+  it("keeps both sections alive across every cap from the floor to the default", () => {
+    for (const maxTokens of [MIN_BRIEF_MAX_TOKENS, 100, 250, 500, 1000, 2000]) {
+      const brief = buildBrief(busyLedger(), { maxTokens, now: NOW });
+      expect(estimateTokens(brief)).toBeLessThanOrEqual(maxTokens);
+      // At every accepted cap the brief still says something about the ledger.
+      expect(brief.split("\n").filter((line) => line.startsWith("  ")).length).toBeGreaterThan(0);
+      if (maxTokens >= 250) {
+        expect(brief).toContain("Recent work:");
+        expect(brief).toContain("Open backlog:");
+      }
+    }
+  });
+
+  it("a single 200-line session never reduces the brief to a footer", () => {
+    for (const size of [140, 155, 200, 400]) {
+      const brief = buildBrief(
+        {
+          backlog: [],
+          sessions: [
+            session({
+              n: 3000,
+              started: day(1),
+              done: Array.from({ length: size }, (_, d) => `unit of work ${d}`),
+            }),
+          ],
+        },
+        { maxTokens: 2000, now: NOW },
+      );
+      expect(estimateTokens(brief)).toBeLessThanOrEqual(2000);
+      expect(brief).toContain("Recent work:");
+      expect(brief).toContain(`unit of work ${size - 1}`);
+      expect(brief.split("\n").filter((line) => line.startsWith("  ")).length).toBeGreaterThan(100);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cost
+// ---------------------------------------------------------------------------
+
+describe("buildBrief cost", () => {
+  it("is linear enough that a 2,000-item deep drop stays well inside the hook budget", () => {
+    // The drop loop keeps a running character count instead of re-rendering per step. The bound
+    // is deliberately loose — this asserts the shape of the cost, not a benchmark, so it does not
+    // flake on a loaded CI runner. `SessionStart` has 300 ms in total
+    // (docs/contracts/p1/hooks-claude-code.md), with Node startup and ledger I/O still to come.
+    const ledger: BriefInput = {
+      backlog: Array.from({ length: 2000 }, (_, i) =>
+        backlogItem({
+          n: i + 1,
+          title: `Backlog item number ${i} with a realistically wordy title`,
+          status: (["proposed", "accepted", "in_progress"] as BacklogStatus[])[i % 3]!,
+          rank: i % 40,
+          created: day(i % 30),
+          updated: day((i * 7) % 30),
+        }),
+      ),
+      sessions: Array.from({ length: 3 }, (_, s) =>
+        session({
+          n: 4000 + s,
+          started: day(s + 1),
+          done: Array.from({ length: 200 }, (_, d) => `session ${s} unit ${d}`),
+        }),
+      ),
+    };
+
+    // Warm up, then measure the deep-drop path (cap at the floor drops nearly everything).
+    buildBrief(ledger, { maxTokens: MIN_BRIEF_MAX_TOKENS, now: NOW });
+    const start = performance.now();
+    for (let i = 0; i < 5; i += 1) buildBrief(ledger, { maxTokens: MIN_BRIEF_MAX_TOKENS, now: NOW });
+    const perCall = (performance.now() - start) / 5;
+    expect(perCall).toBeLessThan(100);
+  });
+});

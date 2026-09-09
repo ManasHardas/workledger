@@ -2,26 +2,46 @@
  * The brief: the deterministic ledger summary injected at `SessionStart` and printed by
  * `workledger brief` (design spec §7, data-flow §5).
  *
- * No model, no ledger reading. The input is already-parsed plain objects — the caller
- * (`packages/cli`) does the file I/O and the frontmatter parsing, this module does the selection,
- * the ordering and the cap. That split is what keeps `packages/core` pure (CLAUDE.md) and what
- * makes "byte-identical output for identical input" a property this module can actually promise.
+ * No model, no ledger reading, and — since the `generated` line became opt-in — no clock. The
+ * input is already-parsed plain objects: the caller (`packages/cli`) does the file I/O and the
+ * frontmatter parsing, this module does the selection, the ordering and the cap. That split is
+ * what keeps `packages/core` pure (CLAUDE.md), and what lets `workledger brief` meet its
+ * acceptance criterion — "output is byte-identical across two runs on the same ledger"
+ * (`plans/feature-p1-cli-core.md`) — as a property of this function rather than a hope about
+ * timing. {@link buildBrief} is a total function of its arguments.
  *
  * **What determinism means here.** Every ordering below is a *total* order: where the contract's
  * sort key can tie (two items with the same `rank` and the same `updated`), a final tie-break on
  * the item's id settles it, so two ledgers that differ only in file-read order render the same
- * bytes. The one clock read in this module is the `generated` header line, and it happens only
- * when the caller omits {@link BriefOptions.now} — see that field.
+ * bytes. Dates are derived in UTC, so the output does not depend on the host timezone.
  *
- * **Where the spec and the data-flow doc disagree.** Design spec §7 says "the last three Done
- * items across sessions"; data-flow §5 and issue #9 say "the three most recent `sessions/*.md` by
- * `started`" with their Done lines. Data-flow §5 governs (it is the contract named by the issue),
- * so this module renders the Done lines of the three most recent sessions rather than three Done
- * items in total. The drop order confirms the reading: §5 drops "the third and second most recent
- * session's Done lines", which only makes sense if Done lines are grouped per session.
+ * **Where the input comes from.** {@link BriefInput} is deliberately shaped as
+ * *frontmatter + already-split section contents*, so this module never parses markdown:
+ *
+ * | `BriefInput` field | Produced by |
+ * |---|---|
+ * | `backlog[].frontmatter` | `parseFrontmatter(fileText).data` validated as `BacklogItem` |
+ * | `backlog[].body` | `parseFrontmatter(fileText).body` (optional; the brief ignores it) |
+ * | `sessions[].frontmatter` | `parseFrontmatter(fileText).data` as `SessionFrontmatter` |
+ * | `sessions[].done` | the `## Done` section's item texts, in file order (oldest first) |
+ * | `sessions[].notes` | the `## Notes` items as `{ type, text, cp }`, `cp` from the `[cp n]` stamp |
+ *
+ * The last two rows are the session *body* parse that is the counterpart of slot 4's
+ * `render/session.ts` renderer. Slot 8 must not re-implement that in `packages/cli`: a markdown
+ * parser belongs next to the renderer that produced the markdown, in core.
+ *
+ * **Where design spec §7 and data-flow §5 disagree — §5 governs.** §5 is the contract issue #9
+ * names, and it is the more specific document. Three divergences, all resolved in §5's favour:
+ * 1. §7 "the last three Done items across sessions" vs §5 the three most recent *sessions*' Done
+ *    lines. §5's own drop order ("the third and second most recent session's Done lines") only
+ *    parses if Done lines are grouped per session, so §5 is self-consistent and §7 is not.
+ * 2. §7 backlog "newest first" vs §5 `rank` ascending then `updated` descending. §5 wins: `rank`
+ *    is the field the UI exists to set, and "newest first" would make it inert.
+ * 3. §7 "drop `proposed` items first, then oldest" vs §5's four-stage order. §5 wins; see
+ *    {@link buildBrief} for the fifth stage this module adds past the end of §5's list.
  */
 import type { Actor, BacklogItem, BacklogStatus, NoteType, SessionFrontmatter } from "./schema.js";
-import { estimateTokens } from "./tokens.js";
+import { CHARS_PER_TOKEN } from "./tokens.js";
 
 // ---------------------------------------------------------------------------
 // Input shape
@@ -30,17 +50,17 @@ import { estimateTokens } from "./tokens.js";
 /**
  * One parsed `backlog/WL-<ulid>.md`.
  *
- * `body` is carried so slot 8's CLI can hand a parsed ledger file straight through without
- * projecting it into a narrower shape first; the brief itself renders frontmatter only, because
- * spec §7's line format is `WL-id · title · status · owner` and a body would blow the cap on the
- * first few items.
+ * `body` is optional and unread: the brief renders frontmatter only, because spec §7's line
+ * format is `WL-id · title · status · owner` and a body would blow the cap on the first few
+ * items. It is part of the interface so slot 8 can hand a parsed ledger file straight through
+ * without projecting it into a narrower shape first.
  */
 export interface BriefBacklogEntry {
   frontmatter: BacklogItem;
-  body: string;
+  body?: string;
 }
 
-/** One note recorded at a checkpoint, flattened out of the session file's Notes section. */
+/** One note recorded at a checkpoint, flattened out of the session file's `## Notes` section. */
 export interface BriefNote {
   type: NoteType;
   text: string;
@@ -49,8 +69,9 @@ export interface BriefNote {
 }
 
 /**
- * One parsed `sessions/<ulid>.md`: its frontmatter plus the already-rendered lines of the
- * sections the brief reads. `done` holds the Done section's item texts in file order.
+ * One parsed `sessions/<ulid>.md`: its frontmatter plus the already-split contents of the
+ * sections the brief reads. `done` holds the `## Done` item texts **in file order**, which is
+ * oldest first — the brief relies on that to keep the newest work when it has to trim.
  */
 export interface BriefSession {
   frontmatter: SessionFrontmatter;
@@ -65,7 +86,12 @@ export interface BriefInput {
 }
 
 export interface BriefOptions {
-  /** The `config.brief.max_tokens` budget (default 2,000), measured with {@link estimateTokens}. */
+  /**
+   * The `config.brief.max_tokens` budget (default 2,000), measured as `ceil(chars / 4)`.
+   * Must be at least {@link MIN_BRIEF_MAX_TOKENS}; below that the brief's own irreducible floor
+   * would exceed the budget and the cap could not be honoured, so it is rejected rather than
+   * silently broken.
+   */
   maxTokens: number;
   /**
    * The session ULID this brief is being injected for. When present the brief opens with the
@@ -76,11 +102,12 @@ export interface BriefOptions {
    */
   sessionId?: string;
   /**
-   * The timestamp for the `generated` header line, as an ISO 8601 string. Pass it — the CLI reads
-   * its clock once per invocation and threads that value in — and the output is a pure function
-   * of the input. It is the *only* clock-dependent part of the brief: when it is omitted this
-   * module falls back to `new Date().toISOString()` for that one line, and nothing else in the
-   * output ever consults the clock.
+   * When given, the brief carries a `workledger brief · generated <now>` line stamped with this
+   * ISO 8601 string. **Omit it and the line is not emitted at all** — this module never reads a
+   * clock, so `workledger brief`, which omits it, is byte-identical across runs on an unchanged
+   * ledger. The `SessionStart` hook passes its own timestamp and gets the stamp; there is no
+   * value the `brief` command could pass that would be both truthful and constant, which is why
+   * the line is opt-in rather than defaulted.
    */
   now?: string;
 }
@@ -98,11 +125,28 @@ export const BRIEF_NOTE_TYPES: readonly NoteType[] = ["blocker", "question"];
 /** How many sessions contribute Done lines, most recent first (data-flow §5). */
 export const BRIEF_MAX_SESSIONS = 3;
 
+/**
+ * The smallest `maxTokens` {@link buildBrief} accepts.
+ *
+ * The brief has an irreducible floor it will not drop below: the session line (a 26-character
+ * ulid inside the `workledger checkpoint --session <ulid>` instruction — the agent's only handle
+ * on the checkpoint command when the environment does not expose one), an optional `generated`
+ * stamp, and the `… N items omitted (brief cap)` footer that says content was cut. That is
+ * 53 tokens with every part present. Below this bound the guarantee
+ * `estimateTokens(buildBrief(input, opts)) <= opts.maxTokens` cannot hold for every input, so a
+ * smaller budget is rejected with a `RangeError` instead of being silently exceeded. At or above
+ * it the guarantee is unconditional.
+ */
+export const MIN_BRIEF_MAX_TOKENS = 64;
+
 /** Column separator in the backlog line format `WL-id · title · status · owner`. */
 const SEP = " · ";
 
 /** Shown in the owner column of an unassigned backlog item. */
 const UNASSIGNED = "unassigned";
+
+/** Printed instead of the sections when the ledger is genuinely empty. */
+const NOTHING_OPEN = "Nothing open: no backlog items, no recorded sessions.";
 
 // ---------------------------------------------------------------------------
 // Ordering helpers
@@ -158,27 +202,88 @@ function ownerLabel(owner: Actor | null | undefined): string {
 // Internal model
 // ---------------------------------------------------------------------------
 
-/** One rendered line that the cap may drop. */
-interface Entry {
-  line: string;
+/** One rendered line the cap may drop. */
+interface Line {
+  text: string;
   dropped: boolean;
 }
 
 /**
- * One step of the drop plan: the entries removed together, in the order data-flow §5 removes
- * them. A session's Done lines are one step (the whole group goes at once); everything else is
- * one entry per step so the cap removes no more than it must.
+ * A headed group of lines, carrying its own live length so the drop loop never has to re-render
+ * to find out how big the brief currently is. `chars` is the sum of the *surviving* lines'
+ * lengths; `count` is how many survive.
  */
-type DropStep = Entry[];
-
-function entry(line: string): Entry {
-  return { line, dropped: false };
+interface Section {
+  heading: string;
+  lines: Line[];
+  count: number;
+  chars: number;
 }
 
-function alive(entries: readonly Entry[]): string[] {
-  const out: string[] = [];
-  for (const item of entries) if (!item.dropped) out.push(item.line);
-  return out;
+function section(heading: string): Section {
+  return { heading, lines: [], count: 0, chars: 0 };
+}
+
+function addLine(target: Section, text: string): Line {
+  const line: Line = { text, dropped: false };
+  target.lines.push(line);
+  target.count += 1;
+  target.chars += text.length;
+  return line;
+}
+
+/** One step of the drop plan. Every step is a single line — see {@link buildBrief}. */
+interface DropStep {
+  section: Section;
+  line: Line;
+}
+
+function applyDrop(step: DropStep): void {
+  step.line.dropped = true;
+  step.section.count -= 1;
+  step.section.chars -= step.line.text.length;
+}
+
+/**
+ * A block of the output. `len` is its exact rendered length, available without rendering; the
+ * two are computed from the same place so the O(1) size model and the final text cannot drift.
+ */
+interface Block {
+  len: number;
+  render: () => string;
+}
+
+function textBlock(text: string): Block {
+  return { len: text.length, render: () => text };
+}
+
+/**
+ * `["heading", ...lines].join("\n")` has length `heading.length + Σ lineLengths + lines.length`
+ * — one newline per line — which is exactly `heading.length + chars + count`.
+ */
+function sectionBlock(source: Section): Block | null {
+  if (source.count === 0) return null;
+  return {
+    len: source.heading.length + source.chars + source.count,
+    render: () => {
+      const out = [source.heading];
+      for (const line of source.lines) if (!line.dropped) out.push(line.text);
+      return out.join("\n");
+    },
+  };
+}
+
+function footerText(omitted: number): string {
+  return `… ${omitted} ${omitted === 1 ? "item" : "items"} omitted (brief cap)`;
+}
+
+/** Blocks are joined by a blank line, so `n` blocks add `2 * (n - 1)` separator characters. */
+const BLOCK_SEPARATOR = "\n\n";
+
+function totalChars(blocks: readonly Block[]): number {
+  let chars = 0;
+  for (const block of blocks) chars += block.len;
+  return chars + Math.max(0, blocks.length - 1) * BLOCK_SEPARATOR.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,30 +295,57 @@ function alive(entries: readonly Entry[]): string[] {
  *
  * Sections, in order (spec §7):
  * 1. the optional session line, when {@link BriefOptions.sessionId} is given;
- * 2. `Open backlog:` — items with status `proposed`, `accepted` or `in_progress`, ordered by
+ * 2. the optional `generated` stamp, when {@link BriefOptions.now} is given;
+ * 3. `Open backlog:` — items with status `proposed`, `accepted` or `in_progress`, ordered by
  *    `rank` ascending then `updated` descending (data-flow §5), each as
  *    `WL-id · title · status · owner`;
- * 3. `Recent work:` — the Done lines of the three most recent sessions by `started` descending,
- *    each prefixed with the session's date;
- * 4. `Open blockers and questions:` — every open `blocker` and `question` note across *all*
+ * 4. `Recent work:` — the Done lines of the three most recent sessions by `started` descending,
+ *    each prefixed with the session's date, newest work first;
+ * 5. `Open blockers and questions:` — every open `blocker` and `question` note across *all*
  *    sessions, newest first.
  *
- * When the rendered text exceeds `maxTokens`, entries are dropped one step at a time, in the
- * order data-flow §5 fixes: `proposed` items oldest-first, then notes oldest-first, then the
- * third and then the second most recent session's Done lines. §5 stops there, but the cap is a
- * guarantee this function has to keep, so two further stages continue past it: the remaining open
- * backlog items (`accepted`, `in_progress`) oldest-first, and finally the most recent session's
- * Done lines. Those two are this module's extension, not the contract's; a brief that reaches
- * them was over budget by an order of magnitude and the alternative is silently blowing the cap.
- * Anything dropped is reported by a trailing `… N items omitted (brief cap)` line.
+ * **The cap.** When the rendered text would exceed `maxTokens`, lines are dropped one at a time,
+ * in the order data-flow §5 fixes:
  *
- * The irreducible floor is the session line plus the header plus that footer: the session ulid is
- * a protocol obligation to the agent, so it is never dropped even at an absurd `maxTokens`.
+ * 1. `proposed` backlog items, oldest first by `created`;
+ * 2. open notes, oldest first;
+ * 3. the third most recent session's Done lines, oldest first;
+ * 4. the second most recent session's Done lines, oldest first;
  *
+ * §5 stops there, but the cap is a guarantee this function has to keep on any ledger, so a fifth
+ * stage continues past it — this module's extension, not the contract's. It trims the two
+ * survivors, the `accepted`/`in_progress` backlog and the most recent session's Done lines,
+ * *against each other*: whichever currently occupies more characters gives up its oldest line.
+ * Spending one to save the other would be the wrong trade in both directions, and this converges
+ * on an even split, so both sections still say something at any accepted `maxTokens`.
+ *
+ * Every stage is **line-granular**: a session's Done lines are trimmed from the oldest end, never
+ * removed as a block. That is what stops a single busy session from erasing the whole brief —
+ * at the shipped default of 2,000 tokens a ledger of 500 open items and three sessions of 200
+ * Done lines still renders both its recent work and its backlog, instead of collapsing to a
+ * footer. Anything dropped is reported by a trailing `… N items omitted (brief cap)` line, and
+ * the session line is never dropped: it is the agent's handle on `workledger checkpoint`.
+ *
+ * **Cost.** Linear in the size of the ledger. The size of the brief is tracked incrementally as
+ * lines are dropped, so the loop never re-renders; the text is assembled once, at the end.
+ *
+ * @throws RangeError if `maxTokens` is below {@link MIN_BRIEF_MAX_TOKENS} or is not a finite
+ * number — at those budgets the cap cannot be honoured, and a caller that asked for the
+ * impossible should hear about it rather than get a brief that quietly exceeds it.
  * @returns The brief text, with no trailing newline.
  */
 export function buildBrief(input: BriefInput, opts: BriefOptions): string {
-  const generated = opts.now ?? new Date().toISOString();
+  if (!Number.isFinite(opts.maxTokens) || opts.maxTokens < MIN_BRIEF_MAX_TOKENS) {
+    throw new RangeError(
+      `maxTokens must be a number of at least ${MIN_BRIEF_MAX_TOKENS} — the brief's floor is the ` +
+        "session line plus the omitted-items footer, which cannot be dropped — got " +
+        `${String(opts.maxTokens)}`,
+    );
+  }
+
+  const backlogSection = section("Open backlog:");
+  const doneSection = section("Recent work:");
+  const notesSection = section("Open blockers and questions:");
 
   // --- backlog ------------------------------------------------------------
   const open = input.backlog.filter((item) =>
@@ -228,19 +360,16 @@ export function buildBrief(input: BriefInput, opts: BriefOptions): string {
     return compareStrings(a.frontmatter.id, b.frontmatter.id);
   });
 
-  const backlogEntries = new Map<string, Entry>();
-  const backlogLines: Entry[] = [];
+  const backlogLines = new Map<string, Line>();
   for (const item of displayOrder) {
     const { id, title, status } = item.frontmatter;
-    const rendered = entry(
-      `  ${id}${SEP}${oneLine(title)}${SEP}${status}${SEP}${ownerLabel(item.frontmatter.owner)}`,
-    );
-    backlogEntries.set(id, rendered);
-    backlogLines.push(rendered);
+    const owner = ownerLabel(item.frontmatter.owner);
+    const text = `  ${id}${SEP}${oneLine(title)}${SEP}${status}${SEP}${owner}`;
+    backlogLines.set(id, addLine(backlogSection, text));
   }
 
   /** Oldest-first by `created`, the age order both backlog drop stages consume. */
-  const oldestFirst = [...open].sort((a, b) => {
+  const backlogByAge = [...open].sort((a, b) => {
     const created = compareInstants(a.frontmatter.created, b.frontmatter.created);
     if (created !== 0) return created;
     return compareStrings(a.frontmatter.id, b.frontmatter.id);
@@ -255,37 +384,47 @@ export function buildBrief(input: BriefInput, opts: BriefOptions): string {
     })
     .slice(0, BRIEF_MAX_SESSIONS);
 
-  const doneGroups: Entry[][] = recent.map((session) => {
-    const date = utcDate(session.frontmatter.started);
-    return session.done
-      .map((text) => oneLine(text))
-      .filter((text) => text !== "")
-      .map((text) => entry(`  ${date}${SEP}${text}`));
+  /**
+   * `doneByAge[i]` is session `i`'s Done lines oldest first — file order, and the order the cap
+   * trims them in. They are *added* to the section newest first, so the whole `Recent work:`
+   * block reads newest to oldest and the lines that survive a trim are the ones at the top.
+   */
+  const doneByAge: Line[][] = recent.map((entry) => {
+    const date = utcDate(entry.frontmatter.started);
+    const texts = entry.done.map((text) => oneLine(text)).filter((text) => text !== "");
+    const lines: Line[] = [];
+    // Walk backwards: the section receives them newest first, the returned array stays in file
+    // order (oldest first) for the drop plan.
+    for (let i = texts.length - 1; i >= 0; i -= 1) {
+      lines[i] = addLine(doneSection, `  ${date}${SEP}${texts[i]!}`);
+    }
+    return lines;
   });
-  const doneLines = doneGroups.flat();
 
   // --- notes --------------------------------------------------------------
   // Notes come from every session, not just the three most recent: an open blocker recorded a
   // week ago is exactly the thing the next session needs to be told about.
   interface AgedNote {
-    entry: Entry;
     started: string;
     sessionId: string;
     cp: number;
     index: number;
+    type: NoteType;
+    text: string;
   }
   const agedNotes: AgedNote[] = [];
-  for (const session of input.sessions) {
-    session.notes.forEach((note, index) => {
-      if (!BRIEF_NOTE_TYPES.includes(note.type)) return;
-      const text = oneLine(note.text);
+  for (const entry of input.sessions) {
+    entry.notes.forEach((item, index) => {
+      if (!BRIEF_NOTE_TYPES.includes(item.type)) return;
+      const text = oneLine(item.text);
       if (text === "") return;
       agedNotes.push({
-        entry: entry(`  ${note.type}${SEP}${text}`),
-        started: session.frontmatter.started,
-        sessionId: session.frontmatter.id,
-        cp: note.cp,
+        started: entry.frontmatter.started,
+        sessionId: entry.frontmatter.id,
+        cp: item.cp,
         index,
+        type: item.type,
+        text,
       });
     });
   }
@@ -298,93 +437,106 @@ export function buildBrief(input: BriefInput, opts: BriefOptions): string {
     return a.index - b.index;
   });
   // `agedNotes` is oldest-first — the drop order. The reader gets the reverse: newest first.
-  const noteLines = agedNotes.map((note) => note.entry).reverse();
+  const notesByAge: Line[] = [];
+  for (let i = agedNotes.length - 1; i >= 0; i -= 1) {
+    const item = agedNotes[i]!;
+    notesByAge[i] = addLine(notesSection, `  ${item.type}${SEP}${item.text}`);
+  }
 
   // --- the drop plan ------------------------------------------------------
   const plan: DropStep[] = [];
-  for (const item of oldestFirst) {
-    if (item.frontmatter.status !== "proposed") continue;
-    const rendered = backlogEntries.get(item.frontmatter.id);
-    if (rendered) plan.push([rendered]);
-  }
-  for (const note of agedNotes) plan.push([note.entry]);
-  for (let i = BRIEF_MAX_SESSIONS - 1; i >= 1; i -= 1) {
-    const group = doneGroups[i];
-    if (group && group.length > 0) plan.push(group);
-  }
-  // Beyond data-flow §5, so the cap holds even on a ledger that is all `accepted` work.
-  for (const item of oldestFirst) {
-    if (item.frontmatter.status === "proposed") continue;
-    const rendered = backlogEntries.get(item.frontmatter.id);
-    if (rendered) plan.push([rendered]);
-  }
-  const mostRecentDone = doneGroups[0];
-  if (mostRecentDone && mostRecentDone.length > 0) plan.push(mostRecentDone);
+  const pushBacklog = (wanted: "proposed" | "other"): void => {
+    for (const item of backlogByAge) {
+      const isProposed = item.frontmatter.status === "proposed";
+      if (isProposed !== (wanted === "proposed")) continue;
+      const line = backlogLines.get(item.frontmatter.id);
+      if (line) plan.push({ section: backlogSection, line });
+    }
+  };
+  const pushDone = (index: number): void => {
+    for (const line of doneByAge[index] ?? []) plan.push({ section: doneSection, line });
+  };
 
-  // --- render, dropping until it fits -------------------------------------
-  const render = (omitted: number): string =>
-    assemble({
-      sessionId: opts.sessionId,
-      generated,
-      backlog: alive(backlogLines),
-      done: alive(doneLines),
-      notes: alive(noteLines),
-      omitted,
-    });
+  pushBacklog("proposed");
+  for (const line of notesByAge) plan.push({ section: notesSection, line });
+  for (let i = BRIEF_MAX_SESSIONS - 1; i >= 1; i -= 1) pushDone(i);
+
+  /**
+   * What data-flow §5's drop order leaves standing: the `accepted` and `in_progress` backlog,
+   * and the most recent session's Done lines. §5 says nothing about these, and neither can be
+   * spent to save the other — a brief that is all backlog and no recent work is as useless as
+   * one that is all recent work and no backlog. So they are trimmed *against each other*: the
+   * pool currently occupying more characters gives up its oldest line, which converges on an
+   * even split and leaves both sections populated at any cap. Both queues are oldest-first.
+   */
+  const tailBacklog: Line[] = [];
+  for (const item of backlogByAge) {
+    if (item.frontmatter.status === "proposed") continue;
+    const line = backlogLines.get(item.frontmatter.id);
+    if (line) tailBacklog.push(line);
+  }
+  const tailDone = doneByAge[0] ?? [];
+
+  // --- drop until it fits -------------------------------------------------
+  const sections = [backlogSection, doneSection, notesSection];
+  const layout = (omitted: number): Block[] => {
+    const blocks: Block[] = [];
+    if (opts.sessionId !== undefined) {
+      blocks.push(
+        textBlock(
+          `workledger session ${opts.sessionId} — ` +
+            `run \`workledger checkpoint --session ${opts.sessionId}\` when asked`,
+        ),
+      );
+    }
+    if (opts.now !== undefined) {
+      blocks.push(textBlock(`workledger brief${SEP}generated ${opts.now}`));
+    }
+    for (const source of sections) {
+      const block = sectionBlock(source);
+      if (block) blocks.push(block);
+    }
+    // Only for a genuinely empty ledger. When the cap emptied the sections the footer says so,
+    // and "Nothing open" next to "40 items omitted" would be a lie.
+    if (omitted === 0 && sections.every((source) => source.count === 0)) {
+      blocks.push(textBlock(NOTHING_OPEN));
+    }
+    if (omitted > 0) blocks.push(textBlock(footerText(omitted)));
+    return blocks;
+  };
+
+  const fits = (omitted: number): boolean =>
+    Math.ceil(totalChars(layout(omitted)) / CHARS_PER_TOKEN) <= opts.maxTokens;
 
   let omitted = 0;
-  let text = render(omitted);
+  let done = false;
   for (const step of plan) {
-    if (estimateTokens(text) <= opts.maxTokens) return text;
-    for (const item of step) item.dropped = true;
-    omitted += step.length;
-    text = render(omitted);
+    if (fits(omitted)) {
+      done = true;
+      break;
+    }
+    applyDrop(step);
+    omitted += 1;
   }
-  return text;
-}
 
-// ---------------------------------------------------------------------------
-// Assembly
-// ---------------------------------------------------------------------------
+  let nextBacklog = 0;
+  let nextDone = 0;
+  while (!done && (nextBacklog < tailBacklog.length || nextDone < tailDone.length)) {
+    if (fits(omitted)) break;
+    const takeBacklog =
+      nextDone >= tailDone.length ||
+      (nextBacklog < tailBacklog.length && backlogSection.chars >= doneSection.chars);
+    if (takeBacklog) {
+      applyDrop({ section: backlogSection, line: tailBacklog[nextBacklog]! });
+      nextBacklog += 1;
+    } else {
+      applyDrop({ section: doneSection, line: tailDone[nextDone]! });
+      nextDone += 1;
+    }
+    omitted += 1;
+  }
 
-interface Assembly {
-  sessionId: string | undefined;
-  generated: string;
-  backlog: string[];
-  done: string[];
-  notes: string[];
-  omitted: number;
-}
-
-/** Join the surviving lines into the final text. Empty sections drop their heading with them. */
-function assemble(parts: Assembly): string {
-  const blocks: string[] = [];
-  if (parts.sessionId !== undefined) {
-    blocks.push(
-      `workledger session ${parts.sessionId} — ` +
-        `run \`workledger checkpoint --session ${parts.sessionId}\` when asked`,
-    );
-  }
-  blocks.push(`workledger brief${SEP}generated ${parts.generated}`);
-
-  if (parts.backlog.length > 0) blocks.push(["Open backlog:", ...parts.backlog].join("\n"));
-  if (parts.done.length > 0) blocks.push(["Recent work:", ...parts.done].join("\n"));
-  if (parts.notes.length > 0) {
-    blocks.push(["Open blockers and questions:", ...parts.notes].join("\n"));
-  }
-  if (
-    parts.omitted === 0 &&
-    parts.backlog.length === 0 &&
-    parts.done.length === 0 &&
-    parts.notes.length === 0
-  ) {
-    // Only for a genuinely empty ledger. When the cap emptied the sections the footer below says
-    // so, and "Nothing open" next to "40 items omitted" would be a lie.
-    blocks.push("Nothing open: no backlog items, no recorded sessions.");
-  }
-  if (parts.omitted > 0) {
-    const noun = parts.omitted === 1 ? "item" : "items";
-    blocks.push(`… ${parts.omitted} ${noun} omitted (brief cap)`);
-  }
-  return blocks.join("\n\n");
+  return layout(omitted)
+    .map((block) => block.render())
+    .join(BLOCK_SEPARATOR);
 }
