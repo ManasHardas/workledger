@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 // usage: node scripts/check-pack.mjs [--dest <dir>]
-// Pack `workledger` and assert the tarball contains exactly bin/, dist/, package.json — plus
-// README.md and LICENSE when those files exist in the package.
+// Pack `workledger` and assert the tarball contains exactly the files the CLI needs to run.
 //
 // This is the publish dry-run: `npm publish` would ship precisely what `npm pack` writes, so
 // checking the tarball checks the publish. It catches the two failures that only show up after a
 // release — src/, tests or tsconfig leaking into the tarball, and a `dist/` that never got built.
 //
-// It also asserts the package declares no runtime dependencies: `@workledger/core` is
-// `private: true` and reaches the CLI as `workspace:*`, which npm cannot resolve. The CLI inlines
-// it at build time instead (scripts/bundle-cli.mjs), so an empty `dependencies` block is the
-// invariant that keeps the published package installable.
+// It also asserts the declared runtime dependencies equal `EXPECTED_RUNTIME_DEPS` from
+// scripts/bundle-cli.mjs (empty today): `@workledger/core` is `private: true` and reaches the CLI
+// as `workspace:*`, which npm cannot resolve, so the CLI inlines it at build time instead. That
+// one list is where slot 7 adds `better-sqlite3`; this script reads it rather than repeating it.
 
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -19,12 +18,20 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { EXPECTED_RUNTIME_DEPS, assertRuntimeDeps } from "./bundle-cli.mjs";
+
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
-/** Always expected. */
-const REQUIRED_TOP_LEVEL = ["bin", "dist", "package.json"];
-/** Included by npm automatically when the file exists; allowed, never required. */
-const OPTIONAL_TOP_LEVEL = ["README.md", "LICENSE"];
+/**
+ * The exact file list, not just the top-level directories: `packages/cli` is a bin-only package
+ * (no `exports`, no `types`), so the tarball is the bundle, the shim and the manifest. Checking
+ * whole paths is what catches `dist/main.js.map` — whose `sources` point at files the tarball
+ * does not ship and at this machine's pnpm store layout — and `dist/main.d.ts`, which imports
+ * `commander` from a package that no longer declares it.
+ */
+const REQUIRED_FILES = ["bin/workledger", "dist/main.js", "package.json"];
+/** Added by npm automatically when the file exists; allowed, never required. */
+const OPTIONAL_FILES = ["README.md", "LICENSE"];
 
 function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
@@ -55,42 +62,38 @@ function main(argv) {
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const stripped = entries.map((e) => e.replace(/^\.?\/?package\//, ""));
-  const topLevel = [...new Set(stripped.map((e) => e.split("/")[0]).filter(Boolean))].sort();
+  const stripped = entries
+    .map((e) => e.replace(/^\.?\/?package\//, ""))
+    .filter((e) => e && !e.endsWith("/"))
+    .sort();
 
-  const allowed = new Set([...REQUIRED_TOP_LEVEL, ...OPTIONAL_TOP_LEVEL]);
-  const unexpected = topLevel.filter((e) => !allowed.has(e));
-  const missing = REQUIRED_TOP_LEVEL.filter((e) => !topLevel.includes(e));
+  const allowed = new Set([...REQUIRED_FILES, ...OPTIONAL_FILES]);
+  const unexpected = stripped.filter((e) => !allowed.has(e));
+  const missing = REQUIRED_FILES.filter((e) => !stripped.includes(e));
 
-  console.log(`check-pack: ${path.basename(tarballPath)} — ${entries.length} entries`);
-  for (const e of stripped.sort()) console.log(`  ${e}`);
+  console.log(`check-pack: ${path.basename(tarballPath)} — ${stripped.length} files`);
+  for (const e of stripped) console.log(`  ${e}`);
 
   let failed = false;
   if (unexpected.length > 0) {
-    console.error(`check-pack: unexpected top-level entries: ${unexpected.join(", ")}`);
+    console.error(`check-pack: unexpected entries: ${unexpected.join(", ")}`);
     failed = true;
   }
   if (missing.length > 0) {
     console.error(`check-pack: missing required entries: ${missing.join(", ")}`);
     failed = true;
   }
-  if (!stripped.includes("dist/main.js")) {
-    console.error("check-pack: dist/main.js is not in the tarball — did the build run?");
-    failed = true;
-  }
 
   const pkg = JSON.parse(readFileSync(path.join(CLI_DIR, "package.json"), "utf8"));
-  const deps = Object.keys(pkg.dependencies ?? {});
-  if (deps.length > 0) {
-    console.error(
-      `check-pack: packages/cli declares runtime dependencies (${deps.join(", ")}); the published ` +
-        "package must be self-contained — see scripts/bundle-cli.mjs",
-    );
+  const problem = assertRuntimeDeps(pkg);
+  if (problem) {
+    console.error(`check-pack: ${problem}`);
     failed = true;
   }
 
   if (failed) return 1;
-  console.log("check-pack: file list and dependency set are exactly as expected");
+  const deps = EXPECTED_RUNTIME_DEPS.length === 0 ? "no runtime deps" : EXPECTED_RUNTIME_DEPS.join(", ");
+  console.log(`check-pack: file list exact, ${deps}`);
   return 0;
 }
 

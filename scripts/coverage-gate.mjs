@@ -21,11 +21,33 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const LCOV = path.join(REPO_ROOT, "coverage", "lcov.info");
 const DEFAULT_THRESHOLD = 70;
-/** Only first-party source counts. Tests, scripts, configs and fixtures are out of scope. */
-const SCOPE = /^packages\/[^/]+\/src\/.+\.(?:ts|mts|cts)$/;
+/**
+ * The set of files whose changed lines are gated: the union of vitest's coverage `include` in
+ * vitest.config.ts (package sources plus scripts/*.ts) widened to the other places first-party
+ * code lives — app sources under apps/, and packages/<name>/bin, since bin/workledger is real
+ * logic today. If a file can be covered, a change to it has to be covered; keep this list in
+ * step with vitest.config.ts.
+ */
+const SCOPE = [
+  /^packages\/[^/]+\/src\/.+\.(?:ts|tsx|mts|cts)$/,
+  /^packages\/[^/]+\/bin\/[^/]+$/,
+  /^apps\/[^/]+\/src\/.+\.(?:ts|tsx|mts|cts)$/,
+  /^scripts\/[^/]+\.ts$/,
+];
+/** git pathspec matching SCOPE, so the diff does not have to walk the whole tree. */
+const SCOPE_PATHSPEC = ["packages", "apps", "scripts"];
 
-function git(args) {
-  return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+function inScope(file) {
+  return SCOPE.some((re) => re.test(file));
+}
+
+function git(args, quiet = false) {
+  return execFileSync("git", args, {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", quiet ? "ignore" : "inherit"],
+  });
 }
 
 function parseArgs(argv) {
@@ -40,13 +62,19 @@ function parseArgs(argv) {
     else if (argv[i] === "--report-only") opts.reportOnly = true;
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
+  // A typo'd threshold would otherwise become NaN, and `NaN >= x` is false — the gate would fail
+  // every branch with a message naming "NaN%".
+  if (!Number.isFinite(opts.threshold) || opts.threshold < 0 || opts.threshold > 100) {
+    throw new Error(`threshold must be a number between 0 and 100, got "${opts.threshold}"`);
+  }
+  if (!opts.base) throw new Error("--base needs a git ref");
   return opts;
 }
 
 /** The merge base of `base` and HEAD, or null when `base` is not resolvable (shallow clone). */
 function mergeBase(base) {
   try {
-    return git(["merge-base", base, "HEAD"]).trim();
+    return git(["merge-base", base, "HEAD"], true).trim();
   } catch {
     return null;
   }
@@ -57,14 +85,21 @@ function mergeBase(base) {
  * `+` side matters: a deleted line has no coverage to measure.
  */
 function changedLines(base) {
-  const diff = git(["diff", "--unified=0", "--diff-filter=ACMR", `${base}...HEAD`, "--", "packages"]);
+  const diff = git([
+    "diff",
+    "--unified=0",
+    "--diff-filter=ACMR",
+    `${base}...HEAD`,
+    "--",
+    ...SCOPE_PATHSPEC,
+  ]);
   const byFile = new Map();
   let file = null;
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ ")) {
       const p = line.slice(4).trim();
       file = p === "/dev/null" ? null : p.replace(/^b\//, "");
-      if (file && !SCOPE.test(file)) file = null;
+      if (file && !inScope(file)) file = null;
       if (file && !byFile.has(file)) byFile.set(file, new Set());
       continue;
     }
@@ -105,13 +140,22 @@ function main(argv) {
 
   const base = mergeBase(opts.base);
   if (!base) {
-    console.log(`coverage-gate: base ref ${opts.base} not resolvable — skipping (${verdict})`);
-    return 0;
+    // Never silently green: a shallow checkout, a renamed base branch or a typo'd
+    // COVERAGE_BASE_REF would otherwise turn the gate into a no-op that still prints a
+    // pass-shaped line. Same shape as the missing-lcov branch below.
+    console.error(
+      `coverage-gate: base ref ${opts.base} is not resolvable — cannot compute a changed-line ` +
+        "set. Fetch the base branch (actions/checkout fetch-depth: 0) or set COVERAGE_BASE_REF.",
+    );
+    return opts.reportOnly ? 0 : 1;
   }
 
   const changed = changedLines(base);
   if (changed.size === 0) {
-    console.log(`coverage-gate: no changed lines under packages/**/src vs ${opts.base} — pass`);
+    console.log(
+      `coverage-gate: no gated source changed vs ${opts.base} ` +
+        `(scope: ${SCOPE_PATHSPEC.join(", ")}) — pass`,
+    );
     return 0;
   }
 

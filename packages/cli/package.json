@@ -7,16 +7,7 @@
   "bin": {
     "workledger": "./bin/workledger"
   },
-  "exports": {
-    ".": {
-      "types": "./dist/main.d.ts",
-      "import": "./dist/main.js",
-      "default": "./dist/main.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "types": "./dist/main.d.ts",
-  "files": ["dist", "bin"],
+  "files": ["dist/main.js", "bin"],
   "engines": {
     "node": ">=22"
   },

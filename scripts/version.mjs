@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// usage: node scripts/version.mjs <x.y.z>   (or: pnpm run version <x.y.z>)
+// usage: node scripts/version.mjs <x.y.z>   (or: pnpm version:bump <x.y.z>)
+//
+// The npm script is `version:bump`, not `version`: npm reserves `version` as a lifecycle hook,
+// so `pnpm version 0.0.2` would run npm's own versioning rather than this script.
 // Set the version of packages/core and packages/cli in lockstep.
 //
 // The two packages are one release: the CLI bundles core at build time (scripts/bundle-cli.mjs),

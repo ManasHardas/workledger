@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// usage: node scripts/check-fixtures.mjs [dir]   (default: test/fixtures)
+// usage: node scripts/check-fixtures.mjs [dir ...]
+//        with no argument: every `test/fixtures` directory in the repo
 // Re-scan committed fixtures with the vendored redaction patterns and fail on any finding.
 //
 // This is the *post-write* half of plans/feature-p1-data-flow.md §8 point 3: capture-fixtures.mjs
@@ -9,6 +10,7 @@
 //
 // Findings print a file path and a pattern name with a count. The matched text is never printed.
 
+import { execFileSync } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -51,23 +53,56 @@ export async function checkFixtures(dir) {
   return findings;
 }
 
+/**
+ * Every tracked `test/fixtures` directory in the repo, not just the one this slot created.
+ * Discovery is git-driven so a new package's fixtures are covered the day they land: an explicit
+ * list would have to be edited by whoever adds them, and the person adding fixtures is exactly
+ * the person who should not be able to opt out of the scan.
+ */
+function discoverFixtureDirs() {
+  const tracked = execFileSync("git", ["ls-files", "-z", "--", "*test/fixtures/*"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .split("\0")
+    .filter(Boolean);
+  const dirs = new Set();
+  for (const file of tracked) {
+    const marker = file.indexOf("test/fixtures/");
+    if (marker !== -1) dirs.add(file.slice(0, marker + "test/fixtures".length));
+  }
+  return [...dirs].sort();
+}
+
 async function main(argv) {
-  const target = path.resolve(REPO_ROOT, argv[0] ?? "test/fixtures");
-  let fileCount;
-  try {
-    await stat(target);
-    fileCount = (await listFiles(target)).length;
-  } catch {
-    console.error(`check-fixtures: ${path.relative(REPO_ROOT, target)} does not exist`);
+  const requested = argv.length > 0 ? argv : discoverFixtureDirs();
+  if (requested.length === 0) {
+    console.error("check-fixtures: no test/fixtures directory found — nothing to scan");
     return 1;
   }
 
-  const findings = await checkFixtures(target);
+  let fileCount = 0;
+  const findings = [];
+  for (const entry of requested) {
+    const target = path.resolve(REPO_ROOT, entry);
+    try {
+      await stat(target);
+    } catch {
+      console.error(`check-fixtures: ${path.relative(REPO_ROOT, target)} does not exist`);
+      return 1;
+    }
+    fileCount += (await listFiles(target)).length;
+    findings.push(...(await checkFixtures(target)));
+  }
+
   for (const { file, name, count } of findings) {
     console.error(`  ${file}: ${name} x${count}`);
   }
-  const scope = path.relative(REPO_ROOT, target) || ".";
-  console.log(`check-fixtures: ${fileCount} files scanned in ${scope} — ${findings.length} findings`);
+  const scope = requested.map((d) => path.relative(REPO_ROOT, path.resolve(REPO_ROOT, d)) || ".");
+  console.log(
+    `check-fixtures: ${fileCount} files scanned in ${scope.join(", ")} — ${findings.length} findings`,
+  );
   return findings.length === 0 ? 0 : 1;
 }
 

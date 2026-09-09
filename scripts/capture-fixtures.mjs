@@ -12,6 +12,7 @@
 // and a pattern name; the matched text is never printed (CLAUDE.md: transcript excerpts never
 // enter the repo).
 
+import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,12 @@ const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 const DEFAULT_COUNT = 3;
 /** Hard ceiling per transcript. Big enough that byte-threshold tests stay meaningful. */
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * Cap for every transcript after the first. The `hook Stop` p95 < 100 ms budget
+ * (docs/contracts/p1/hooks-claude-code.md §Timing budget) needs *one* file big enough that
+ * reading it costs something; a second copy of that is repo weight, not extra signal.
+ */
+const DEFAULT_MAX_BYTES_REST = 400 * 1024;
 /** Never truncate a transcript below this — a 10 KB fixture does not exercise the size paths. */
 const MIN_BYTES = 50 * 1024;
 
@@ -41,8 +48,15 @@ Options
                    project directory holding the most recently modified transcript.
   --count <n>      How many of the most recent transcripts to copy (default ${DEFAULT_COUNT}).
   --out <dir>      Fixture root (default test/fixtures), relative to the repo root.
-  --max-bytes <n>  Per-transcript byte cap (default ${DEFAULT_MAX_BYTES}); truncation happens on a
-                   line boundary and never takes a file below ${MIN_BYTES} bytes.
+  --max-bytes <n>  Byte cap for the newest transcript (default ${DEFAULT_MAX_BYTES}); truncation
+                   happens on a line boundary and never takes a file below ${MIN_BYTES} bytes.
+  --max-bytes-rest <n>
+                   Byte cap for every transcript after the first (default ${DEFAULT_MAX_BYTES_REST}).
+  --redact-name <literal>
+                   An extra literal to scrub (repeatable). The account name, the git
+                   user.name (whole, joined and per-token) and the local part of
+                   user.email are scrubbed automatically; this is for anything else that
+                   names a person.
   --verify [dir]   Do not capture; scan an existing fixture directory and report the finding
                    count. Exits 0 only on "0 findings".
   --list-slugs     Print the available project slugs and their transcript counts.
@@ -60,6 +74,8 @@ function parseArgs(argv) {
     count: DEFAULT_COUNT,
     out: "test/fixtures",
     maxBytes: DEFAULT_MAX_BYTES,
+    maxBytesRest: DEFAULT_MAX_BYTES_REST,
+    redactNames: [],
     verify: undefined,
     listSlugs: false,
     help: false,
@@ -86,6 +102,12 @@ function parseArgs(argv) {
       case "--max-bytes":
         opts.maxBytes = Number(argv[++i]);
         break;
+      case "--max-bytes-rest":
+        opts.maxBytesRest = Number(argv[++i]);
+        break;
+      case "--redact-name":
+        opts.redactNames.push(argv[++i]);
+        break;
       case "--verify":
         // Optional positional: `--verify` alone means "the default fixture dir".
         opts.verify = argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[++i] : "test/fixtures";
@@ -96,6 +118,14 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(opts.count) || opts.count < 1) {
     throw new Error("--count must be a positive integer");
+  }
+  for (const [flag, value] of [["--max-bytes", opts.maxBytes], ["--max-bytes-rest", opts.maxBytesRest]]) {
+    if (!Number.isInteger(value) || value < MIN_BYTES) {
+      throw new Error(`${flag} must be an integer of at least ${MIN_BYTES}`);
+    }
+  }
+  if (opts.redactNames.some((n) => !n || n.startsWith("-"))) {
+    throw new Error("--redact-name needs a literal argument");
   }
   return opts;
 }
@@ -166,25 +196,70 @@ function truncateOnLineBoundary(buffer, maxBytes) {
 }
 
 /**
- * The local account name, in the forms it shows up in outside a path: the `ls -l` owner column,
- * a git remote, a GitHub handle. This one is machine-derived rather than vendored, so
- * check-fixtures.mjs cannot re-verify it in CI (the runner has a different username) — it runs
- * here, at capture time, where the name is known.
+ * Who this machine belongs to, in every written form: the account name (the `ls -l` owner column,
+ * a git remote), and the git identity — `user.name` whole ("Ada Lovelace"), joined
+ * ("AdaLovelace") and per token ("Ada", "Lovelace") — plus the local part of `user.email` and its
+ * segments. The spaced form is the one that matters: an earlier revision derived only the account
+ * name and left the operator's real full name in a committed transcript seven times.
+ *
+ * This set is machine-derived, not vendored, so check-fixtures.mjs *cannot* re-detect it in CI —
+ * a CI runner has a different identity. "0 findings" is therefore not evidence for this class;
+ * the evidence is that the substitution happens here, before the write, and that
+ * `grep -ri "<name>" test/fixtures/` is empty afterwards. Anything else that names a person goes
+ * in via `--redact-name`.
+ *
+ * Literals are applied longest-first so "Ada Lovelace" is consumed before "Ada" can nibble at it.
  */
-function localIdentityPatterns() {
-  const names = new Set([os.userInfo().username, path.basename(os.homedir())]);
-  return [...names]
-    .filter((n) => n && n.length >= 4 && n !== "user")
-    .map((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"));
+function gitConfig(key) {
+  try {
+    return execFileSync("git", ["config", "--get", key], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+export function localIdentityLiterals(extra = []) {
+  const literals = new Set();
+  // Below four characters the risk flips: "Jo" or "Lee" would shred unrelated prose.
+  const add = (value) => {
+    const v = (value ?? "").trim();
+    if (v.length >= 4 && v.toLowerCase() !== "user") literals.add(v);
+  };
+
+  add(os.userInfo().username);
+  add(path.basename(os.homedir()));
+
+  const name = gitConfig("user.name");
+  add(name);
+  add(name.replace(/\s+/g, ""));
+  for (const token of name.split(/\s+/)) add(token);
+
+  const [localPart = ""] = gitConfig("user.email").split("@");
+  add(localPart);
+  for (const token of localPart.split(/[._+-]/)) add(token);
+
+  for (const value of extra) add(value);
+
+  return [...literals].sort((a, b) => b.length - a.length);
+}
+
+function identityPatterns(extra) {
+  return localIdentityLiterals(extra).map(
+    (literal) => new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+  );
 }
 
 /**
  * Redact and write. Asserts on the *redacted* text before the write, so an unscrubbed byte can
  * never reach the fixture tree even if the process is killed mid-run.
  */
-async function writeScrubbed(file, text) {
+async function writeScrubbed(file, text, identity = []) {
   let input = text;
-  for (const re of localIdentityPatterns()) input = input.replace(re, "user");
+  for (const re of identity) input = input.replace(re, "user");
   const { text: scrubbed, findings } = redact(input);
   const residual = scan(scrubbed);
   if (residual.length > 0) {
@@ -256,16 +331,18 @@ async function capture(opts) {
     );
   }
 
-  const written = [];
-  for (const t of selected) {
-    const raw = truncateOnLineBoundary(await readFile(t.full), opts.maxBytes);
+  const identity = identityPatterns(opts.redactNames);
+  console.log(`capture-fixtures: scrubbing ${identity.length} identity literal(s) before redaction`);
+
+  for (const [index, t] of selected.entries()) {
+    // Only the newest transcript keeps the 2 MB cap: the p95 hook-timing budget needs one file
+    // large enough to make reading it cost something, and a second copy of that is repo weight.
+    const cap = index === 0 ? opts.maxBytes : opts.maxBytesRest;
+    const raw = truncateOnLineBoundary(await readFile(t.full), cap);
     const target = path.join(outRoot, "transcripts", t.name);
-    const { bytes, findings } = await writeScrubbed(target, raw.toString("utf8"));
-    written.push({ file: path.relative(REPO_ROOT, target), bytes, source: t.size });
+    const { bytes, findings } = await writeScrubbed(target, raw.toString("utf8"), identity);
     const summary = findings.map((f) => `${f.name} x${f.count}`).join(", ") || "nothing to redact";
-    console.log(
-      `  transcripts/${t.name}: ${t.size} -> ${bytes} bytes; redacted ${summary}`,
-    );
+    console.log(`  transcripts/${t.name}: ${t.size} -> ${bytes} bytes; redacted ${summary}`);
   }
 
   // Hook payloads point at the newest captured transcript so a fixture-driven test can read a
@@ -276,16 +353,16 @@ async function capture(opts) {
     : "/home/user/.claude/projects/example/session.jsonl";
   const sessionId = anchor ? path.basename(anchor.name, ".jsonl") : "00000000-0000-0000-0000-000000000000";
 
-  for (const { name, payload } of hookFixtures({
+  const hooks = hookFixtures({
     sessionId,
     transcriptPath: anchorPath,
     cwd: "/home/user/Projects/workledger",
-  })) {
+  });
+  for (const { name, payload } of hooks) {
     const target = path.join(outRoot, "hooks", name);
-    const { bytes } = await writeScrubbed(target, `${JSON.stringify(payload, null, 2)}\n`);
-    written.push({ file: path.relative(REPO_ROOT, target), bytes, source: bytes });
+    await writeScrubbed(target, `${JSON.stringify(payload, null, 2)}\n`, identity);
   }
-  console.log(`  hooks/: ${hookFixtures({ sessionId, transcriptPath: anchorPath, cwd: "." }).length} payloads`);
+  console.log(`  hooks/: ${hooks.length} payloads`);
 
   return verify(opts.out);
 }

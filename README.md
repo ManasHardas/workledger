@@ -37,6 +37,7 @@ pnpm -r build           # tsc -b for types, then esbuild bundles the CLI into pa
 pnpm test               # vitest, all packages
 pnpm test:coverage      # vitest with the v8 coverage report in coverage/
 pnpm lint               # eslint
+pnpm contracts          # regenerate docs/contracts/p1/*.schema.json (must be a no-op)
 ```
 
 Repo tooling lives in `scripts/`, and every script answers `--help`:
@@ -44,10 +45,10 @@ Repo tooling lives in `scripts/`, and every script answers `--help`:
 | Script | What it does |
 |---|---|
 | `node scripts/coverage-gate.mjs` | Fails when < 70% of the lines this branch changed under `packages/**/src/**` are covered. Reads `coverage/lcov.info`, so run `pnpm test:coverage` first. Reports instead of failing on a push to `main`. |
-| `node scripts/check-pack.mjs` | Packs `workledger` and asserts the tarball is exactly `bin/`, `dist/`, `package.json` (+ `README.md`/`LICENSE` when present) with no runtime dependencies. |
+| `node scripts/check-pack.mjs` | Packs `workledger` and asserts the tarball is exactly `bin/workledger`, `dist/main.js`, `package.json`, `README.md`, and that the declared runtime dependencies match `EXPECTED_RUNTIME_DEPS`. |
 | `node scripts/capture-fixtures.mjs` | Copies the most recent Claude Code transcripts from `~/.claude/projects/` into `test/fixtures/`, scrubbing emails, home paths and secrets *before* writing, and synthesizes the `SessionStart` / `Stop` / `SessionEnd` hook payloads. |
-| `node scripts/check-fixtures.mjs` | Re-scans `test/fixtures/` with the same patterns and fails on any finding. Runs in CI. |
-| `node scripts/version.mjs 0.0.2` | Bumps `packages/core` and `packages/cli` in lockstep (also `pnpm run version 0.0.2`). |
+| `node scripts/check-fixtures.mjs` | Re-scans every `test/fixtures` directory in the repo (discovered from `git ls-files`) with the same patterns and fails on any finding. Runs in CI. |
+| `node scripts/version.mjs 0.0.2` | Bumps `packages/core` and `packages/cli` in lockstep (also `pnpm version:bump 0.0.2` — not `version`, which collides with npm's lifecycle hook). |
 | `node scripts/bundle-cli.mjs` | The esbuild step of the CLI build; inlines `@workledger/core` so the published package has no `workspace:*` dependency. |
 
 CI (`.github/workflows/ci.yml`) runs lint, build, tests, the coverage gate and the fixture scan on

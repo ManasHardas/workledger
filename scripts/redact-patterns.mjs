@@ -63,11 +63,29 @@ export const HOME_PATH_PATTERNS = [
   { name: "home-path", re: /\\\/Users\\\/[A-Za-z0-9._%+-]+/g, replacement: "\\/home\\/user" },
   // Claude Code's project-directory slug: the absolute path with `/` turned into `-`, so
   // `/Users/alice/Projects` becomes `-Users-alice-Projects`. The username segment excludes `-`
-  // so only that one segment is eaten and the rest of the slug survives; a username containing
-  // a dash would be under-redacted, which the post-write scan in check-fixtures.mjs cannot see —
-  // it is the one known gap in this set.
+  // so only that one segment is eaten and the rest of the slug survives.
   { name: "home-path", re: /-Users-[A-Za-z0-9._%+]+/g, replacement: "-home-user" },
 ];
+
+/**
+ * Known gaps — deliberately not patterns, recorded so nobody mistakes "0 findings" for "clean".
+ *
+ * 1. **Personal names.** No vendored regex can find "Ada Lovelace" in prose. capture-fixtures.mjs
+ *    handles this at capture time from `git config user.name` / `user.email` and `--redact-name`,
+ *    which is machine-derived and therefore *not* re-checkable by check-fixtures.mjs in CI. An
+ *    earlier revision of this slot derived only the account name and left the operator's real
+ *    full name in a committed transcript seven times; that is the failure mode this note exists
+ *    for. Grep the fixtures for the name before committing.
+ * 2. **Usernames containing a dash.** The Claude-slug rule above eats one `-`-free segment, so
+ *    `-Users-ada-lovelace-Projects` would keep `lovelace`. The capture-time identity pass covers
+ *    it in practice; the pattern set alone does not.
+ * 3. **IP addresses and localhost ports.** No rule. The current fixtures carry third-party public
+ *    IPs and `localhost:3000/5173/8000` inside quoted prose about other companies' sites — benign,
+ *    and a generic IPv4 rule would shred version numbers and byte counts. If a fixture ever
+ *    carries an address belonging to *this* machine or its network, redact it by hand or with
+ *    `--redact-name`.
+ */
+export const KNOWN_GAPS = ["personal-names", "dashed-usernames", "ip-addresses"];
 
 /** The tag written in place of a match. Kept here so slot 5 can assert the same shape. */
 export function redactionTag(name) {
