@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+// `scripts/redact-patterns.mjs` is dependency-free ESM with no Node imports, so reading it from
+// here stays inside the `packages/core/**` purity fence — see the superset test below.
+import { HOME_PATH_PATTERNS, REDACTION_PATTERNS } from "../../../scripts/redact-patterns.mjs";
 import {
+  MAX_FINDINGS_PER_STRING,
+  MAX_FINDINGS_TOTAL,
   MAX_SCAN_DEPTH,
+  KNOWN_GAPS,
   SECRET_PATTERNS,
   SECRET_PATTERN_NAMES,
+  TRUNCATED,
+  UNSCANNABLE,
   type Finding,
   formatFindings,
   scanText,
@@ -21,21 +29,28 @@ import {
  * `schema.test.ts`: the eslint purity fence covers `packages/core/**`, tests included.
  */
 const x = (n: number) => "x".repeat(n);
+const hex = (n: number) => "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6".repeat(2).slice(0, n);
 
-/** A fake but credential-shaped value: 16 chars, all distinct, mixed case and digits. */
+/** A fake but credential-shaped value: 16 unbroken alphanumerics, mixed case and digits. */
 const FAKE_VALUE = "A1b2C3d4E5f6G7h8";
+/** A fake base64 blob long enough for the cloud-credential patterns. */
+const B64 = "aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4yZ5aB6cD7eF8gH9iJ0kL1mN2oP3qR4sT5uV6wX7yZ8a";
 
 interface PlantedCase {
   /** The pattern name the scanner must report. */
   readonly pattern: string;
   /** The secret-shaped text, planted alone or inside a sentence. */
   readonly secret: string;
-  /** The string handed to the scanner; defaults to `secret` on its own. */
-  readonly text?: string;
 }
 
 const PLANTED: readonly PlantedCase[] = [
   { pattern: "private-key", secret: "-----BEGIN RSA PRIVATE KEY-----" },
+  { pattern: "putty-private-key", secret: "PuTTY-User-Key-File-3: ssh-rsa" },
+  { pattern: "pem-key-body", secret: `MII${B64}` },
+  {
+    pattern: "gcp-service-account",
+    secret: `{"private_key_id":"${hex(40)}","client_email":"svc@p.iam.example"}`,
+  },
   {
     pattern: "jwt",
     secret: `eyJ${"hbGciOiJIUzI1NiJ9"}.${"eyJzdWIiOiJmYWtlLXN1YmplY3QifQ"}.${x(24)}`,
@@ -45,15 +60,37 @@ const PLANTED: readonly PlantedCase[] = [
     pattern: "aws-secret-access-key",
     secret: `aws_secret_access_key = ${"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`,
   },
+  {
+    pattern: "aws-secret-access-key-nearby",
+    secret: `the deploy secret is ${"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`,
+  },
   { pattern: "github-token", secret: `ghp_${x(36)}` },
   { pattern: "github-pat", secret: `github_pat_${x(24)}` },
   { pattern: "slack-token", secret: `xoxb-${"000000000000"}-${x(24)}` },
   { pattern: "slack-webhook", secret: `https://hooks.slack.com/services/T0000/B0000/${x(24)}` },
+  {
+    pattern: "discord-webhook",
+    secret: `https://discord.com/api/webhooks/1234567890123456789/${x(32)}`,
+  },
+  { pattern: "telegram-bot-token", secret: `1234567890:AA${x(32)}` },
   { pattern: "anthropic-key", secret: `sk-ant-api03-${x(32)}` },
-  { pattern: "openai-key", secret: `sk-proj-${"T3BlbkFJ"}${x(32)}` },
+  { pattern: "openai-key", secret: `sk-proj-Ab1_Cd2-Ef3${"T3BlbkFJ"}${x(24)}` },
   { pattern: "stripe-key", secret: `sk_live_${"4eC39HqLyjWDarjtT1zdp7dc"}` },
   { pattern: "google-api-key", secret: `AIza${"SyD"}${x(32)}` },
+  { pattern: "sendgrid-key", secret: `SG.${x(22)}.${x(43)}` },
+  { pattern: "twilio-account-sid", secret: `AC${hex(32)}` },
+  { pattern: "twilio-auth-token", secret: `twilio auth token: ${hex(32)}` },
+  { pattern: "shopify-token", secret: `shpat_${hex(32)}` },
+  { pattern: "mailgun-key", secret: `key-${"3ax6xnjp29jd6fds4gc373sgvjxteol0"}` },
+  { pattern: "azure-storage-key", secret: `AccountKey=${B64}==` },
+  { pattern: "azure-sas-token", secret: `?sv=2022-11-02&sig=${x(40)}%3D` },
+  { pattern: "docker-config-auth", secret: `{"auths":{"r.example.com":{"auth":"${B64}=="}}}` },
   { pattern: "npm-token", secret: `npm_${x(36)}` },
+  { pattern: "npm-auth-token", secret: `//npm.pkg.github.com/:_authToken=8a1b2c3d-4e5f-6a7b-8c9d` },
+  {
+    pattern: "url-credentials",
+    secret: "postgres://wl_app:Hunter2SuperSecret@db.internal:5432/ledger",
+  },
   { pattern: "bearer-token", secret: `Authorization: Bearer ${"abc123XYZ"}${x(12)}` },
   { pattern: "generic-api-key", secret: `api_key = "${FAKE_VALUE}"` },
   { pattern: "env-secret-assignment", secret: `DATABASE_PASSWORD=${FAKE_VALUE}` },
@@ -71,26 +108,36 @@ describe("secretscan patterns", () => {
     }
   });
 
-  it("keeps the names `scripts/redact-patterns.mjs` shares with it", () => {
-    // The redactor's set minus its two privacy-only entries (`email`, `home-path`), which core
-    // deliberately does not carry — see the note at the top of secretscan-patterns.ts. If this
-    // list and the redactor's diverge, that is a contract question, not a silent fix.
-    const shared = [
-      "private-key",
-      "jwt",
-      "aws-access-key-id",
-      "aws-secret-access-key",
-      "github-token",
-      "github-pat",
-      "slack-token",
-      "slack-webhook",
-      "anthropic-key",
-      "openai-key",
-      "npm-token",
-      "bearer-token",
-      "generic-api-key",
-    ];
-    expect(SECRET_PATTERN_NAMES).toEqual(expect.arrayContaining(shared));
+  it("freezes the array and every record, so a caller cannot corrupt a shared regex", () => {
+    expect(Object.isFrozen(SECRET_PATTERNS)).toBe(true);
+    for (const pattern of SECRET_PATTERNS) expect(Object.isFrozen(pattern), pattern.name).toBe(true);
+  });
+
+  it("leaves every regex `lastIndex` at 0 after a scan", () => {
+    scanText(`ghp_${x(36)} and AKIA${"IOSFODNN7EXAMPLE"}`, "probe");
+    for (const pattern of SECRET_PATTERNS) expect(pattern.regex.lastIndex, pattern.name).toBe(0);
+  });
+
+  it("is a superset of scripts/redact-patterns.mjs, minus the two documented omissions", () => {
+    // Reads the redactor rather than a transcribed literal, so drift on *either* side fails the
+    // build. `email` and `home-path` are privacy rewrites for committed fixtures, not credentials:
+    // see the module header on why a hit there would cost the user a checkpoint.
+    const OMITTED = ["email", "home-path"];
+    const redactorNames: string[] = [...REDACTION_PATTERNS, ...HOME_PATH_PATTERNS].map(
+      (p: { name: string }) => p.name,
+    );
+    const expected = redactorNames.filter((name) => !OMITTED.includes(name));
+
+    expect(expected.length).toBeGreaterThan(0);
+    expect(SECRET_PATTERN_NAMES).toEqual(expect.arrayContaining(expected));
+    // The omissions are omissions on purpose, not names we forgot to look at.
+    for (const name of OMITTED) expect(redactorNames).toContain(name);
+    for (const name of OMITTED) expect(SECRET_PATTERN_NAMES).not.toContain(name);
+  });
+
+  it("publishes the shapes it knowingly does not catch", () => {
+    expect(KNOWN_GAPS.length).toBeGreaterThan(0);
+    for (const gap of KNOWN_GAPS) expect(gap.length).toBeGreaterThan(20);
   });
 });
 
@@ -101,15 +148,13 @@ describe("catches every planted secret", () => {
 
   for (const planted of PLANTED) {
     it(`flags ${planted.pattern}`, () => {
-      const text = planted.text ?? planted.secret;
-      const findings = scanText(text, "payload.goal");
+      const findings = scanText(planted.secret, "payload.goal");
       expect(findings.map((f) => f.pattern)).toEqual([planted.pattern]);
       expect(findings[0]!.path).toBe("payload.goal");
-      // The span must actually cover the planted text, so a caller could redact from it.
       const { index, length } = findings[0]!;
       expect(index).toBeGreaterThanOrEqual(0);
-      expect(index + length).toBeLessThanOrEqual(text.length);
-      expect(text.slice(index, index + length).length).toBe(length);
+      expect(index + length).toBeLessThanOrEqual(planted.secret.length);
+      expect(length).toBeGreaterThan(0);
     });
   }
 });
@@ -117,8 +162,7 @@ describe("catches every planted secret", () => {
 describe("no Finding ever contains a substring of the input", () => {
   for (const planted of PLANTED) {
     it(`leaks nothing for ${planted.pattern}`, () => {
-      const text = planted.text ?? planted.secret;
-      const findings = scanText(text, "done[0].text");
+      const findings = scanText(planted.secret, "done[0].text");
       expect(findings.length).toBeGreaterThan(0);
 
       const serialized = JSON.stringify(findings);
@@ -140,6 +184,92 @@ describe("no Finding ever contains a substring of the input", () => {
     const secret = `ghp_${x(36)}`;
     const findings = scanValue({ done: [{ text: `pushed with ${secret}`, files: ["a.ts"] }] });
     expect(JSON.stringify(findings)).not.toContain("ghp_");
+  });
+});
+
+describe("object keys are scanned, and never copied into a path", () => {
+  it("detects a credential used as a key and reports it positionally", () => {
+    const findings = scanValue({ [`ghp_${x(36)}`]: "clean" });
+    expect(findings).toEqual([
+      { path: "<key#0>", pattern: "github-token", index: 0, length: 40 },
+    ]);
+    expect(JSON.stringify(findings)).not.toContain("ghp_");
+  });
+
+  it("does not leak a connection-string key into stderr or the index", () => {
+    const key = "postgres://u:Hunter2SuperSecretPassword@db.internal:5432/ledger_and_padding";
+    const lines = formatFindings(scanValue({ [key]: "clean" }));
+    expect(lines).toEqual(["secret detected at <key#0> (url-credentials)"]);
+    expect(lines.join("")).not.toContain("Hunter2");
+  });
+
+  it("reports a key that is merely unusual positionally too, without scanning it as a hit", () => {
+    const findings = scanValue({ "done items": [`npm_${x(36)}`] });
+    expect(findings.map((f) => f.path)).toEqual(["<key#0>[0]"]);
+    expect(findings[0]!.pattern).toBe("npm-token");
+  });
+
+  it("keeps a plain, clean key verbatim so the contract's path form survives", () => {
+    const payload = { notes: [{}, {}, { reason: `deploy uses ghp_${x(36)}` }] };
+    expect(formatFindings(scanValue(payload))).toEqual([
+      "secret detected at notes[2].reason (github-token)",
+    ]);
+  });
+});
+
+describe("fails closed rather than returning an empty array", () => {
+  it("reports a Map as unscannable instead of clean", () => {
+    expect(scanValue(new Map([["k", `ghp_${x(36)}`]]))).toEqual([
+      { path: "$", pattern: UNSCANNABLE, index: 0, length: 0 },
+    ]);
+  });
+
+  it("reports a Set, a class instance, and a function as unscannable", () => {
+    class Holder {
+      token = `ghp_${x(36)}`;
+    }
+    const findings = scanValue({ s: new Set([1]), h: new Holder(), f: () => 1, u: undefined });
+    expect(findings.map((f) => `${f.path}:${f.pattern}`)).toEqual([
+      `s:${UNSCANNABLE}`,
+      `h:${UNSCANNABLE}`,
+      `f:${UNSCANNABLE}`,
+      `u:${UNSCANNABLE}`,
+    ]);
+  });
+
+  it("reports a subtree past MAX_SCAN_DEPTH as unscannable instead of clean", () => {
+    const build = (depth: number): unknown => {
+      let node: unknown = `ghp_${x(36)}`;
+      for (let i = 0; i < depth; i += 1) node = { n: node };
+      return node;
+    };
+    expect(scanValue(build(MAX_SCAN_DEPTH)).map((f) => f.pattern)).toEqual(["github-token"]);
+    expect(scanValue(build(MAX_SCAN_DEPTH + 1)).map((f) => f.pattern)).toEqual([UNSCANNABLE]);
+  });
+
+  it("still returns [] for genuinely clean scalars", () => {
+    expect(scanValue({ a: 1, b: true, c: null, d: "ordinary prose" })).toEqual([]);
+  });
+
+  it("caps findings per string and marks the remainder truncated", () => {
+    const wide = `ghp_${x(36)} `.repeat(MAX_FINDINGS_PER_STRING + 50);
+    const findings = scanText(wide, "big");
+    expect(findings.length).toBe(MAX_FINDINGS_PER_STRING + 1);
+    expect(findings.at(-1)).toEqual({ path: "big", pattern: TRUNCATED, index: 0, length: 0 });
+  });
+
+  it("caps findings per walk and marks the remainder truncated", () => {
+    const wide = `ghp_${x(36)} `.repeat(MAX_FINDINGS_TOTAL + 50);
+    const findings = scanValue({ big: wide });
+    expect(findings.length).toBe(MAX_FINDINGS_TOTAL + 1);
+    expect(findings.at(-1)!.pattern).toBe(TRUNCATED);
+  });
+
+  it("does not throw on a string with more findings than a spread can carry", () => {
+    // V8 caps spread arguments near 124k; the walker must not turn "found many secrets" into a
+    // stack overflow at data-flow §8 point 3, which scans arbitrary captured transcripts.
+    const wide = `ghp_${x(36)} `.repeat(130_000);
+    expect(() => scanValue({ big: wide })).not.toThrow();
   });
 });
 
@@ -170,6 +300,29 @@ describe("known false-positive shapes are not flagged", () => {
     "redaction tag": "<redacted:github-token>",
     "semver and package name": "@workledger/core@0.0.1 depends on zod@4.5.4",
     "markdown checklist": "- [ ] Step 2: Implement; assert no Finding contains the input",
+
+    // --- CR Blocker 1: this project's own id shapes, keyword-prefixed -----------------------
+    // `notes[].text` and `remaining[].why` are free prose that names a WL- id or a commit right
+    // next to the word "token" or "secret". Bare shapes passing is not enough; these are the
+    // shapes that actually reach the scanner.
+    "backlog id after the word secret": "secret: WL-01JAV9K3Z5QW8Y2T6M7N0P4RXS",
+    "ulid after the word token": "token: 01JAV9K3Z5QW8Y2T6M7N0P4RXS",
+    "commit hash after the word token": "token: 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+
+    // --- SRE Blocker: word sequences that clear an entropy floor ----------------------------
+    // Each of these exits 3 deterministically, so the retry fails identically and data-flow §2's
+    // give-up rule drops the checkpoint; `cli.md` offers no --force. The longest-unbroken-run
+    // gate in `isCredentialShaped` is what rejects them.
+    "password pointing at a vault": "password: see-the-1password-vault",
+    "token pointing at a vault": "token: use-the-ci-token-from-1password",
+    "secret naming a policy": "secret: rotate-quarterly-per-SOC2-policy",
+    "env assignment naming a placeholder": "SESSION_SECRET=changeme-in-production-1",
+    "env assignment holding a path, not a key": "PRIVATE_KEY_PATH=~/.ssh/id_ed25519.pub",
+    "bearer across a line break": "Use Bearer\nauthentication-scheme-for-api",
+    "env assignment holding a config path": "TOKEN_CACHE_PATH=./.workledger/cache/tokens.json",
+    "keyword naming a file": "secret: docs/contracts/p1/checkpoint-payload.schema.json",
+    "keyword naming a timestamp": "token: 2026-09-09T12:34:56.789Z",
+    "keyword naming a package": "secret: @workledger/core@0.0.1",
   };
 
   for (const [label, text] of Object.entries(CLEAN)) {
@@ -184,7 +337,7 @@ describe("known false-positive shapes are not flagged", () => {
       goal: "Ship the secret scanner for packages/core",
       done: [
         {
-          text: "Added secretscan-patterns.ts with 16 named patterns",
+          text: "Added secretscan-patterns.ts with 32 named patterns",
           files: ["packages/core/src/secretscan-patterns.ts"],
           commit: "3e71873",
           verified: "tests-passed",
@@ -205,34 +358,18 @@ describe("known false-positive shapes are not flagged", () => {
 });
 
 describe("walks nested objects and arrays and reports JSON paths", () => {
-  it("reports the exact JSON path of a finding inside notes[2].reason", () => {
-    const payload = {
-      notes: [
-        { type: "discovery", text: "nothing here" },
-        { type: "blocker", text: "still nothing" },
-        { type: "decision", reason: `deploy uses ghp_${x(36)}` },
-      ],
-    };
-    expect(formatFindings(scanValue(payload))).toEqual([
-      "secret detected at notes[2].reason (github-token)",
-    ]);
-  });
-
   it("honours a root path prefix", () => {
-    expect(scanValue({ goal: `AKIA${"IOSFODNN7EXAMPLE"}` }, "payload")[0]!.path).toBe("payload.goal");
-  });
-
-  it("brackets a key that is not a plain identifier", () => {
-    const findings = scanValue({ "done items": [`npm_${x(36)}`] });
-    expect(findings[0]!.path).toBe('["done items"][0]');
-  });
-
-  it("skips numbers, booleans, null, and non-plain objects", () => {
-    expect(scanValue({ a: 1, b: true, c: null, d: new Map([["k", `ghp_${x(36)}`]]) })).toEqual([]);
+    expect(scanValue({ goal: `AKIA${"IOSFODNN7EXAMPLE"}` }, "payload")[0]!.path).toBe(
+      "payload.goal",
+    );
   });
 
   it("scans a plain string at the root", () => {
     expect(scanValue(`ghp_${x(36)}`, "stdin")[0]!.path).toBe("stdin");
+  });
+
+  it("names the root `$` rather than the empty string", () => {
+    expect(scanValue(`ghp_${x(36)}`)[0]!.path).toBe("$");
   });
 
   it("terminates on a cyclic structure", () => {
@@ -241,21 +378,25 @@ describe("walks nested objects and arrays and reports JSON paths", () => {
     expect(formatFindings(scanValue(node))).toEqual(["secret detected at text (github-token)"]);
   });
 
-  it("scans a value that appears twice without treating the second as a cycle", () => {
+  it("reports a value referenced twice at both of its paths", () => {
     const shared = { text: `ghp_${x(36)}` };
     const findings = scanValue({ a: shared, b: shared });
     expect(findings.map((f) => f.path)).toEqual(["a.text", "b.text"]);
   });
 
-  it(`stops descending at MAX_SCAN_DEPTH (${MAX_SCAN_DEPTH})`, () => {
-    const secret = `ghp_${x(36)}`;
-    const build = (depth: number): unknown => {
-      let node: unknown = secret;
-      for (let i = 0; i < depth; i += 1) node = { n: node };
-      return node;
-    };
-    expect(scanValue(build(MAX_SCAN_DEPTH)).length).toBe(1);
-    expect(scanValue(build(MAX_SCAN_DEPTH + 1))).toEqual([]);
+  it("walks a diamond-shaped shared subgraph at depth 20 in linear time", () => {
+    // `ancestors` alone is path-scoped, so a shared subgraph would be re-walked once per path to
+    // it — 2^20 visits, measured at 567 ms before the memo. The memo makes it one walk.
+    let node: unknown = { leaf: `ghp_${x(36)}` };
+    for (let i = 0; i < 20; i += 1) node = { a: node, b: node };
+    const started = performance.now();
+    const findings = scanValue(node);
+    expect(performance.now() - started).toBeLessThan(50);
+    // 2^20 distinct paths reach that leaf, so the walk is memoised and the *output* is what the
+    // MAX_FINDINGS_TOTAL budget bounds; the marker says so rather than the result looking short.
+    expect(findings.length).toBe(MAX_FINDINGS_TOTAL + 1);
+    expect(findings.at(-1)!.pattern).toBe(TRUNCATED);
+    expect(findings[0]!.pattern).toBe("github-token");
   });
 });
 
@@ -292,8 +433,6 @@ describe("scans a rendered markdown string as one value", () => {
   });
 
   it("reports an overlapping match under the most precise pattern name only", () => {
-    // `github_pat_…` would also satisfy the broad env-assignment heuristic; the specific pattern
-    // runs first and claims the span, so the generic one is suppressed.
     const findings = scanText(`GITHUB_TOKEN=github_pat_${"A1b2C3d4"}${x(20)}`, "env");
     expect(findings.map((f) => f.pattern)).toEqual(["github-pat"]);
   });
@@ -332,15 +471,28 @@ describe("runs in linear time", () => {
   const ADVERSARIAL: Record<string, string> = {
     "unterminated PEM headers": fill("-----BEGIN RSA PRIVATE KEZ-----"),
     "PEM prefixes without a key word": fill("-----BEGIN -----BEGIN "),
+    "PuTTY headers without a colon": fill("PuTTY-User-Key-File-3 "),
+    "MII prefixes one character short": fill(`MII${"A".repeat(59)} `),
+    "private_key field names with no value": fill('"private_key_id" : '),
     "jwt prefixes with no separator": fill("eyJ"),
     "jwt first segments that never reach a dot": fill(`eyJ${"A".repeat(60)} `),
     "aws prefixes one character short": fill(`AKIA${"0".repeat(15)} `),
     "aws secret assignments one character short": fill(`aws_secret_access_key=${"A".repeat(39)} `),
+    "aws keyword with a 39-character run in range": fill(`aws ${"A".repeat(39)} `),
     "github prefixes past the length cap": fill(`ghp_${"A".repeat(300)} `),
     "openai prefixes one character short": fill(`sk-${"A".repeat(31)} `),
+    "sendgrid prefixes with one segment": fill(`SG.${"A".repeat(20)} `),
+    "twilio keyword with a 31-hex run": fill(`twilio ${"a1".repeat(15)}b `),
+    "telegram ids with no AA": fill("1234567890:AB "),
+    "discord webhook prefixes": fill("https://discord.com/api/webhooks/1234567890/ "),
+    "AccountKey with a short value": fill(`AccountKey=${"A".repeat(39)};`),
+    "sig parameters one character short": fill(`?sig=${"A".repeat(19)} `),
+    "auth fields with a short value": fill('"auth" : "AAAA" '),
+    "url schemes with no userinfo": fill("postgres://host:5432/db "),
+    "url userinfo with no at sign": fill(`postgres://${"u".repeat(60)}:${"p".repeat(60)} `),
     "bearer values one character short": fill(`Bearer ${"a".repeat(15)} `),
     "keywords followed by a quote run": `api_key${'"'.repeat(SIZE - 7)}`,
-    "keyword assignments one character short": fill(`token=${"a1".repeat(7)} `),
+    "keyword assignments one character short": fill(`token=${"a1".repeat(5)}b `),
     "env names that are all underscores": fill(`SECRET${"_".repeat(70)}=${"a1".repeat(7)}\n`),
     "one long word": "A".repeat(SIZE),
     "one long quote run": '"'.repeat(SIZE),
@@ -354,21 +506,23 @@ describe("runs in linear time", () => {
       const slow: string[] = [];
       for (const pattern of SECRET_PATTERNS) {
         const regex = new RegExp(pattern.regex.source, pattern.regex.flags);
-        const started = Date.now();
+        // `performance.now()` rather than `Date.now()`: the latter is not monotonic, so an NTP
+        // step mid-assertion would turn a 0.5 ms scan into a spurious CI red.
+        const started = performance.now();
         while (regex.exec(text) !== null) {
           if (regex.lastIndex === 0) break;
         }
-        const elapsed = Date.now() - started;
-        if (elapsed >= BUDGET_MS) slow.push(`${pattern.name}: ${elapsed}ms`);
+        const elapsed = performance.now() - started;
+        if (elapsed >= BUDGET_MS) slow.push(`${pattern.name}: ${elapsed.toFixed(1)}ms`);
       }
       expect(slow).toEqual([]);
     });
   }
 
   it("scans 100 KB of every adversarial string through scanText inside a second", () => {
-    const started = Date.now();
+    const started = performance.now();
     for (const [label, text] of Object.entries(ADVERSARIAL)) scanText(text, label);
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
 
