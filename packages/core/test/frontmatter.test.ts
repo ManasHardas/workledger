@@ -91,6 +91,30 @@ describe("parseFrontmatter / stringifyFrontmatter round trip", () => {
     expect(rendered.split("\n").some((line) => line.length > 400)).toBe(true);
   });
 
+  it("pins the YAML 1.2 core schema: timestamps and yes/no/on stay strings", () => {
+    // Under YAML 1.1 these resolve to a !!timestamp and to booleans, which would rewrite the
+    // ledger on the next round trip. The dialect is pinned in code, not inherited from a default.
+    const data = {
+      schema_version: SCHEMA_VERSION,
+      started: "2026-09-09T12:00:00Z",
+      answer: "yes",
+      refused: "no",
+      toggle: "on",
+    };
+    const text = stringifyFrontmatter(data, "");
+    // Emitted as plain scalars, so the frozen bytes stay unquoted...
+    expect(text).toContain("started: 2026-09-09T12:00:00Z\n");
+    expect(text).toContain("answer: yes\n");
+    expect(text).toContain("toggle: on\n");
+    // ...and read back as the strings they went in as.
+    const round = parseFrontmatter(text).data;
+    expect(round).toEqual(data);
+    for (const key of ["started", "answer", "refused", "toggle"]) {
+      expect(typeof round[key]).toBe("string");
+    }
+    expect(stringifyFrontmatter(round, "")).toBe(text);
+  });
+
   it("round trips an empty body", () => {
     const text = stringifyFrontmatter({ schema_version: SCHEMA_VERSION, id: "x" });
     expect(text).toBe("---\nschema_version: 1\nid: x\n---\n");

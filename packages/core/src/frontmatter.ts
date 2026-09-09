@@ -15,6 +15,14 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { SCHEMA_VERSION } from "./schema.js";
 
+/**
+ * The YAML dialect the ledger format is frozen at, pinned in code rather than inherited from
+ * whatever `yaml` happens to default to. YAML 1.2's `core` schema is what keeps `2026-09-09T12:00:00Z`
+ * a string rather than a `!!timestamp`, and `yes` / `no` / `on` strings rather than booleans —
+ * both of which would silently rewrite a ledger file on the next round trip under YAML 1.1.
+ */
+const DIALECT = { version: "1.2", schema: "core" } as const;
+
 /** The fence that opens and closes a frontmatter block. */
 const DELIMITER = "---";
 /** File line of the first key in the block: line 1 is the opening fence. */
@@ -96,7 +104,7 @@ export function parseFrontmatter(text: string): ParsedFrontmatter {
 
   let parsed: unknown;
   try {
-    parsed = parseYaml(block);
+    parsed = parseYaml(block, DIALECT);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new FrontmatterError(
@@ -116,13 +124,14 @@ export function parseFrontmatter(text: string): ParsedFrontmatter {
  * Render a frontmatter mapping and a body back into a ledger file.
  *
  * `lineWidth: 0` disables line folding: a long `title` or `diff` must come back out of
- * {@link parseFrontmatter} as the same single-line scalar it went in as.
+ * {@link parseFrontmatter} as the same single-line scalar it went in as. {@link DIALECT} pins
+ * the emitted dialect to the one {@link parseFrontmatter} reads back.
  */
 export function stringifyFrontmatter(data: Record<string, unknown>, body = ""): string {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     throw new TypeError("frontmatter data must be a plain object");
   }
-  const rendered = stringifyYaml(data, { lineWidth: 0 });
+  const rendered = stringifyYaml(data, { ...DIALECT, lineWidth: 0 });
   const block = rendered.endsWith("\n") ? rendered : `${rendered}\n`;
   return `${DELIMITER}\n${block}${DELIMITER}\n${normalize(body)}`;
 }
