@@ -212,7 +212,7 @@ Body: free markdown, initially the "why" line from the checkpoint. Human edits a
 1. Read the checkpoint stamps for this session from the index. Compute: bytes since last
    checkpoint (from `transcript_path` size), minutes since, turns since (a counter the hook
    increments on each Stop).
-2. If none of the thresholds is crossed (defaults: 40,000 bytes, 20 minutes, 15 turns), exit 0.
+2. If none of the thresholds is crossed (defaults: 2,000,000 bytes, 20 minutes, 15 turns), exit 0.
 3. Loop guard: if the last Stop for this session already denied and the digest file's mtime is newer
    than that denial, exit 0 (the checkpoint was written). If it denied and nothing was written,
    exit 0 as well and mark the checkpoint as `skipped` (never deny twice in a row).

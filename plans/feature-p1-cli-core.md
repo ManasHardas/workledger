@@ -158,7 +158,7 @@ CREATE TABLE checkpoints (
 CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ```
 
-`config.yaml` (committed, per repo): `thresholds: { bytes: 40000, minutes: 20, turns: 15 }`,
+`config.yaml` (committed, per repo): `thresholds: { bytes: 2000000, minutes: 20, turns: 15 }`,
 `brief: { inject: true, max_tokens: 2000 }`, `stale_turns: 5`, `orphan_minutes: 30`,
 `private_paths: []`, `auto_commit: false`, `harnesses: [claude-code]`.
 

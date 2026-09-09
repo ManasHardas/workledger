@@ -8,7 +8,7 @@ First working release, Claude Code only.
   (`SessionStart`, `Stop`, `SessionEnd`) into `.claude/settings.json` additively, with a diff,
   a `.bak`, and a no-op when the binary is absent.
 - `workledger hook`: exact session boundaries; the Stop hook asks the agent to checkpoint when
-  40 KB of transcript, 20 minutes, or 15 turns have passed (block = exit 2 with the instruction),
+  2 MB of transcript, 20 minutes, or 15 turns have passed (block = exit 2 with the instruction),
   never twice for an ignored block, one retry for a rejected payload; `stop_hook_active` always
   allows; private sessions; fail-open on any error; allow path ~73 ms p95 including Node startup.
 - `workledger checkpoint`: validates the agent's payload against the frozen contract, secret-scans

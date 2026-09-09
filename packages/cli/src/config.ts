@@ -48,7 +48,7 @@ export interface HookConfig {
 
 /** The defaults from cli.md, used for a missing file and for every key that does not parse. */
 export const DEFAULT_CONFIG: HookConfig = {
-  thresholds: { bytes: 40000, minutes: 20, turns: 15 },
+  thresholds: { bytes: 2000000, minutes: 20, turns: 15 },
   brief: { inject: true, max_tokens: 2000 },
   stale_turns: 5,
   private_paths: [],
@@ -134,7 +134,7 @@ function parseFlowSeq(value: string): string[] | undefined {
 /** One top-level key: its inline value plus the block lines indented under it. */
 interface Entry {
   value: string;
-  /** `["  bytes: 40000"]`-style lines, comments stripped, indentation kept. */
+  /** `["  bytes: 2000000"]`-style lines, comments stripped, indentation kept. */
   block: string[];
 }
 
@@ -279,7 +279,7 @@ export function isPrivatePath(root: string, patterns: readonly string[], home: s
 export const DEFAULT_CONFIG_YAML = [
   "schema_version: 1",
   "harnesses: [claude-code]",
-  "thresholds: { bytes: 40000, minutes: 20, turns: 15 }",
+  "thresholds: { bytes: 2000000, minutes: 20, turns: 15 }",
   "brief: { inject: true, max_tokens: 2000 }",
   "stale_turns: 5",
   "orphan_minutes: 30",

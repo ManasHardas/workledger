@@ -86,7 +86,7 @@ Reserved. Not implemented in P1 (P2 introduces the UI, which calls these). Invok
 ```yaml
 schema_version: 1
 harnesses: [claude-code]
-thresholds: { bytes: 40000, minutes: 20, turns: 15 }
+thresholds: { bytes: 2000000, minutes: 20, turns: 15 }
 brief: { inject: true, max_tokens: 2000 }
 stale_turns: 5
 orphan_minutes: 30
