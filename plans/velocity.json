@@ -84,6 +84,77 @@
       "files_touched": 22,
       "wall_clock_min": 18,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "backend",
+      "dispatch_kind": "build",
+      "class": "service-module first-of-class",
+      "issue": 5,
+      "pr": 17,
+      "tokens_total": 151489,
+      "tool_uses": 45,
+      "wall_clock_min": 14,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "code-review",
+      "dispatch_kind": "review-round",
+      "issue": 5,
+      "pr": 17,
+      "tokens_total": 109087,
+      "tool_uses": 25,
+      "wall_clock_min": 4,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; 1 blocker (required/additionalProperties restated), 3 important, 4 nit"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "sre",
+      "dispatch_kind": "review-round",
+      "issue": 5,
+      "pr": 17,
+      "tokens_total": 105590,
+      "tool_uses": 27,
+      "wall_clock_min": 5,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "approve; 0 blocker, 5 important; core import ~19ms over node startup"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "infra",
+      "dispatch_kind": "build",
+      "class": "CI-YAML thin-infra",
+      "issue": 4,
+      "pr": 18,
+      "tokens_total": 173386,
+      "tool_uses": 81,
+      "wall_clock_min": 20,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 17,
+      "issue": 5,
+      "agent_role": "backend",
+      "class": "service-module first-of-class",
+      "tokens_implementer": 332522,
+      "tokens_reviewers": 214677,
+      "review_iterations": 2,
+      "files_touched": 28,
+      "wall_clock_min": 40,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }
