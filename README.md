@@ -6,7 +6,7 @@ the ledger lives in the repo under `.workledger/`, and a small local UI is where
 sessions and edit what comes next. Everything carries provenance and is shared with a team through
 git.
 
-Status: P1 in progress — the CLI skeleton builds and publishes; the commands land next.
+Status: P1 (CLI core) is functionally complete and dogfooding on this repo: `init`, `hook`, `checkpoint`, `brief`, `doctor` for Claude Code. UI (P2), recovery and backfill (P3), Cursor and Codex (P4) follow.
 
 - Spec: `docs/superpowers/specs/2026-09-09-workledger-design.md`
 - Decision log: `docs/decision-log.md`
@@ -26,6 +26,20 @@ pnpm add -g workledger
 ```
 
 The npm package is named `workledger` and installs one binary, `workledger`.
+
+## Quick start
+
+```bash
+cd your-repo
+npx workledger init          # creates .workledger/ and the three Claude Code hooks
+claude                       # work as usual; every ~15 turns the hook asks the agent to checkpoint
+workledger brief             # what the next session will be told
+workledger doctor            # hooks, store, config, index health
+```
+
+What you get in the repo: `.workledger/sessions/<ulid>.md` (goal, done, remaining, notes per
+checkpoint, with `[cp n]` provenance) and `.workledger/backlog/WL-<ulid>.md` (one file per proposed
+or accepted item). Commit them. Nothing leaves the machine; every write is secret-scanned.
 
 ## Development
 
