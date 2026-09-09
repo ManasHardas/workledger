@@ -1,3 +1,9 @@
 packages:
   - "packages/*"
   - "apps/*"
+# Repo-global build-script policy (it governs every esbuild consumer, vite/vitest included,
+# not only tsx's copy). esbuild's postinstall only fetches a platform binary that already
+# ships as an optional dependency, so this is expected to stay a permanent no-op; declared
+# explicitly so `pnpm install` does not write a placeholder here on every run.
+allowBuilds:
+  esbuild: false
