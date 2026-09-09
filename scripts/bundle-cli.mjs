@@ -26,7 +26,24 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
 const ENTRY = path.join(CLI_DIR, "src", "main.ts");
 const OUTFILE = path.join(CLI_DIR, "dist", "main.js");
-const CORE_SRC = path.join(REPO_ROOT, "packages", "core", "src", "index.ts");
+const CORE_DIR = path.join(REPO_ROOT, "packages", "core", "src");
+const CORE_SRC = path.join(CORE_DIR, "index.ts");
+/**
+ * Every `@workledger/core` specifier the CLI may use, aliased to core's *source*.
+ *
+ * The deep specifiers exist for the Stop hook's budget (plans/feature-p1-data-flow.md §6): the
+ * barrel builds ~30 zod schemas and pulls `yaml` at module load, so the hook reaches core through
+ * `@workledger/core/ids`, `/frontmatter`, `/brief` and `/render/*` instead. esbuild's `alias`
+ * matches whole specifiers, not prefixes, so each one is spelled out here; the list must stay in
+ * step with the `exports` map in packages/core/package.json.
+ */
+const CORE_SUBPATHS = ["schema", "ids", "frontmatter", "brief", "render/session", "render/backlog"];
+const CORE_ALIAS = {
+  "@workledger/core": CORE_SRC,
+  ...Object.fromEntries(
+    CORE_SUBPATHS.map((sub) => [`@workledger/core/${sub}`, path.join(CORE_DIR, `${sub}.ts`)]),
+  ),
+};
 /**
  * The index migrations. They are data, not code, so esbuild has nothing to do with them: they
  * are copied next to the bundle instead, which is why `packages/cli/src/index/db.ts` can resolve
@@ -188,7 +205,7 @@ async function main(argv) {
     // the published package has no runtime dependency to resolve — except EXTERNAL.
     packages: "bundle",
     external: EXTERNAL,
-    alias: { "@workledger/core": CORE_SRC },
+    alias: CORE_ALIAS,
     // No sourcemap in the published bundle: its `sources` would point at files the tarball does
     // not ship (packages/cli/src, and the local pnpm store layout for third-party code), so it
     // would be dead weight that also leaks this machine's paths. dist/main.js *is* the shipped

@@ -14,6 +14,8 @@ import {
   validateCheckpointPayload,
 } from "../src/index.js";
 
+import { PURITY_IMPORT_RE } from "./purity.js";
+
 /**
  * Fixtures are loaded through `import.meta.glob` rather than `node:fs`: `packages/core` is pure
  * TypeScript by contract, and the eslint fence covers `packages/core/**` — tests included.
@@ -318,7 +320,7 @@ describe("packages/core purity", () => {
   it("imports no Node built-ins", () => {
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(coreSources)) {
-      const imports = source.matchAll(/from\s+"([^"]+)"/g);
+      const imports = source.matchAll(PURITY_IMPORT_RE);
       for (const [, specifier] of imports) {
         if (specifier!.startsWith("node:") || ["fs", "path", "os", "crypto", "url", "child_process"].includes(specifier!)) {
           offenders.push(`${path}: ${specifier}`);
@@ -338,7 +340,7 @@ describe("packages/core purity", () => {
   it("imports nothing outside the pure-dependency allowlist", () => {
     const specifiers = new Set<string>();
     for (const source of Object.values(coreSources)) {
-      for (const [, specifier] of source.matchAll(/from\s+"([^"]+)"/g)) {
+      for (const [, specifier] of source.matchAll(PURITY_IMPORT_RE)) {
         if (!specifier!.startsWith(".")) specifiers.add(specifier!);
       }
     }

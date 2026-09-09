@@ -12,11 +12,11 @@ import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "backlog"];
 
 /**
- * Commands whose bodies slots 9–10 still replace. `backlog` is final in P1, and `checkpoint` was
- * built by slot 8 (#11) — running it from here would read stdin and write the ledger of whatever
- * repo the suite runs in, so its registration is asserted by introspection instead.
+ * Commands whose bodies slot 10 still replaces. `backlog` is final in P1; `checkpoint` (#11) and
+ * `hook` (#12) are built — running either from here would read stdin and write the ledger of
+ * whatever repo the suite runs in, so their registration is asserted by introspection instead.
  */
-const STUBS = ["init", "hook", "brief", "doctor"];
+const STUBS = ["init", "brief", "doctor"];
 
 /** Run the program with stdout and stderr captured. */
 async function invoke(argv: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -55,8 +55,7 @@ describe("command registry", () => {
   });
 
   it.each(STUBS)("%s exits 1 with 'not implemented'", async (name) => {
-    const argv = name === "hook" ? [name, "Stop"] : [name];
-    const { code, err, out } = await invoke(argv);
+    const { code, err, out } = await invoke([name]);
 
     expect(code).toBe(EXIT_USAGE);
     expect(err).toContain("not implemented");
@@ -99,10 +98,12 @@ describe("command registry", () => {
   });
 
   it("accepts only the three hook events", async () => {
-    for (const event of ["SessionStart", "Stop", "SessionEnd"]) {
-      const { err } = await invoke(["hook", event]);
-      expect(err, event).toContain("not implemented");
-    }
+    // By introspection: `hook` is implemented, so invoking it here would block on the worker's
+    // stdin and touch the index. `packages/cli/test/hook.test.ts` drives the three events.
+    const hook = createProgram().commands.find((command) => command.name() === "hook");
+    expect(hook?.registeredArguments.map((argument) => argument.argChoices)).toEqual([
+      ["SessionStart", "Stop", "SessionEnd"],
+    ]);
 
     const { code, err } = await invoke(["hook", "PreToolUse"]);
     expect(code).toBe(EXIT_USAGE);

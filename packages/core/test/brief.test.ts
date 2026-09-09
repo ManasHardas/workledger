@@ -16,6 +16,8 @@ import {
   estimateTokens,
 } from "../src/index.js";
 
+import { PURITY_IMPORT_RE } from "./purity.js";
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -640,7 +642,7 @@ describe("brief and tokens purity", () => {
   it("import no Node built-ins", () => {
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(briefSources)) {
-      for (const [, specifier] of source.matchAll(/from\s+"([^"]+)"/g)) {
+      for (const [, specifier] of source.matchAll(PURITY_IMPORT_RE)) {
         if (
           specifier!.startsWith("node:") ||
           ["fs", "path", "os", "crypto", "url", "child_process"].includes(specifier!)

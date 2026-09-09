@@ -10,12 +10,35 @@
  * test can point the whole CLI at a temp directory and never touch the real `$HOME`.
  */
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+
+/**
+ * `better-sqlite3` is loaded through `createRequire`, not with a static import.
+ *
+ * It is the one dependency esbuild cannot inline (a native `.node` addon), so a static import
+ * of it survives into `dist/main.js` as a *top-level* ESM import — Node would then load the
+ * addon on every `workledger` invocation, including the ones that never open the index. The
+ * `hook Stop` allow path has a p95 budget of 100 ms including Node startup
+ * (plans/feature-p1-data-flow.md §6) and `packages/cli/test/hook-timing.test.ts` asserts the
+ * bundle has no top-level reference to it. A `require` call the bundler cannot see statically is
+ * what keeps the cost on the first `openIndex`, where it belongs.
+ */
+const nodeRequire = createRequire(import.meta.url);
+
+/** The constructor, loaded at most once per process. */
+let DatabaseCtor: typeof Database | undefined;
+
+/** Load (once) and return the `better-sqlite3` constructor. */
+function databaseConstructor(): typeof Database {
+  DatabaseCtor ??= nodeRequire("better-sqlite3") as typeof Database;
+  return DatabaseCtor;
+}
 
 /** Basename of the index inside `WORKLEDGER_HOME`. */
 export const INDEX_FILENAME = "index.sqlite";
@@ -332,7 +355,7 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   mkdirSync(home, { recursive: true });
   const file = path.join(home, INDEX_FILENAME);
 
-  const db = new Database(file);
+  const db = new (databaseConstructor())(file);
   // WAL lets `brief` and `doctor` read while a Stop hook writes; without it every reader would
   // contend with the writer and the 5 s hook budget would be spent waiting.
   db.pragma("journal_mode = WAL");

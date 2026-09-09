@@ -466,7 +466,7 @@ export async function runCheckpoint(
       return fail(EXIT_USAGE, ["goal: required at checkpoint 1"]);
     }
 
-    const refErrors = checkRefs(payload, listOpenBacklogIds(repoRoot));
+    const refErrors = checkRefs(payload, await listOpenBacklogIds(repoRoot));
     if (refErrors.length > 0) return fail(EXIT_USAGE, refErrors);
 
     // --- Step 3: secret-scan the payload ----------------------------------------------------
