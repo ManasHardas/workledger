@@ -27,6 +27,8 @@
  *
  * `status` changes go through {@link TRANSITIONS} rather than being set directly, so the state
  * machine is stated once and both callers get the same refusal with the same list of targets.
+ * `start` and `restore` were added to the contract on 2026-09-09 and are the only way to reach
+ * `in_progress`, and the only way back out of `discarded` or `done`.
  */
 import { RenderError } from "@workledger/core";
 import { stringifyFrontmatter } from "@workledger/core/frontmatter";
@@ -184,14 +186,28 @@ export const TRANSITIONS: Readonly<Record<BacklogStatus, readonly BacklogStatus[
   discarded: ["proposed"],
 };
 
+/** The detail line every refused transition carries, so both refusals read the same way. */
+function targetsDetail(from: BacklogStatus): string {
+  const allowed = TRANSITIONS[from];
+  return allowed.length === 0
+    ? `no transition is legal from ${from}`
+    : `legal targets from ${from}: ${allowed.join(", ")}`;
+}
+
+/**
+ * Where `restore` puts an item, by where it is. The two entries are exactly the two reverse edges
+ * the state machine carries; every other status has nothing to be restored from.
+ */
+const RESTORE_TARGETS: Partial<Record<BacklogStatus, BacklogStatus>> = {
+  discarded: "proposed",
+  done: "accepted",
+};
+
 /** @throws {BacklogOpError} `usage`, listing the legal targets, when the move is not allowed. */
 function assertTransition(id: string, from: BacklogStatus, to: BacklogStatus): void {
-  const allowed = TRANSITIONS[from];
-  if (allowed.includes(to)) return;
+  if (TRANSITIONS[from].includes(to)) return;
   throw new BacklogOpError(`${id} is ${from}; it cannot move to ${to}`, "usage", [
-    allowed.length === 0
-      ? `no transition is legal from ${from}`
-      : `legal targets from ${from}: ${allowed.join(", ")}`,
+    targetsDetail(from),
   ]);
 }
 
@@ -390,6 +406,45 @@ export async function doneItem(ctx: OpContext, id: string): Promise<ItemResult> 
   return patchItem(ctx, id, (found) => {
     assertTransition(id, found.frontmatter.status, "done");
     return { status: "done" };
+  });
+}
+
+/**
+ * `accepted → in_progress`.
+ *
+ * The only way into `in_progress`: an item is started when someone picks it up, which is a
+ * different claim from accepting it and belongs to a different moment.
+ */
+export async function startItem(ctx: OpContext, id: string): Promise<ItemResult> {
+  return patchItem(ctx, id, (found) => {
+    assertTransition(id, found.frontmatter.status, "in_progress");
+    return { status: "in_progress" };
+  });
+}
+
+/**
+ * Undo a closure: `discarded → proposed`, `done → accepted` (backlog-cli.md).
+ *
+ * The target depends on where the item is, which is why this is one subcommand and not two — the
+ * user's intent is "put this back", and which state that means is a property of the item. A
+ * restored `done` item lands on `accepted` rather than `proposed` because it was already endorsed
+ * by a human once and `confirmed_by` still says so; a restored `discarded` item goes back to
+ * `proposed`, which is what the state machine allows and what leaves the endorsement question
+ * open again.
+ */
+export async function restoreItem(ctx: OpContext, id: string): Promise<ItemResult> {
+  return patchItem(ctx, id, (found) => {
+    const from = found.frontmatter.status;
+    const to = RESTORE_TARGETS[from];
+    if (to === undefined) {
+      throw new BacklogOpError(
+        `${id} is ${from}; only a discarded or a done item can be restored`,
+        "usage",
+        [targetsDetail(from)],
+      );
+    }
+    assertTransition(id, from, to);
+    return { status: to };
   });
 }
 

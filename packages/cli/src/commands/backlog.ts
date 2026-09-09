@@ -1,5 +1,5 @@
 /**
- * `workledger backlog <accept|discard|done|edit|assign|rank|merge|show|list> …` —
+ * `workledger backlog <accept|discard|done|start|restore|edit|assign|rank|merge|show|list> …` —
  * docs/contracts/p2/backlog-cli.md.
  *
  * Argument parsing and printing only: every mutation is a function in `src/backlog-ops.ts`, which
@@ -167,19 +167,6 @@ function row(item: { id: string; status: string; priority?: string | null; title
 // The command
 // ---------------------------------------------------------------------------
 
-/** Sub-commands, in the order the contract lists them; also what `--help` prints. */
-export const BACKLOG_ACTIONS = [
-  "accept",
-  "discard",
-  "done",
-  "edit",
-  "assign",
-  "rank",
-  "merge",
-  "show",
-  "list",
-] as const;
-
 /** The exit code a subcommand action wrote. */
 interface Cell {
   code: number;
@@ -222,6 +209,22 @@ function buildProgram(io: CommandIo, cell: Cell): Command {
     .action(async (id: string) => {
       cell.code = await withLedger("backlog done", io, true, async (ctx, ops) => {
         io.stdout(summarize(await ops.doneItem(ctx, id)));
+      });
+    });
+
+  sub("start", "accepted → in_progress")
+    .argument("<id>", "backlog item id")
+    .action(async (id: string) => {
+      cell.code = await withLedger("backlog start", io, true, async (ctx, ops) => {
+        io.stdout(summarize(await ops.startItem(ctx, id)));
+      });
+    });
+
+  sub("restore", "discarded → proposed; done → accepted (reopen)")
+    .argument("<id>", "backlog item id")
+    .action(async (id: string) => {
+      cell.code = await withLedger("backlog restore", io, true, async (ctx, ops) => {
+        io.stdout(summarize(await ops.restoreItem(ctx, id)));
       });
     });
 

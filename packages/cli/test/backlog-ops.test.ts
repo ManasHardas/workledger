@@ -3,9 +3,8 @@
  * plans/feature-p2-data-flow.md §Writes and §Notes resolution (#32).
  *
  * Everything runs against a temp ledger built here rather than against `test/fixtures`: the
- * status machine needs an item seeded at each of the five statuses, and `in_progress` and
- * `discarded` are states no subcommand can put an item into, so the fixture has to write the
- * frontmatter itself.
+ * status machine needs an item seeded at each of the five statuses, and a subcommand can only
+ * reach four of them from `proposed`, so the fixture writes the frontmatter itself.
  *
  * Two layers are asserted, because the contract fixes both. The pure functions are driven
  * directly — that is the surface `packages/server` (#34) calls — and the commands are driven
@@ -170,8 +169,13 @@ describe("gitActor", () => {
 });
 
 describe("the status machine", () => {
-  /** The three subcommands that move `status`, and the target each asks for. */
-  const MOVES = { accept: "accepted", discard: "discarded", done: "done" } as const;
+  /** The four subcommands that ask for one fixed `status`, and the target each asks for. */
+  const MOVES = {
+    accept: "accepted",
+    discard: "discarded",
+    done: "done",
+    start: "in_progress",
+  } as const;
   const STATUSES: BacklogStatus[] = [
     "proposed",
     "accepted",
@@ -216,6 +220,39 @@ describe("the status machine", () => {
       });
     }
   }
+});
+
+describe("restoreItem", () => {
+  /** `restore`'s target is a property of where the item is, so it gets its own table. */
+  const CASES = [
+    { from: "discarded", to: "proposed" },
+    { from: "done", to: "accepted" },
+  ] as const;
+
+  for (const { from, to } of CASES) {
+    it(`moves a ${from} item back to ${to}`, async () => {
+      const { root } = fixture();
+      seedItem(root, A, { status: from });
+
+      const result = await ops.restoreItem(ctx(root), A);
+
+      expect(result.item.status).toBe(to);
+      expect(result.history[0]?.diff).toBe(`status: ${from} → ${to}`);
+      expect(readOnDisk(root, A).frontmatter.status).toBe(to);
+    });
+  }
+
+  it("refuses an item that was never closed, listing the targets that are legal", async () => {
+    const { root } = fixture();
+    seedItem(root, A, { status: "in_progress" });
+
+    await expect(ops.restoreItem(ctx(root), A)).rejects.toThrow(/only a discarded or a done item/);
+    await ops.restoreItem(ctx(root), A).catch((error: ops.BacklogOpError) => {
+      expect(error.code).toBe("usage");
+      expect(error.details.join(" ")).toContain("legal targets from in_progress: accepted, done, discarded");
+    });
+    expect(readOnDisk(root, A).frontmatter.status).toBe("in_progress");
+  });
 });
 
 describe("acceptItem", () => {
@@ -465,26 +502,31 @@ describe("workledger backlog", () => {
 
     const calls: string[][] = [
       ["accept", A],
+      ["start", A],
       ["edit", A, "--title", "Renamed", "--priority", "p1", "--area", "cli, ui"],
       ["assign", A, "--owner", "Grace Hopper <grace@example.com>"],
       ["rank", A, "3"],
       ["done", A],
+      ["restore", A],
       ["discard", B],
+      ["restore", B],
     ];
     for (const call of calls) {
       expect(await backlogCommand(call, io), call.join(" ")).toBe(EXIT_OK);
     }
 
     const item = readOnDisk(root, A).frontmatter;
-    expect(item.status).toBe("done");
+    // accept → start → … → done → restore lands a reopened item back on `accepted`.
+    expect(item.status).toBe("accepted");
     expect(item.title).toBe("Renamed");
     expect(item.priority).toBe("p1");
     expect(item.area).toEqual(["cli", "ui"]);
     expect(item.owner).toEqual({ name: "Grace Hopper", email: "grace@example.com" });
     expect(item.rank).toBe(3);
-    expect(readOnDisk(root, B).frontmatter.status).toBe("discarded");
+    // …and a restored `discarded` item back on `proposed`.
+    expect(readOnDisk(root, B).frontmatter.status).toBe("proposed");
     expect(io.err).toEqual([]);
-    expect(io.out.at(-1)).toContain(`${B}: status: proposed → discarded`);
+    expect(io.out.at(-1)).toContain(`${B}: status: discarded → proposed`);
   });
 
   it("clears the owner with --none and refuses --owner together with it", async () => {
@@ -553,12 +595,21 @@ describe("workledger backlog", () => {
     const { root, io } = fixture();
     seedItem(root, A, { status: "done" });
 
-    expect(await backlogCommand(["accept", B], io)).toBe(EXIT_USAGE);
+    expect(await backlogCommand(["accept", `${ID_PREFIX}0Z`], io)).toBe(EXIT_USAGE);
     expect(io.err.join(" ")).toContain("unknown backlog item");
 
     io.err.length = 0;
     expect(await backlogCommand(["discard", A], io)).toBe(EXIT_USAGE);
     expect(io.err.join(" ")).toContain("legal targets from done: accepted");
+
+    io.err.length = 0;
+    expect(await backlogCommand(["start", A], io)).toBe(EXIT_USAGE);
+    expect(io.err.join(" ")).toContain("legal targets from done: accepted");
+
+    io.err.length = 0;
+    seedItem(root, B, { status: "proposed" });
+    expect(await backlogCommand(["restore", B], io)).toBe(EXIT_USAGE);
+    expect(io.err.join(" ")).toContain("only a discarded or a done item can be restored");
 
     io.err.length = 0;
     expect(await backlogCommand(["edit", A, "--priority", "p9"], io)).toBe(EXIT_USAGE);
