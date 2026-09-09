@@ -120,6 +120,9 @@ export type Source = z.infer<typeof Source>;
 export const HistoryOp = enumOf(HISTORY_OPS);
 export type HistoryOp = z.infer<typeof HistoryOp>;
 
+export const NoteBy = enumOf(NOTE_BY);
+export type NoteBy = z.infer<typeof NoteBy>;
+
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
@@ -210,7 +213,7 @@ export const NoteObject = z
   .object({
     type: NoteType,
     text: z.string().min(1).max(500),
-    by: enumOf(NOTE_BY).optional(),
+    by: NoteBy.optional(),
     reason: z.string().min(1).max(300).optional(),
   })
   .strict()

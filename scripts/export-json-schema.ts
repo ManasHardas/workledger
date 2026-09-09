@@ -7,8 +7,12 @@ import { buildDocuments, isBlock, type JsonValue } from "./json-schema-fragments
  * Regenerate the three frozen JSON Schema artifacts under `docs/contracts/p1/` from the zod
  * schemas in `packages/core/src/schema.ts`.
  *
- *   pnpm exec tsx scripts/export-json-schema.ts
+ *   pnpm contracts                              # builds @workledger/core, then exports
  *   git diff --exit-code docs/contracts/p1/     # must be clean
+ *
+ * `pnpm contracts` rebuilds core first because this script resolves `@workledger/core` through
+ * the package's `exports` map (i.e. `dist/`); the vitest `contracts` project aliases the same
+ * specifier to `src/`, so the parity test always sees the working tree.
  *
  * The contract is frozen, so the export must reproduce each file byte for byte — including the
  * hand formatting, which mixes one-line leaf schemas with expanded structural objects. The

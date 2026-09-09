@@ -14,15 +14,19 @@ import {
   RemainingItemObject,
   SessionFrontmatter,
   SessionRef,
-} from "../packages/core/src/schema.js";
+} from "@workledger/core";
 
 /**
  * Composition of the three frozen JSON Schema artifacts under `docs/contracts/p1/`.
  *
- * zod is the source for every *constraint* (`type`, `enum`, `pattern`, `minLength`, …) and for
- * every prose `description`: each leaf below is `pick()`ed out of `z.toJSONSchema()` output, and
- * `pick()` throws if zod's key set stops matching, so a change to `packages/core/src/schema.ts`
- * can never silently drift from the contract.
+ * zod is the source for every *constraint* (`type`, `enum`, `pattern`, `minLength`, …), for
+ * every prose `description`, for which properties are `required`, and for whether unknown keys
+ * are allowed. Each leaf below is `pick()`ed out of `z.toJSONSchema()` output; each `required`
+ * list goes through `requiredOf()` and each `additionalProperties` through
+ * `additionalPropertiesOf()`. All three throw on mismatch, so a change to
+ * `packages/core/src/schema.ts` can never silently drift from the contract: making a field
+ * optional, or loosening a `.strict()` object, fails the export instead of quietly rewriting
+ * what the frozen file promises.
  *
  * What zod cannot express in JSON Schema is hand-maintained here: `$id`, `title`, the `$defs`/
  * `$ref` split, the cross-field `anyOf`/`oneOf`/`if`-`then` blocks, the `x-limits`/`x-body`
@@ -142,7 +146,7 @@ function propsOf(schema: z.ZodType): Record<string, JsonObject> {
  * point: it fails loudly when zod starts or stops emitting a keyword instead of silently
  * producing a schema that no longer matches the frozen file.
  */
-function pick(source: JsonObject, order: readonly string[], label: string): JsonObject {
+export function pick(source: JsonObject, order: readonly string[], label: string): JsonObject {
   const have = Object.keys(source).sort();
   const want = [...order].sort();
   if (have.length !== want.length || have.some((key, i) => key !== want[i])) {
@@ -153,6 +157,45 @@ function pick(source: JsonObject, order: readonly string[], label: string): Json
   const out: JsonObject = {};
   for (const key of order) out[key] = source[key] as JsonValue;
   return out;
+}
+
+/**
+ * The `required` list zod derives from the schema, asserted to equal the frozen contract's —
+ * in order, since JSON Schema `required` is ordered in these files. Making a property optional
+ * (or required) in `packages/core/src/schema.ts` fails the export here rather than leaving the
+ * contract claiming something zod no longer enforces.
+ */
+export function requiredOf(
+  schema: z.ZodType,
+  expected: readonly string[],
+  label: string,
+): string[] {
+  const actual = jsonOf(schema)["required"];
+  const have = Array.isArray(actual) ? actual.map(String) : [];
+  if (have.length !== expected.length || have.some((key, i) => key !== expected[i])) {
+    throw new Error(
+      `${label}: required mismatch — zod requires [${have.join(", ")}], fragment expects [${expected.join(", ")}]`,
+    );
+  }
+  return [...expected];
+}
+
+/**
+ * The unknown-key policy zod derives from `.strict()` / `.loose()`, asserted to equal the frozen
+ * contract's `additionalProperties`. Swapping one for the other fails the export.
+ */
+export function additionalPropertiesOf(
+  schema: z.ZodType,
+  expected: boolean,
+  label: string,
+): boolean {
+  const actual = jsonOf(schema)["additionalProperties"];
+  if (actual !== expected) {
+    throw new Error(
+      `${label}: additionalProperties mismatch — zod says ${JSON.stringify(actual)}, fragment expects ${JSON.stringify(expected)}`,
+    );
+  }
+  return expected;
 }
 
 const ref = (name: string): JsonObject => ({ $ref: `#/$defs/${name}` });
@@ -183,13 +226,16 @@ function checkpointPayloadDocument(): JsonObject {
       ),
     );
 
+  // The root carries no `required`: every section defaults, and `goal` is a CLI concern.
+  requiredOf(CheckpointPayload, [], "CheckpointPayload");
+
   return block({
     $schema: SCHEMA_DIALECT,
     $id: `${ID_BASE}checkpoint-payload.schema.json`,
     title: "CheckpointPayload",
     description: descriptionOf(CheckpointPayload, "CheckpointPayload"),
     type: "object",
-    additionalProperties: false,
+    additionalProperties: additionalPropertiesOf(CheckpointPayload, false, "CheckpointPayload"),
     properties: block({
       goal: block(
         pick(root["goal"] as JsonObject, ["type", "minLength", "maxLength", "description"], "goal"),
@@ -201,8 +247,8 @@ function checkpointPayloadDocument(): JsonObject {
     $defs: block({
       DoneItem: block({
         type: "object",
-        additionalProperties: false,
-        required: ["text", "verified"],
+        additionalProperties: additionalPropertiesOf(DoneItemObject, false, "DoneItem"),
+        required: requiredOf(DoneItemObject, ["text", "verified"], "DoneItem"),
         properties: block({
           text: pick(done["text"] as JsonObject, ["type", "minLength", "maxLength", "description"], "DoneItem.text"),
           files: pick(done["files"] as JsonObject, ["type", "items", "maxItems", "description"], "DoneItem.files"),
@@ -217,8 +263,8 @@ function checkpointPayloadDocument(): JsonObject {
       }),
       RemainingItem: block({
         type: "object",
-        additionalProperties: false,
-        required: ["text", "why"],
+        additionalProperties: additionalPropertiesOf(RemainingItemObject, false, "RemainingItem"),
+        required: requiredOf(RemainingItemObject, ["text", "why"], "RemainingItem"),
         properties: block({
           text: pick(remaining["text"] as JsonObject, ["type", "minLength", "maxLength", "description"], "RemainingItem.text"),
           why: pick(remaining["why"] as JsonObject, ["type", "minLength", "maxLength"], "RemainingItem.why"),
@@ -239,8 +285,8 @@ function checkpointPayloadDocument(): JsonObject {
       }),
       Note: block({
         type: "object",
-        additionalProperties: false,
-        required: ["type", "text"],
+        additionalProperties: additionalPropertiesOf(NoteObject, false, "Note"),
+        required: requiredOf(NoteObject, ["type", "text"], "Note"),
         properties: block({
           type: pick(note["type"] as JsonObject, ["type", "enum"], "Note.type"),
           text: pick(note["text"] as JsonObject, ["type", "minLength", "maxLength"], "Note.text"),
@@ -268,8 +314,8 @@ function actorDef(): JsonObject {
   const actor = propsOf(Actor);
   return block({
     type: "object",
-    additionalProperties: false,
-    required: ["name", "email"],
+    additionalProperties: additionalPropertiesOf(Actor, false, "Actor"),
+    required: requiredOf(Actor, ["name", "email"], "Actor"),
     properties: block({
       name: pick(actor["name"] as JsonObject, ["type"], "Actor.name"),
       email: pick(actor["email"] as JsonObject, ["type"], "Actor.email"),
@@ -288,20 +334,24 @@ function sessionFrontmatterDocument(): JsonObject {
     title: "SessionFrontmatter",
     description: descriptionOf(SessionFrontmatter, "SessionFrontmatter"),
     type: "object",
-    additionalProperties: true,
-    required: [
-      "schema_version",
-      "id",
-      "harness",
-      "harness_session_id",
-      "repo",
-      "author",
-      "started",
-      "status",
-      "private",
-      "source",
-      "checkpoints",
-    ],
+    additionalProperties: additionalPropertiesOf(SessionFrontmatter, true, "SessionFrontmatter"),
+    required: requiredOf(
+      SessionFrontmatter,
+      [
+        "schema_version",
+        "id",
+        "harness",
+        "harness_session_id",
+        "repo",
+        "author",
+        "started",
+        "status",
+        "private",
+        "source",
+        "checkpoints",
+      ],
+      "SessionFrontmatter",
+    ),
     properties: block({
       // zod models `schema_version` as `z.literal(1)`, which JSON Schema types as a number;
       // the contract narrows it to an integer.
@@ -345,8 +395,12 @@ function sessionFrontmatterDocument(): JsonObject {
       Actor: actorDef(),
       Checkpoint: block({
         type: "object",
-        additionalProperties: false,
-        required: ["n", "at", "turns", "transcript_offset", "trigger"],
+        additionalProperties: additionalPropertiesOf(Checkpoint, false, "Checkpoint"),
+        required: requiredOf(
+          Checkpoint,
+          ["n", "at", "turns", "transcript_offset", "trigger"],
+          "Checkpoint",
+        ),
         properties: block({
           n: pick(cp["n"] as JsonObject, ["type", "minimum"], "Checkpoint.n"),
           at: pick(cp["at"] as JsonObject, ["type", "format"], "Checkpoint.at"),
@@ -390,18 +444,22 @@ function backlogItemDocument(): JsonObject {
     title: "BacklogItem",
     description: descriptionOf(BacklogItem, "BacklogItem"),
     type: "object",
-    additionalProperties: true,
-    required: [
-      "schema_version",
-      "id",
-      "title",
-      "status",
-      "proposed_by",
-      "rank",
-      "created",
-      "updated",
-      "history",
-    ],
+    additionalProperties: additionalPropertiesOf(BacklogItem, true, "BacklogItem"),
+    required: requiredOf(
+      BacklogItem,
+      [
+        "schema_version",
+        "id",
+        "title",
+        "status",
+        "proposed_by",
+        "rank",
+        "created",
+        "updated",
+        "history",
+      ],
+      "BacklogItem",
+    ),
     properties: block({
       schema_version: pick(
         { ...(root["schema_version"] as JsonObject), type: "integer" },
@@ -433,8 +491,8 @@ function backlogItemDocument(): JsonObject {
       Actor: actorDef(),
       HumanStamp: block({
         type: "object",
-        additionalProperties: false,
-        required: ["name", "email", "at"],
+        additionalProperties: additionalPropertiesOf(HumanStamp, false, "HumanStamp"),
+        required: requiredOf(HumanStamp, ["name", "email", "at"], "HumanStamp"),
         properties: block({
           name: pick(stamp["name"] as JsonObject, ["type"], "HumanStamp.name"),
           email: pick(stamp["email"] as JsonObject, ["type"], "HumanStamp.email"),
@@ -444,8 +502,8 @@ function backlogItemDocument(): JsonObject {
       }),
       SessionRef: block({
         type: "object",
-        additionalProperties: false,
-        required: ["session", "checkpoint"],
+        additionalProperties: additionalPropertiesOf(SessionRef, false, "SessionRef"),
+        required: requiredOf(SessionRef, ["session", "checkpoint"], "SessionRef"),
         properties: block({
           session: pick(sessionRef["session"] as JsonObject, ["type", "pattern"], "SessionRef.session"),
           checkpoint: pick(sessionRef["checkpoint"] as JsonObject, ["type", "minimum"], "SessionRef.checkpoint"),
@@ -453,8 +511,12 @@ function backlogItemDocument(): JsonObject {
       }),
       Provenance: block({
         type: "object",
-        additionalProperties: false,
-        required: ["harness", "session", "checkpoint", "author"],
+        additionalProperties: additionalPropertiesOf(Provenance, false, "Provenance"),
+        required: requiredOf(
+          Provenance,
+          ["harness", "session", "checkpoint", "author"],
+          "Provenance",
+        ),
         properties: block({
           harness: pick(provenance["harness"] as JsonObject, ["type", "enum"], "Provenance.harness"),
           session: pick(provenance["session"] as JsonObject, ["type", "pattern"], "Provenance.session"),
@@ -464,8 +526,8 @@ function backlogItemDocument(): JsonObject {
       }),
       HistoryEntry: block({
         type: "object",
-        additionalProperties: false,
-        required: ["at", "by", "op"],
+        additionalProperties: additionalPropertiesOf(HistoryEntry, false, "HistoryEntry"),
+        required: requiredOf(HistoryEntry, ["at", "by", "op"], "HistoryEntry"),
         properties: block({
           at: pick(history["at"] as JsonObject, ["type", "format"], "HistoryEntry.at"),
           by: block({

@@ -26,7 +26,7 @@ const invalidFixtures = import.meta.glob<{ default: unknown }>(
   "./fixtures/checkpoint-payload/invalid/*.json",
   { eager: true },
 );
-const coreSources = import.meta.glob<string>("../src/*.ts", {
+const coreSources = import.meta.glob<string>("../src/**/*.ts", {
   eager: true,
   query: "?raw",
   import: "default",

@@ -14,12 +14,12 @@ export default defineConfig({
     },
   },
   test: {
-    projects: ["packages/*"],
+    projects: ["packages/*", "scripts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
-      include: ["src/**/*.ts"],
+      include: ["src/**/*.ts", "scripts/*.ts"],
       all: true,
     },
   },
