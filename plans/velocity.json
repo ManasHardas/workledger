@@ -470,6 +470,53 @@
       "files_touched": 16,
       "wall_clock_min": 50,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 26,
+      "issue": 25,
+      "agent_role": "infra",
+      "class": "thin-infra (lean)",
+      "tokens_implementer": 83538,
+      "tokens_reviewers": 0,
+      "review_iterations": 0,
+      "files_touched": 4,
+      "wall_clock_min": 6,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "orchestrator verified acceptance directly; no review round"
+    },
+    {
+      "session": 2,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 27,
+      "issue": 11,
+      "agent_role": "backend",
+      "class": "endpoint-chained first-of-class (lean, CR+security lens)",
+      "tokens_implementer": 376061,
+      "tokens_reviewers": 101379,
+      "review_iterations": 1,
+      "files_touched": 6,
+      "wall_clock_min": 15,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 28,
+      "issue": 12,
+      "agent_role": "backend",
+      "class": "endpoint-chained first-of-class (lean, CR+security lens)",
+      "tokens_implementer": 264448,
+      "tokens_reviewers": 107518,
+      "review_iterations": 0,
+      "files_touched": 14,
+      "wall_clock_min": 29,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "stop allow p95 72.7ms host"
     }
   ]
 }
