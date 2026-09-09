@@ -58,6 +58,10 @@ export default {
         "xl": "var(--wl-font-size-xl)",
         "2xl": "var(--wl-font-size-2xl)",
       },
+      fontFamily: {
+        "sans": "var(--wl-font-family-sans)",
+        "mono": "var(--wl-font-family-mono)",
+      },
     },
   },
 };
