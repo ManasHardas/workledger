@@ -103,7 +103,15 @@ async function main(argv) {
     logLevel: "warning",
     metafile: true,
     banner: {
-      js: "// workledger CLI — bundled by scripts/bundle-cli.mjs. Edit packages/cli/src instead.",
+      // The bundle is ESM, but the third-party code it inlines (`yaml`, reached through
+      // `@workledger/core`) is CJS, and esbuild's interop shim falls back to a bare `require`
+      // that ESM does not define — "Dynamic require of \"process\" is not supported" at import
+      // time. Defining `require` from `createRequire` is what the shim probes for, so the
+      // inlined CJS resolves against this module instead of throwing.
+      js:
+        "// workledger CLI — bundled by scripts/bundle-cli.mjs. Edit packages/cli/src instead.\n" +
+        'import { createRequire as __workledgerCreateRequire } from "node:module";\n' +
+        "const require = __workledgerCreateRequire(import.meta.url);",
     },
   });
 
