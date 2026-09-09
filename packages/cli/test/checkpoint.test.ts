@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createItem, createSessionText } from "@workledger/core";
 import type { SessionFrontmatter } from "@workledger/core";
 
-import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
+import { redactLine, runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
 import type { CheckpointIo, CheckpointOptions } from "../src/commands/checkpoint.js";
 import { EXIT_OK, EXIT_SECRET, EXIT_USAGE } from "../src/exit-codes.js";
 import { openIndex } from "../src/index/db.js";
@@ -365,12 +365,79 @@ describe("workledger checkpoint", () => {
     expect(err[0]).toMatch(/^\(payload\): \d+ bytes on stdin, over the 4096-byte limit$/);
   });
 
+  it("a raw token on stdin never reaches stderr or the index", async () => {
+    // Reviewer reproduction 1 (PR #27): `JSON.parse`'s own message quotes the input, so a token
+    // piped in as-is used to be echoed back before the step-3 scan had ever run.
+    const fixture = setup();
+    const token = ["ghp", "_", "R7q2W8e4T6y0U3i5O1p9A2s4D6"].join("");
+    const { code, err, out } = await run(fixture, token);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(err).toEqual([`${"(payload)"}: not valid JSON`]);
+    expect(`${out.join("\n")}\n${err.join("\n")}`).not.toContain(token);
+
+    const db = openIndex({ home: fixture.home });
+    try {
+      const row = db.getSessionByUlid(ULID_A);
+      expect(row?.last_attempt_exit).toBe(EXIT_USAGE);
+      expect(row?.last_attempt_errors).not.toContain(token);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("an unknown key named as a token is reported positionally, never by name", async () => {
+    // Reviewer reproduction 2 (PR #27): zod names an unrecognized key in its message, so a
+    // credential pasted where a field name belongs used to be printed in full.
+    const fixture = setup();
+    const token = ["ghp", "_", "L4k8J2h6G0f3D9s7A5q1Z8x2C4"].join("");
+    const { code, err, out } = await run(fixture, `{"goal":"Ship it.","${token}":1,"nope":2}`);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(err).toEqual(["(payload): unrecognized keys: <key#1>, <key#2>"]);
+    expect(`${out.join("\n")}\n${err.join("\n")}`).not.toContain(token);
+
+    const db = openIndex({ home: fixture.home });
+    try {
+      expect(db.getSessionByUlid(ULID_A)?.last_attempt_errors).not.toContain(token);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("names a nested unknown key positionally too", async () => {
+    const fixture = setup();
+    const token = ["ghp", "_", "M3n7B1v5C9x2Z6l0K4j8H2g6F0"].join("");
+    const { code, err } = await run(fixture, {
+      goal: "Ship it.",
+      done: [{ text: "a", commit: "0447dab", verified: "tests-passed", [token]: 1 }],
+    });
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(err).toEqual(["done[0]: unrecognized key: <key#3>"]);
+    expect(err.join("\n")).not.toContain(token);
+  });
+
+  it("redacts a credential that reaches a diagnostic line by any other route", () => {
+    const token = ["ghp", "_", "Q1w2E3r4T5y6U7i8O9p0A1s2D3"].join("");
+    const line = redactLine(`(payload): something about ${token} slipped through`);
+    expect(line).toBe("(payload): something about <redacted:github-token> slipped through");
+    expect(redactLine("goal: required at checkpoint 1")).toBe("goal: required at checkpoint 1");
+  });
+
+  it("reports a JSON fault by byte offset only", async () => {
+    const fixture = setup();
+    const { code, err } = await run(fixture, '{"goal" "x"}');
+    expect(code).toBe(EXIT_USAGE);
+    expect(err[0]).toMatch(/^\(payload\): not valid JSON at byte \d+$/);
+  });
+
   it("malformed JSON exits 1 without writing", async () => {
     const fixture = setup();
     const before = readFileSync(fixture.sessionPath(ULID_A), "utf8");
     const { code, err } = await run(fixture, "{not json");
     expect(code).toBe(EXIT_USAGE);
-    expect(err[0]).toMatch(/^\(payload\): /);
+    expect(err[0]).toMatch(/^\(payload\): not valid JSON/);
     expect(readFileSync(fixture.sessionPath(ULID_A), "utf8")).toBe(before);
   });
 

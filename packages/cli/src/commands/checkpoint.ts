@@ -39,6 +39,7 @@ import type {
   SessionFrontmatter,
   Trigger,
   UnparsedLine,
+  ValidationError,
 } from "@workledger/core";
 
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_SECRET, EXIT_USAGE } from "../exit-codes.js";
@@ -139,6 +140,89 @@ export function ackLine(n: number, summary: CheckpointSummary): string {
 /** Turn a render failure into the stderr lines the contract shapes errors as. */
 function renderErrorLines(error: RenderError): string[] {
   return error.details.length > 0 ? [...error.details] : [`${PAYLOAD_PATH}: ${error.message}`];
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics that never quote the payload
+// ---------------------------------------------------------------------------
+
+/**
+ * The last line of defence over everything this command says about a rejected payload.
+ *
+ * Steps 2 and 3 are ordered so the *scan* runs after validation, which means a validation error
+ * is composed before anything has been scanned — and both stderr and the index's
+ * `last_attempt_errors` are read by a human and by the next Stop hook. So every line goes
+ * through the scanner on its way out and a match is replaced with `<redacted:<pattern>>`
+ * (data-flow §8: a matched value is never printed or logged).
+ *
+ * The lines this file builds are already value-free by construction; this is what makes that a
+ * checked property rather than a claim about every call site.
+ */
+export function redactLine(line: string): string {
+  const findings = scanText(line, PAYLOAD_PATH);
+  let out = line;
+  // Right to left: an earlier replacement would otherwise shift every later finding's offset.
+  for (const finding of [...findings].sort((a, b) => b.index - a.index)) {
+    if (finding.length === 0) continue; // a `truncated` marker locates nothing
+    out =
+      out.slice(0, finding.index) +
+      `<redacted:${finding.pattern}>` +
+      out.slice(finding.index + finding.length);
+  }
+  return out;
+}
+
+/**
+ * A JSON parse failure, reported without a byte of the input.
+ *
+ * `JSON.parse`'s own message quotes the text around the fault — `Unexpected token 'g',
+ * "ghp_…"… is not valid JSON` — which is the payload verbatim, before the secret scan has run.
+ * Only the offset survives: it is what an agent needs to find its own mistake, and it says
+ * nothing about what was there.
+ */
+export function jsonErrorLine(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const position = /at position (\d+)/.exec(message)?.[1];
+  return position === undefined
+    ? `${PAYLOAD_PATH}: not valid JSON`
+    : `${PAYLOAD_PATH}: not valid JSON at byte ${position}`;
+}
+
+/** zod's message for an unknown key names the key; every other rule message is value-free. */
+const UNRECOGNIZED_KEYS = /^Unrecognized keys?:/;
+/** The key names inside that message. */
+const QUOTED = /"((?:[^"\\]|\\.)*)"/g;
+
+/** The keys of the object a formatted issue path points at, in the order the payload wrote them. */
+function keysAt(value: unknown, path: string): string[] {
+  let current: unknown = value;
+  if (path !== PAYLOAD_PATH) {
+    for (const segment of path.match(/[^.[\]]+/g) ?? []) {
+      if (current === null || typeof current !== "object") return [];
+      current = (current as Record<string, unknown>)[segment];
+    }
+  }
+  if (current === null || typeof current !== "object") return [];
+  return Object.keys(current as Record<string, unknown>);
+}
+
+/**
+ * One validation failure as `<json-path>: <message>` (cli.md step 2), with the key names of an
+ * unknown-key error replaced by their position in the object.
+ *
+ * A key is payload text like any other — an agent that pasted a credential where a field name
+ * belongs must not have it echoed back — so it is reported the way the secret scanner reports a
+ * key it cannot vouch for: positionally, as `<key#3>`.
+ */
+export function validationLine(issue: ValidationError, parsed: unknown): string {
+  if (!UNRECOGNIZED_KEYS.test(issue.message)) return `${issue.path}: ${issue.message}`;
+  const keys = keysAt(parsed, issue.path);
+  const markers = [...issue.message.matchAll(QUOTED)].map((match) => {
+    const index = keys.indexOf(match[1] as string);
+    return index < 0 ? "<key#?>" : `<key#${index}>`;
+  });
+  const plural = markers.length === 1 ? "key" : "keys";
+  return `${issue.path}: unrecognized ${plural}: ${markers.join(", ")}`;
 }
 
 /**
@@ -335,14 +419,17 @@ export async function runCheckpoint(
 
     /** Report a failure the way the contract shapes it, and cache it for the Stop hook (§2). */
     const fail = (exit: number, lines: readonly string[]): number => {
-      for (const line of lines) io.stderr(line);
+      // Scanned on the way out, so neither stderr nor `last_attempt_errors` can carry a value
+      // that reached here before step 3 ran. See {@link redactLine}.
+      const safe = lines.map(redactLine);
+      for (const line of safe) io.stderr(line);
       // A dry run is a rehearsal, not an attempt: recording it would let a failed `--dry-run`
       // raise BLOCK #2 on the next Stop for a checkpoint the agent never tried to record.
       if (!dryRun) {
         db.recordAttempt(ulid, {
           at: io.now().toISOString(),
           exit,
-          errors: lines.join("\n"),
+          errors: safe.join("\n"),
         });
       }
       return exit;
@@ -360,16 +447,14 @@ export async function runCheckpoint(
     try {
       parsed = JSON.parse(raw.toString("utf8")) as unknown;
     } catch (error) {
-      return fail(EXIT_USAGE, [
-        `${PAYLOAD_PATH}: ${error instanceof Error ? error.message : String(error)}`,
-      ]);
+      return fail(EXIT_USAGE, [jsonErrorLine(error)]);
     }
 
     const validation = validateCheckpointPayload(parsed);
     if (!validation.ok) {
       return fail(
         EXIT_USAGE,
-        validation.errors.map((issue) => `${issue.path}: ${issue.message}`),
+        validation.errors.map((issue) => validationLine(issue, parsed)),
       );
     }
     const payload = validation.value;
