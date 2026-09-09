@@ -410,6 +410,36 @@
       "files_touched": 8,
       "wall_clock_min": 30,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "sre",
+      "dispatch_kind": "review-round",
+      "issue": 7,
+      "pr": 22,
+      "tokens_total": 126926,
+      "tool_uses": 35,
+      "wall_clock_min": 8,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; same blocker as CR (unparsed lines dropped); appends 6.7ms at 200cp"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 20,
+      "issue": 8,
+      "agent_role": "backend",
+      "class": "service-module first-of-class (credential surface)",
+      "tokens_implementer": 636741,
+      "tokens_reviewers": 498181,
+      "review_iterations": 3,
+      "files_touched": 10,
+      "wall_clock_min": 75,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "T-D fired: two fix-cycle iterations"
     }
   ]
 }
