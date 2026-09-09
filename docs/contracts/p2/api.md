@@ -13,7 +13,7 @@ type RemainingLine = Line & { ref: string; rel: "new"|"updates"|"closes"; why: s
 type NoteLine      = { cp: number; type: "discovery"|"decision"|"blocker"|"question"; text: string; by?: "human"|"agent"; reason?: string; resolved?: boolean };
 type ParsedSession = { frontmatter: SessionFrontmatter; goal: string|null; done: Line[]; remaining: RemainingLine[]; notes: NoteLine[]; unparsed: { section: string; line: string }[] };
 type BacklogView   = { frontmatter: BacklogItem; body: string };
-type NoteRef       = NoteLine & { session: string };           // session ulid
+type NoteRef       = NoteLine & { session: string; index: number };  // session ulid; index = position within its checkpoint (amended 2026-09-09)
 type Health        = { cli: string; repo: string; harnesses: DoctorEntry[]; index: { path: string; bytes: number; openSessions: number }; config: { valid: boolean; problems: string[] }; lastHookAt: string|null };
 ```
 
