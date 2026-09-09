@@ -28,6 +28,19 @@
       "issue": 2,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "filed #3, #4"
+    },
+    {
+      "session": 1,
+      "wave": "0.5",
+      "kind": "dispatch",
+      "agent_role": "backend",
+      "dispatch_kind": "wave-0.5-issue-planning",
+      "tokens_total": 115139,
+      "tool_uses": 33,
+      "wall_clock_min": 7,
+      "issue": 2,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "filed #5-#14; 6 contract findings -> amendment PR"
     }
   ]
 }
