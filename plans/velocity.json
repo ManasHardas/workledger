@@ -41,6 +41,49 @@
       "issue": 2,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "filed #5-#14; 6 contract findings -> amendment PR"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "infra",
+      "dispatch_kind": "build",
+      "class": "thin-infra",
+      "issue": 3,
+      "pr": 16,
+      "tokens_total": 93321,
+      "tool_uses": 41,
+      "wall_clock_min": 7,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "code-review",
+      "dispatch_kind": "review-round",
+      "issue": 3,
+      "pr": 16,
+      "tokens_total": 90226,
+      "tool_uses": 19,
+      "wall_clock_min": 4,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "approve; 0 blocker, 4 important, 3 nit"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 16,
+      "issue": 3,
+      "agent_role": "infra",
+      "class": "thin-infra",
+      "tokens_implementer": 205182,
+      "tokens_reviewers": 90226,
+      "review_iterations": 1,
+      "files_touched": 22,
+      "wall_clock_min": 18,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }
