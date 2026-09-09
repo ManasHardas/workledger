@@ -6,20 +6,28 @@
 // checking the tarball checks the publish. It catches the two failures that only show up after a
 // release — src/, tests or tsconfig leaking into the tarball, and a `dist/` that never got built.
 //
-// It also asserts the declared runtime dependencies equal `EXPECTED_RUNTIME_DEPS` from
-// scripts/bundle-cli.mjs (`better-sqlite3` alone): `@workledger/core` is `private: true` and
-// reaches the CLI as `workspace:*`, which npm cannot resolve, so the CLI inlines it at build time
-// instead, and `better-sqlite3` is a native module esbuild cannot inline at all. This script
-// reads that one list rather than repeating it.
+// It also asserts the *packed* manifest — the one a consumer installs, not the one in the
+// worktree — is exactly `PUBLISHED_FIELDS` from scripts/bundle-cli.mjs, with no `devDependencies`
+// and no `scripts`, and runtime dependencies equal to `EXPECTED_RUNTIME_DEPS` (`better-sqlite3`
+// alone): `@workledger/core` is `private: true` and reaches the CLI as `workspace:*`, which npm
+// cannot resolve, so the CLI inlines it at build time instead, and `better-sqlite3` is a native
+// module esbuild cannot inline at all. This script reads those two lists rather than repeating
+// them. It then checks the worktree manifest got its development fields back, which is the only
+// direct evidence that `postpack` ran.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { EXPECTED_RUNTIME_DEPS, assertRuntimeDeps, migrationFiles } from "./bundle-cli.mjs";
+import {
+  EXPECTED_RUNTIME_DEPS,
+  PUBLISHED_FIELDS,
+  assertRuntimeDeps,
+  migrationFiles,
+} from "./bundle-cli.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
@@ -94,16 +102,50 @@ async function main(argv) {
     failed = true;
   }
 
-  const pkg = JSON.parse(readFileSync(path.join(CLI_DIR, "package.json"), "utf8"));
-  const problem = assertRuntimeDeps(pkg);
+  const packed = JSON.parse(run("tar", ["-xzOf", tarballPath, "package/package.json"], REPO_ROOT));
+  const problem = assertRuntimeDeps(packed);
   if (problem) {
-    console.error(`check-pack: ${problem}`);
+    console.error(`check-pack: packed manifest — ${problem}`);
+    failed = true;
+  }
+  // `devDependencies` and `scripts` are named rather than left to the field-list check below so
+  // that the failure says which one leaked; they are the two that break the consumer install.
+  for (const field of ["devDependencies", "scripts"]) {
+    if (packed[field] !== undefined) {
+      console.error(
+        `check-pack: packed manifest still declares ${field} — packages/cli \`prepack\` ` +
+          "(scripts/bundle-cli.mjs strip-manifest) did not run, or PUBLISHED_FIELDS grew an entry " +
+          "the published package must not carry.",
+      );
+      failed = true;
+    }
+  }
+  const extraFields = Object.keys(packed).filter((f) => !PUBLISHED_FIELDS.includes(f));
+  if (extraFields.length > 0) {
+    console.error(`check-pack: packed manifest has fields outside PUBLISHED_FIELDS: ${extraFields.join(", ")}`);
+    failed = true;
+  }
+
+  // postpack put the development manifest back. Without this the first sign of a broken restore
+  // would be an unrelated `pnpm install` failing later, or a stripped manifest getting committed.
+  const source = JSON.parse(readFileSync(path.join(CLI_DIR, "package.json"), "utf8"));
+  if (source.scripts?.build === undefined || source.devDependencies === undefined) {
+    console.error(
+      "check-pack: packages/cli/package.json is still the published manifest — `postpack` did " +
+        "not restore it. Run `node scripts/bundle-cli.mjs restore-manifest`.",
+    );
+    failed = true;
+  }
+  if (existsSync(path.join(CLI_DIR, "package.json.prepack-backup"))) {
+    console.error("check-pack: packages/cli/package.json.prepack-backup was left behind by `postpack`.");
     failed = true;
   }
 
   if (failed) return 1;
   const deps = EXPECTED_RUNTIME_DEPS.length === 0 ? "no runtime deps" : EXPECTED_RUNTIME_DEPS.join(", ");
-  console.log(`check-pack: file list exact, ${deps}`);
+  console.log(
+    `check-pack: file list exact, manifest is [${Object.keys(packed).join(", ")}], ${deps}`,
+  );
   return 0;
 }
 

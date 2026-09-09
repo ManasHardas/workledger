@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// usage: node scripts/bundle-cli.mjs
-// Bundle packages/cli into a single self-contained dist/main.js.
+// usage: node scripts/bundle-cli.mjs [bundle | strip-manifest | restore-manifest]
+// Bundle packages/cli into a single self-contained dist/main.js (default), or swap its manifest
+// for the published one and back (the `prepack` / `postpack` pair — see PUBLISHED_FIELDS below).
 //
 // Why bundle: `@workledger/core` is `private: true` and reaches the CLI as `workspace:*`. A
 // published `workledger` tarball that declared that dependency would be uninstallable — npm
@@ -14,7 +15,7 @@
 // `@workledger/core` is aliased to its *source*, matching vitest.config.ts: a stale or absent
 // packages/core/dist can never turn into a mystifying red or a false green.
 
-import { cp, readFile, readdir, rm } from "node:fs/promises";
+import { copyFile, cp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -71,9 +72,103 @@ export function assertRuntimeDeps(pkg) {
   );
 }
 
+/**
+ * The complete field list of the published manifest, in the order it is written.
+ *
+ * The development manifest cannot be published as-is: `devDependencies` carries
+ * `@workledger/core` as `workspace:*`, which `pnpm pack` rewrites into a bare `0.0.1` that no
+ * registry can resolve, so `npm install --omit=dev` inside the extracted package fails with
+ * `E404 @workledger/core@0.0.1`. `scripts.build` is just as wrong in a tarball — it shells out to
+ * `../../scripts/bundle-cli.mjs`, a path that only exists in this repo. Neither is needed by a
+ * consumer: the bundle is already built and core is already inlined into it.
+ *
+ * So `prepack` swaps this subset in and `postpack` puts the original back (verified: pnpm reads
+ * the lifecycle scripts before `prepack` runs, so `postpack` still fires even though the manifest
+ * it swapped in has no `scripts` key). `publishConfig` was tried first and does not do this job —
+ * pnpm applies `publishConfig.scripts` but ignores `publishConfig.devDependencies`, and leaves
+ * `publishConfig` itself in the packed manifest.
+ *
+ * `type` is on the list because it is load-bearing, not metadata: `dist/main.js` is ESM and the
+ * bin shim reaches it with `import()`. Drop `type: "module"` and Node parses the bundle as
+ * CommonJS and the installed CLI dies on its first line.
+ */
+export const PUBLISHED_FIELDS = [
+  "name",
+  "version",
+  "type",
+  "description",
+  "license",
+  "repository",
+  "bin",
+  "files",
+  "engines",
+  "dependencies",
+];
+
+const MANIFEST = path.join(CLI_DIR, "package.json");
+/**
+ * Where `strip-manifest` parks the development manifest for `restore-manifest` to put back. Not
+ * in `files`, so an interrupted pack can never ship it; gitignored, so one can never be committed.
+ */
+const MANIFEST_BACKUP = path.join(CLI_DIR, "package.json.prepack-backup");
+
+/** The published manifest: `PUBLISHED_FIELDS` of `pkg` that are actually present, in that order. */
+export function publishedManifest(pkg) {
+  return Object.fromEntries(
+    PUBLISHED_FIELDS.filter((field) => pkg[field] !== undefined).map((field) => [field, pkg[field]]),
+  );
+}
+
+async function exists(file) {
+  try {
+    await readFile(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `prepack`: park the development manifest and write the published one in its place. */
+async function stripManifest() {
+  // A backup already here means an earlier pack died between prepack and postpack, so the
+  // manifest on disk is the *published* one and re-stripping it would lose the development
+  // fields for good. Restoring first makes the pair self-healing instead.
+  if (await exists(MANIFEST_BACKUP)) await restoreManifest();
+
+  const source = await readFile(MANIFEST, "utf8");
+  const published = publishedManifest(JSON.parse(source));
+  const problem = assertRuntimeDeps(published);
+  if (problem) {
+    console.error(`bundle-cli: ${problem}`);
+    return 1;
+  }
+
+  await writeFile(MANIFEST_BACKUP, source);
+  await writeFile(MANIFEST, `${JSON.stringify(published, null, 2)}\n`);
+  console.log(`bundle-cli: packed manifest — ${Object.keys(published).join(", ")}`);
+  return 0;
+}
+
+/** `postpack`: put the development manifest back. A no-op when there is nothing parked. */
+async function restoreManifest() {
+  if (!(await exists(MANIFEST_BACKUP))) return 0;
+  await copyFile(MANIFEST_BACKUP, MANIFEST);
+  await rm(MANIFEST_BACKUP);
+  return 0;
+}
+
 async function main(argv) {
-  if (argv.length > 0) {
-    console.error(`bundle-cli: unexpected argument "${argv[0]}" — this script takes none`);
+  const [command = "bundle", ...rest] = argv;
+  if (rest.length > 0) {
+    console.error(`bundle-cli: unexpected argument "${rest[0]}" — commands take none`);
+    return 1;
+  }
+  if (command === "strip-manifest") return stripManifest();
+  if (command === "restore-manifest") return restoreManifest();
+  if (command !== "bundle") {
+    console.error(
+      `bundle-cli: unknown command "${command}" — expected bundle, strip-manifest or restore-manifest`,
+    );
     return 1;
   }
 
