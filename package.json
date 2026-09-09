@@ -1,0 +1,27 @@
+{
+  "name": "workledger-monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Monorepo root for workledger — local observer for coding-agent sessions.",
+  "packageManager": "pnpm@11.1.3",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^10.10.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.11"
+  }
+}

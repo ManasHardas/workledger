@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// Extensionless bin shim: the module type of this file is host-determined, so it uses a
+// dynamic import (valid under both ESM and CJS) to reach the compiled ESM entry point.
+// `process.exitCode` rather than `process.exit()` so piped stdout is never truncated.
+import("../dist/main.js")
+  .then(async (main) => {
+    process.exitCode = await main.run(process.argv.slice(2));
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
