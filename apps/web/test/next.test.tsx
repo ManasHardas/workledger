@@ -1,0 +1,455 @@
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { NextView } from "../src/features/next/next-view.js";
+import { SourceProvider } from "../src/lib/source-context.js";
+
+import type {
+  Actor,
+  BacklogStatus,
+  BacklogView,
+  LedgerEvent,
+  LedgerSource,
+} from "../src/lib/ledger-source.js";
+
+const AUTHOR: Actor = { name: "Manas Hardas", email: "manas.hardas@gmail.com" };
+
+function item(
+  id: string,
+  title: string,
+  status: BacklogStatus,
+  rank: number,
+  overrides: Partial<BacklogView["frontmatter"]> = {},
+): BacklogView {
+  return {
+    frontmatter: {
+      schema_version: 1,
+      id,
+      title,
+      status,
+      proposed_by: {
+        harness: "claude-code",
+        session: "01JBPX2M4H6E1TSA7VYJ0G8WQD",
+        checkpoint: 2,
+        author: AUTHOR,
+      },
+      rank,
+      area: ["web"],
+      blocked_by: [],
+      created: "2026-09-08T12:04:00Z",
+      updated: "2026-09-09T08:31:00Z",
+      history: [],
+      ...overrides,
+    },
+    body: `${title} — why it matters.`,
+  };
+}
+
+const PROPOSED = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7A", "Reconnect the EventSource", "proposed", 10);
+const ACCEPTED = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7B", "Ship the Next view", "accepted", 20, {
+  confirmed_by: { ...AUTHOR, at: "2026-09-09T08:31:00Z" },
+  owner: AUTHOR,
+  priority: "p2",
+});
+const RUNNING = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7C", "Generate the Tailwind preset", "in_progress", 30);
+const DONE = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7D", "Freeze the P2 contracts", "done", 40);
+const DISCARDED = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7E", "Ship the card target", "discarded", 50);
+
+const ALL = [PROPOSED, ACCEPTED, RUNNING, DONE, DISCARDED];
+
+type Call = [string, ...unknown[]];
+
+/**
+ * A `LedgerSource` that records what the view asked it to do.
+ *
+ * The acceptance criterion for this issue is "each interaction calls the matching `LedgerSource`
+ * method", so the assertions are about the calls, not about a rendering the fixture happens to
+ * produce — a view that renamed a write would still look right and be wrong.
+ */
+function spySource(over: Partial<LedgerSource> = {}) {
+  const calls: Call[] = [];
+  let items = ALL;
+  let emit: ((event: LedgerEvent) => void) | null = null;
+  const record =
+    <T,>(name: string, result: (...args: never[]) => T) =>
+    (...args: unknown[]): Promise<T> => {
+      calls.push([name, ...args]);
+      return Promise.resolve(result(...(args as never[])));
+    };
+  const find = (id: string) => items.find((i) => i.frontmatter.id === id) ?? PROPOSED;
+
+  const source: LedgerSource = {
+    capabilities: { write: true, live: true, provenance: true },
+    listSessions: async () => [],
+    getSession: async () => {
+      throw new Error("unused");
+    },
+    listBacklog: record("listBacklog", () => items),
+    getBacklogItem: async (id: string) => find(id),
+    listNotes: async () => [],
+    brief: async () => "",
+    health: async () => {
+      throw new Error("unused");
+    },
+    accept: record("accept", (id: string) => ({
+      ...find(id),
+      frontmatter: {
+        ...find(id).frontmatter,
+        status: "accepted" as BacklogStatus,
+        confirmed_by: { ...AUTHOR, at: "2026-09-09T09:00:00Z" },
+      },
+    })),
+    discard: record("discard", (id: string) => find(id)),
+    done: record("done", (id: string) => find(id)),
+    start: record("start", (id: string) => find(id)),
+    restore: record("restore", (id: string) => find(id)),
+    edit: record("edit", (id: string) => find(id)),
+    assign: record("assign", (id: string) => find(id)),
+    rank: record("rank", (id: string) => find(id)),
+    merge: record("merge", (id: string, into: string) => ({
+      source: find(id),
+      target: find(into),
+    })),
+    resolveNote: async () => {
+      throw new Error("unused");
+    },
+    subscribe: (handler) => {
+      emit = handler;
+      return () => {
+        emit = null;
+      };
+    },
+    ...over,
+  };
+
+  return {
+    source,
+    calls,
+    /** What the source will hand back on the next read, as a file change would. */
+    setItems: (next: BacklogView[]) => {
+      items = next;
+    },
+    emit: (event: LedgerEvent) => emit?.(event),
+  };
+}
+
+async function renderNext(over: Partial<LedgerSource> = {}) {
+  const spy = spySource(over);
+  render(
+    <SourceProvider source={spy.source}>
+      <NextView />
+    </SourceProvider>,
+  );
+  await screen.findByText(PROPOSED.frontmatter.title);
+  return spy;
+}
+
+const card = (title: string) => screen.getByRole("listitem", { name: title });
+const press = (button: string, title: string) =>
+  fireEvent.click(within(card(title)).getByRole("button", { name: button }));
+
+afterEach(cleanup);
+
+describe("grouping and provenance", () => {
+  it("groups by status in spec order and collapses discarded", async () => {
+    await renderNext();
+    const labels = ["Proposed", "Accepted", "In progress", "Done", "Discarded"];
+    // Card titles are level-3 headings too, so the group headings are the ones named for a status.
+    const headings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent ?? "")
+      .filter((text) => labels.includes(text));
+    expect(headings).toEqual(labels);
+    expect(screen.queryByRole("listitem", { name: DISCARDED.frontmatter.title })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show discarded" }));
+    expect(card(DISCARDED.frontmatter.title)).toBeDefined();
+  });
+
+  it("orders a group by rank, then by most recently updated", async () => {
+    const older = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7F", "Older tie", "proposed", 10, {
+      updated: "2026-09-01T00:00:00Z",
+    });
+    const later = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7G", "Later tie", "proposed", 5);
+    const spy = spySource();
+    spy.setItems([PROPOSED, older, later]);
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText("Later tie");
+    const titles = within(screen.getByRole("list", { name: "Proposed" }))
+      .getAllByRole("listitem")
+      .map((li) => li.getAttribute("aria-label"));
+    // rank 5 first; the two rank-10 items break the tie on `updated`, newest first.
+    expect(titles).toEqual(["Later tie", PROPOSED.frontmatter.title, "Older tie"]);
+  });
+
+  it("shows the harness, session and checkpoint an item came from", async () => {
+    await renderNext();
+    const provenance = within(card(PROPOSED.frontmatter.title)).getByText(
+      /claude-code · session 01JBPX2M4H6E1TSA7VYJ0G8WQD · checkpoint 2/,
+    );
+    expect(provenance).toBeDefined();
+  });
+});
+
+describe("the agent-proposed marker", () => {
+  it("marks an unconfirmed item and drops the marker once confirmed_by lands", async () => {
+    const spy = await renderNext();
+    expect(within(card(PROPOSED.frontmatter.title)).getByText("agent-proposed")).toBeDefined();
+    // ACCEPTED carries a confirmed_by stamp in the fixture, so it never shows the marker.
+    expect(within(card(ACCEPTED.frontmatter.title)).queryByText("agent-proposed")).toBeNull();
+
+    press("Accept", PROPOSED.frontmatter.title);
+    expect(spy.calls).toContainEqual(["accept", PROPOSED.frontmatter.id]);
+    await waitFor(() =>
+      expect(within(card(PROPOSED.frontmatter.title)).queryByText("agent-proposed")).toBeNull(),
+    );
+  });
+});
+
+describe("the status machine", () => {
+  it("offers only the transitions the contract allows", async () => {
+    await renderNext();
+    fireEvent.click(screen.getByRole("button", { name: "Show discarded" }));
+    const names = (title: string) =>
+      within(card(title))
+        .getAllByRole("button")
+        .map((b) => b.textContent)
+        .filter((name) => ["Accept", "Start", "Done", "Discard", "Restore"].includes(name ?? ""));
+
+    expect(names(PROPOSED.frontmatter.title)).toEqual(["Accept", "Done", "Discard"]);
+    expect(names(ACCEPTED.frontmatter.title)).toEqual(["Start", "Done", "Discard"]);
+    expect(names(RUNNING.frontmatter.title)).toEqual(["Accept", "Done", "Discard"]);
+    expect(names(DONE.frontmatter.title)).toEqual(["Restore"]);
+    expect(names(DISCARDED.frontmatter.title)).toEqual(["Restore"]);
+  });
+
+  it.each([
+    ["Accept", "accept", PROPOSED],
+    ["Done", "done", PROPOSED],
+    ["Discard", "discard", PROPOSED],
+    ["Start", "start", ACCEPTED],
+  ] as const)("«%s» calls source.%s", async (label, method, target) => {
+    const spy = await renderNext();
+    press(label, target.frontmatter.title);
+    expect(spy.calls).toContainEqual([method, target.frontmatter.id]);
+  });
+
+  it("«Restore» calls source.restore for a done and for a discarded item", async () => {
+    const spy = await renderNext();
+    fireEvent.click(screen.getByRole("button", { name: "Show discarded" }));
+    press("Restore", DONE.frontmatter.title);
+    press("Restore", DISCARDED.frontmatter.title);
+    expect(spy.calls).toContainEqual(["restore", DONE.frontmatter.id]);
+    expect(spy.calls).toContainEqual(["restore", DISCARDED.frontmatter.id]);
+  });
+});
+
+describe("editing", () => {
+  it("sends only the fields the human changed", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    press("Edit", title);
+    fireEvent.change(within(card(title)).getByLabelText("Title"), {
+      target: { value: "Reconnect the stream" },
+    });
+    press("Save", title);
+    expect(spy.calls).toContainEqual([
+      "edit",
+      PROPOSED.frontmatter.id,
+      { title: "Reconnect the stream" },
+    ]);
+  });
+
+  it("edits the body through the textarea", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    press("Edit", title);
+    fireEvent.change(within(card(title)).getByLabelText("Body"), {
+      target: { value: "A dropped stream freezes the view." },
+    });
+    press("Save", title);
+    expect(spy.calls).toContainEqual([
+      "edit",
+      PROPOSED.frontmatter.id,
+      { body: "A dropped stream freezes the view." },
+    ]);
+  });
+
+  it("sets and clears the priority through edit", async () => {
+    const spy = await renderNext();
+    fireEvent.change(within(card(PROPOSED.frontmatter.title)).getByLabelText("Priority"), {
+      target: { value: "p1" },
+    });
+    fireEvent.change(within(card(ACCEPTED.frontmatter.title)).getByLabelText("Priority"), {
+      target: { value: "none" },
+    });
+    expect(spy.calls).toContainEqual(["edit", PROPOSED.frontmatter.id, { priority: "p1" }]);
+    expect(spy.calls).toContainEqual(["edit", ACCEPTED.frontmatter.id, { priority: null }]);
+  });
+});
+
+describe("assign, rank and merge", () => {
+  it("assigns an owner by name and email, and unassigns with null", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    fireEvent.change(within(card(title)).getByLabelText("Owner name"), {
+      target: { value: "Ada Lovelace" },
+    });
+    fireEvent.change(within(card(title)).getByLabelText("Owner email"), {
+      target: { value: "ada@example.com" },
+    });
+    press("Assign", title);
+    expect(spy.calls).toContainEqual([
+      "assign",
+      PROPOSED.frontmatter.id,
+      { name: "Ada Lovelace", email: "ada@example.com" },
+    ]);
+
+    press("Unassign", ACCEPTED.frontmatter.title);
+    expect(spy.calls).toContainEqual(["assign", ACCEPTED.frontmatter.id, null]);
+  });
+
+  it("ranks a dragged item onto the rank of the item it is dropped on", async () => {
+    const second = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7H", "Second proposal", "proposed", 15);
+    const spy = spySource();
+    spy.setItems([PROPOSED, second]);
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText("Second proposal");
+    fireEvent.dragStart(card("Second proposal"));
+    fireEvent.drop(card(PROPOSED.frontmatter.title));
+    expect(spy.calls).toContainEqual(["rank", second.frontmatter.id, PROPOSED.frontmatter.rank]);
+  });
+
+  it("merges an item into another one", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    fireEvent.change(within(card(title)).getByLabelText("Merge into"), {
+      target: { value: ACCEPTED.frontmatter.id },
+    });
+    press("Merge", title);
+    expect(spy.calls).toContainEqual([
+      "merge",
+      PROPOSED.frontmatter.id,
+      ACCEPTED.frontmatter.id,
+    ]);
+  });
+});
+
+describe("keyboard", () => {
+  it("moves the selection with j and k", async () => {
+    await renderNext();
+    fireEvent.keyDown(window, { key: "j" });
+    expect(card(PROPOSED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+    fireEvent.keyDown(window, { key: "j" });
+    expect(card(ACCEPTED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+    fireEvent.keyDown(window, { key: "k" });
+    expect(card(PROPOSED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+  });
+
+  it("opens the editor on e", async () => {
+    await renderNext();
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "e" });
+    expect(within(card(PROPOSED.frontmatter.title)).getByLabelText("Title")).toBeDefined();
+  });
+
+  it.each([
+    ["a", "accept"],
+    ["d", "done"],
+    ["x", "discard"],
+  ] as const)("«%s» calls source.%s on the selected item", async (key, method) => {
+    const spy = await renderNext();
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key });
+    expect(spy.calls).toContainEqual([method, PROPOSED.frontmatter.id]);
+  });
+
+  it("leaves a keystroke inside a field alone", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    press("Edit", title);
+    const field = within(card(title)).getByLabelText("Title");
+    fireEvent.keyDown(field, { key: "d" });
+    expect(spy.calls.some(([name]) => name === "done")).toBe(false);
+  });
+});
+
+describe("optimistic writes", () => {
+  it("paints the new status before the call resolves and reconciles on backlog.changed", async () => {
+    // A held-open `done`, so the optimistic paint can be observed before the call resolves. The
+    // resolver lives on an object because a `let` assigned only inside the executor narrows to
+    // `never` at the call site.
+    const gate: { release?: (view: BacklogView) => void } = {};
+    const spy = spySource({
+      done: () => new Promise<BacklogView>((resolve) => {
+        gate.release = resolve;
+      }),
+    });
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText(PROPOSED.frontmatter.title);
+    press("Done", PROPOSED.frontmatter.title);
+    // The item has already moved into the Done group while the write is still in flight.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Done" })).getByRole("listitem", {
+          name: PROPOSED.frontmatter.title,
+        }),
+      ).toBeDefined(),
+    );
+    gate.release?.({
+      ...PROPOSED,
+      frontmatter: { ...PROPOSED.frontmatter, status: "done" },
+    });
+
+    const reads = () => spy.calls.filter(([name]) => name === "listBacklog").length;
+    const before = reads();
+    spy.emit({ type: "backlog.changed", id: PROPOSED.frontmatter.id });
+    await waitFor(() => expect(reads()).toBe(before + 1));
+  });
+
+  it("rolls back and reports inline when a write is rejected", async () => {
+    const spy = spySource({ discard: () => Promise.reject({ code: "read-only" }) });
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText(PROPOSED.frontmatter.title);
+    press("Discard", PROPOSED.frontmatter.title);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("read-only");
+    // Rolled back: the item is in Proposed again, not in the discarded group.
+    expect(
+      within(screen.getByRole("list", { name: "Proposed" })).getByRole("listitem", {
+        name: PROPOSED.frontmatter.title,
+      }),
+    ).toBeDefined();
+  });
+});
+
+describe("a read-only source", () => {
+  it("disables every write control and says so", async () => {
+    const spy = spySource({ capabilities: { write: false, live: false, provenance: false } });
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText(PROPOSED.frontmatter.title);
+    expect(screen.getByText("read-only source")).toBeDefined();
+    const buttons = within(card(PROPOSED.frontmatter.title)).getAllByRole("button");
+    expect(buttons.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+  });
+});

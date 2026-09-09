@@ -94,6 +94,8 @@ export interface LedgerSource {
   accept(id: string): Promise<BacklogView>;
   discard(id: string): Promise<BacklogView>;
   done(id: string): Promise<BacklogView>;
+  start(id: string): Promise<BacklogView>;
+  restore(id: string): Promise<BacklogView>;
   edit(id: string, patch: EditPatch): Promise<BacklogView>;
   assign(id: string, owner: Actor | null): Promise<BacklogView>;
   rank(id: string, rank: number): Promise<BacklogView>;
@@ -179,6 +181,8 @@ class FixtureSource implements LedgerSource {
   accept = readOnly<BacklogView>;
   discard = readOnly<BacklogView>;
   done = readOnly<BacklogView>;
+  start = readOnly<BacklogView>;
+  restore = readOnly<BacklogView>;
   edit = readOnly<BacklogView>;
   assign = readOnly<BacklogView>;
   rank = readOnly<BacklogView>;
