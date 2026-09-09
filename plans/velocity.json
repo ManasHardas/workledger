@@ -212,6 +212,77 @@
       "files_touched": 24,
       "wall_clock_min": 45,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "security",
+      "dispatch_kind": "review-round",
+      "issue": 8,
+      "pr": 20,
+      "tokens_total": 86112,
+      "tool_uses": 20,
+      "wall_clock_min": 4,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; 4 blockers (key leak, DB URLs, cloud creds, vendor tokens); 27/53 corpus missed"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "code-review",
+      "dispatch_kind": "review-round",
+      "issue": 8,
+      "pr": 20,
+      "tokens_total": 102711,
+      "tool_uses": 24,
+      "wall_clock_min": 6,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; 2 blockers (keyword FP on ids/hashes, silent decline), 3 important"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "sre",
+      "dispatch_kind": "review-round",
+      "issue": 8,
+      "pr": 20,
+      "tokens_total": 95755,
+      "tool_uses": 27,
+      "wall_clock_min": 6,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "request changes; 1 blocker (entropy-gate FP loses checkpoint), 3 important; 16/16 regex linear"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "dispatch",
+      "agent_role": "code-review+sre",
+      "dispatch_kind": "review-round-combined",
+      "issue": 6,
+      "pr": 19,
+      "tokens_total": 106966,
+      "tool_uses": 32,
+      "wall_clock_min": 11,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "approve; 0 blocker, 2 important; yaml adds ~9ms import"
+    },
+    {
+      "session": 1,
+      "wave": "1",
+      "kind": "pr_merge",
+      "pr": 19,
+      "issue": 6,
+      "agent_role": "backend",
+      "class": "service-module sibling-shape",
+      "tokens_implementer": 276846,
+      "tokens_reviewers": 106966,
+      "review_iterations": 1,
+      "files_touched": 14,
+      "wall_clock_min": 30,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }
