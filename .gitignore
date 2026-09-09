@@ -1,0 +1,19 @@
+# dependencies and builds
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# local state (never the ledger; the ledger is committed)
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# editor and tool caches
+.vscode/
+.idea/
+.superpowers/
+coverage/

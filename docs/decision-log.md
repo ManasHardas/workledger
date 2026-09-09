@@ -1,0 +1,33 @@
+# workledger — options and decisions log
+
+Chronological record of the brainstorming that shaped this project (2026-09-06 to 2026-09-09).
+Each entry: the question, the options weighed, the decision, and the reason. Keep entries short;
+the spec holds the detail. Later entries should be written through workledger itself once it can
+record decisions (see DL-14).
+
+| # | Date | Question | Options considered | Decision | Why |
+|---|---|---|---|---|---|
+| DL-1 | 09-06 | Should the original "agent-readable system of record for software work" be built as proposed? | Ran the agentwaves Clause #11 gate: 2 research agents, 3 red teams, steel-man, demand archaeology, gap scout, pivot architect; 8 candidates scored | RESHAPE verdict (decision enforcement + service). Recorded in `plans/ideation-workledger.md`; research in `plans/research/` | Handoff was the most contested and least demanded wedge; transcript extraction was already a first-party API; no reachable buyer for an org-wide record |
+| DL-2 | 09-08 | Keep the ideation verdict? | Follow the reshape; or pivot to a smaller, concrete tool | **Hard pivot** by the operator: a local observer that turns session logs into "done" and "remaining" notes with a simple UI, editable backlog, provenance, team-extensible | "I got too worked up and thought I would solve everything in one go." Scope reduced to something buildable and dogfoodable |
+| DL-3 | 09-08 | Where does the ledger live? | In each project repo under `.workledger/`; one per-user ledger outside repos; a local database | **In every project repo** | Git gives sharing, history, diff, and attribution with no server; teammates get it on clone |
+| DL-4 | 09-08 | How is a session observed? | A: hook-driven observer; B: daemon file-watcher over the harness stores; C: the agent writes its own digest; hybrid B+C+one hook | See DL-6; the comparison (harness surfaces, per-step cost, team extensibility) was tabled with Cursor added | Boundaries cost nothing either way; content is the only cost driver |
+| DL-5 | 09-08 | Extraction (a second model reads the transcript) or digest (the session's agent writes it)? | Extraction: $0.14–0.46 per session on a separate API bill, covers crashes and history, fidelity unmeasured, breaks silently on format churn. Digest: one extra agent turn per checkpoint, about +5–7% of session cost or $0 on a subscription, exact boundaries, no parser | **Digest with checkpoints.** "Extraction seems like a bad approach to me" | Organizations already pay for the harness subscription; asking the harness that ran the session to report on it is cheapest and most faithful |
+| DL-6 | 09-08 | Session boundaries | Exact via hooks (`SessionStart`, `Stop`, `SessionEnd`) or inferred from file activity | **Hooks**, plus an mtime-only scan for orphaned sessions | Digests are triggered by hooks anyway; inference only buys ambiguity |
+| DL-7 | 09-08 | What about sessions before install? | No backfill; extraction over history; resume each past session headless and ask for a digest | **Exactly one backfill at onboarding**, lookback chosen by the user (7/14/30 days/all) with count and time shown; **resume-based**, extraction only as opt-in fallback | Uses the same mechanism and the same subscription; the lookback selector bounds quota and wall-clock |
+| DL-8 | 09-08 | Crash recovery | Lose the tail; extract the tail from the transcript; resume the crashed session headless | **Resume headless** and checkpoint "since checkpoint n"; extraction fallback if resume fails | Same mechanism, no transcript parser |
+| DL-9 | 09-08 | Harness coverage for v1 | Claude Code, Cursor, Codex, OpenCode | **Claude Code and Cursor first; Codex after verifying its stop hook; OpenCode deferred** | OpenCode has no native deny-stop; Codex's stop semantics need a day-one check |
+| DL-10 | 09-09 | Reconciliation of new "remaining" items against the existing backlog | A separate model call at session end; the agent references existing ids in-context | **In-context**: the open backlog is injected at every session start and checkpoints reference `WL-` ids with `new`, `updates`, or `closes` | No extra model call; the agent already holds the context |
+| DL-11 | 09-09 | How does the agent write the digest? | Free-form markdown that a parser reads; a structured payload through a CLI that validates and renders | **CLI** (`workledger checkpoint` with JSON on stdin) | A validator beats a parser; one writer of the file format; provenance stamped mechanically |
+| DL-12 | 09-09 | Which note types in v1? | Only done and remaining; all four (discovery, decision, blocker, question) | **All four** | `question` becomes the human's "Needs you" list, which makes the UI useful on day one |
+| DL-13 | 09-09 | Hook scope | Project-level hook files committed to the repo; user-level hooks in the home directory | **Project-level, committed**, calling the CLI and no-op if it is absent | Cloning the repo installs the behavior for teammates |
+| DL-14 | 09-09 | Where does this log go from here? | Keep editing this file; record decisions through workledger's own `decision` notes | **Dogfood**: once the CLI runs, workledger develops workledger and decisions land in `.workledger/` | Operator: "at some point I want to use workledger to develop workledger" |
+| DL-15 | 09-09 | Stack, given a future mobile web/native UI and Figma-driven design | (a) Expo universal app (React Native + RN Web) from day one; (b) React DOM web app now, Expo native app later sharing core, API client, and design tokens; (c) web app wrapped with Capacitor/Tauri | **(b)**: TypeScript monorepo; `core` (pure TS ledger schema, validation, rendering), `cli`, `server` (Hono, local API + SSE), `web` (React, Vite, Tailwind, shadcn/ui, mobile-first responsive, PWA); `tokens` package as the single source for Figma variables; `mobile` (Expo) added later on the same API and tokens | Desktop keyboard-dense UI and Figma-to-code tooling (design context, Code Connect) both favor React DOM; the API and token boundary keeps a native app cheap later without compromising the web app now |
+| DL-16 | 09-09 | Repo and identity | Outer `~/Projects` repo; a new repo in `workledger/` | **`workledger/` is its own repo**, remote `git@github.com-personal:manashardas/workledger.git` on the ManasHardas account (not the Dome identity), private | Operator instruction |
+
+## Things explicitly not decided yet
+
+- Codex stop-hook semantics (verify against live docs on day one).
+- UI design itself: to be produced with the Figma MCP server; the spec fixes views, data, and
+  interactions, not visuals.
+- Whether the outer `~/Projects` git repo (no commits) is intentional; untouched.
+- Push of this repo to the remote (ask first; standing preference).
