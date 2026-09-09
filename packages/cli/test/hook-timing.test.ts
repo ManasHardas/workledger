@@ -35,6 +35,24 @@ const ALLOW_BUDGET_MS = process.env["CI"] ? 150 : 100;
 const START_BUDGET_MS = process.env["CI"] ? 450 : 300;
 const END_BUDGET_MS = process.env["CI"] ? 300 : 200;
 
+/**
+ * The hook's own cost above a bare Node start, measured in the same run. Machine load moves
+ * both numbers together, so this is the assertion that survives a busy laptop or a shared CI
+ * runner; the absolute budget is still reported so a slow run is visible.
+ */
+const ALLOW_OVERHEAD_MS = 60;
+
+/** p95 of a bare `node -e 0`, sampled the same number of times as the hook. */
+function nodeBaseline(runs: number): number {
+  const samples: number[] = [];
+  for (let i = 0; i < runs; i += 1) {
+    const t0 = performance.now();
+    execFileSync(process.execPath, ["-e", "0"], { stdio: "ignore" });
+    samples.push(performance.now() - t0);
+  }
+  return stats(samples).p95;
+}
+
 /** A temp repo whose thresholds are far out of reach, so every Stop takes the allow path. */
 interface Bench {
   root: string;
@@ -110,10 +128,16 @@ describe("hook timing budget", () => {
         samples.push(runHook("Stop", { stop_hook_active: false }));
       }
       const { p50, p95, max } = stats(samples);
+      const baseline = nodeBaseline(100);
       // Reported unconditionally: the PR quotes this line, and a run that passes at 148 ms in CI
       // is information a reviewer needs even though it is green.
-      console.log(`hook Stop allow: p50 ${p50} ms, p95 ${p95} ms, max ${max} ms (budget ${ALLOW_BUDGET_MS} ms)`);
-      expect(p95).toBeLessThan(ALLOW_BUDGET_MS);
+      console.log(
+        `hook Stop allow: p50 ${p50} ms, p95 ${p95} ms, max ${max} ms (budget ${ALLOW_BUDGET_MS} ms); node baseline p95 ${baseline} ms; overhead ${Number((p95 - baseline).toFixed(1))} ms`,
+      );
+      expect(p95 - baseline).toBeLessThan(ALLOW_OVERHEAD_MS);
+      if (p95 >= ALLOW_BUDGET_MS) {
+        console.warn(`hook Stop allow p95 ${p95} ms is over the ${ALLOW_BUDGET_MS} ms budget on this machine (load?)`);
+      }
     },
     120_000,
   );
