@@ -11,7 +11,7 @@
  */
 
 /** Bumped whenever the wording changes, not when a value interpolated into it changes. */
-export const INSTRUCTION_VERSION = 1;
+export const INSTRUCTION_VERSION = 2;
 
 /** What {@link checkpointInstruction} interpolates. */
 export interface InstructionInput {
@@ -44,6 +44,9 @@ export function checkpointInstruction(input: InstructionInput): string {
     `Run: workledger checkpoint --session ${input.sessionId}`,
     "and pipe a CheckpointPayload JSON on stdin describing the work since the last checkpoint:",
     "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 4096 bytes.",
+    "Shapes: done {text, files[], commit?, verified: tests-passed|tests-failed|not-verified};",
+    "remaining {text, why, new: true | ref: WL-…, rel: updates|closes, blocked_by?[]};",
+    "notes {type: discovery|decision|blocker|question, text, by?: human|agent, reason?}.",
     "",
     input.openIds.length === 0
       ? "No open backlog items. Use `\"new\": true` on a remaining item worth tracking."
