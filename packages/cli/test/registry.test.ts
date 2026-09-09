@@ -11,8 +11,12 @@ import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 /** The six commands `--help` must list, per docs/contracts/p1/cli.md. */
 const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "backlog"];
 
-/** Commands whose bodies slots 8–10 replace; `backlog` is final in P1 and excluded. */
-const STUBS = ["init", "hook", "checkpoint", "brief", "doctor"];
+/**
+ * Commands whose bodies slots 9–10 still replace. `backlog` is final in P1, and `checkpoint` was
+ * built by slot 8 (#11) — running it from here would read stdin and write the ledger of whatever
+ * repo the suite runs in, so its registration is asserted by introspection instead.
+ */
+const STUBS = ["init", "hook", "brief", "doctor"];
 
 /** Run the program with stdout and stderr captured. */
 async function invoke(argv: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -74,7 +78,6 @@ describe("command registry", () => {
     // so reaching the stub's message is what proves the option is registered.
     for (const argv of [
       ["init", "--repo", "/tmp/x", "--yes", "--no-backfill"],
-      ["checkpoint", "--session", "01JQ8ZK4T0000000000000000A", "--dry-run"],
       ["brief", "--repo", "/tmp/x", "--max-tokens", "500"],
       ["doctor", "--json"],
     ]) {
@@ -82,6 +85,9 @@ describe("command registry", () => {
       expect(err, argv.join(" ")).toContain("not implemented");
       expect(code, argv.join(" ")).toBe(EXIT_USAGE);
     }
+
+    const checkpoint = createProgram().commands.find((command) => command.name() === "checkpoint");
+    expect(checkpoint?.options.map((option) => option.long)).toEqual(["--session", "--dry-run"]);
   });
 
   it("rejects a --max-tokens value that is not a positive integer", async () => {
