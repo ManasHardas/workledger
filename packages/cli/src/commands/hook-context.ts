@@ -156,15 +156,23 @@ export async function cachedTargets(ctx: Context, session: SessionRow): Promise<
 /**
  * Raise the block: every target row's attempt window is opened, then the instruction — the P1
  * text when the one target is the session's own repo, the per-repo list otherwise.
+ *
+ * `memoryFiles` are the memory files the span wrote to, derived by `memoryFilesInSpan` on the
+ * block path (P8 amendment 11); the instruction names them so the payload carries `memory[]`.
  */
-export function raiseBlock(ctx: Context, targets: readonly WorkspaceTarget[], previousErrors: string | undefined): number {
+export function raiseBlock(
+  ctx: Context,
+  targets: readonly WorkspaceTarget[],
+  previousErrors: string | undefined,
+  memoryFiles: readonly string[] = [],
+): number {
   for (const target of targets) {
     ctx.db.updateSession(target.sessionId, { last_attempt_at: null, last_attempt_exit: null, last_attempt_errors: null });
   }
   const only = targets.length === 1 ? targets[0] : undefined;
   const reason =
     only !== undefined && only.root === ctx.root
-      ? checkpointInstruction({ sessionId: only.sessionId, openIds: only.openIds, previousErrors })
-      : workspaceCheckpointInstruction({ targets, previousErrors });
+      ? checkpointInstruction({ sessionId: only.sessionId, openIds: only.openIds, previousErrors, memoryFiles })
+      : workspaceCheckpointInstruction({ targets, previousErrors, memoryFiles });
   return ctx.io.adapter.blockStop(reason, { stdout: ctx.io.stdout, stderr: ctx.io.stderr });
 }

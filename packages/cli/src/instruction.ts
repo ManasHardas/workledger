@@ -18,8 +18,13 @@
  * pipe, and a backslash before whitespace even under `Bash(workledger checkpoint*)`, while a
  * single-quoted argument with brackets and nested double quotes runs with no denial — probed
  * on 2026-09-10. The string rule below is what keeps every payload inside that safe shape.
+ *
+ * v4 (#117, P8 amendment 11): `done[].text` is the gist a human reads and the new `done[].detail`
+ * carries the specifics for agents, stated with one worked example pair; the instruction asks for
+ * 3–8 done items "as you would tell a teammate at standup", one action per remaining item, and
+ * the new `memory[]`. The `--payload` single-quote rules of v3 are unchanged.
  */
-export const INSTRUCTION_VERSION = 3;
+export const INSTRUCTION_VERSION = 4;
 
 /** What {@link checkpointInstruction} interpolates. */
 export interface InstructionInput {
@@ -47,6 +52,13 @@ export interface InstructionInput {
    * the command line stays exactly what it was.
    */
   repo?: string | undefined;
+  /**
+   * Memory files the session wrote to since the last checkpoint, derived by the Stop hook from
+   * the transcript's Write/Edit tool inputs (P8 amendment 11). Listed back to the agent so the
+   * payload names the facts it saved there instead of omitting `memory[]` — the hook can see
+   * *which* file changed, only the agent knows *what* it recorded.
+   */
+  memoryFiles?: readonly string[] | undefined;
 }
 
 /** How many characters of a cached failure are quoted back before it is truncated. */
@@ -70,13 +82,27 @@ export function checkpointInstruction(input: InstructionInput): string {
     `Run exactly one command: workledger checkpoint --session ${input.sessionId}` +
       `${input.repo === undefined ? "" : ` --repo ${input.repo}`} --payload '<json>'`,
     `where <json> is a CheckpointPayload describing the work ${span}:`,
-    "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 16384 bytes.",
-    "Shapes: done {text, files[], commit?, verified: tests-passed|tests-failed|not-verified};",
+    "goal (required at checkpoint 1), done[], remaining[], notes[], memory[]. At most 16384 bytes.",
+    "Shapes: done {text, detail?, files[], commit?, verified: tests-passed|tests-failed|not-verified};",
     "remaining {text, why, new: true | ref: WL-…, rel: updates|closes, blocked_by?[]};",
     "notes {type: discovery|decision|blocker|question, text, by?: human|agent, reason?};",
-    "decision notes require reason and by.",
-    "Caps: goal ≤ 400 chars; text, why and reason ≤ 300 chars (notes text ≤ 500); files ≤ 20",
-    "per done item; blocked_by ≤ 10; ≤ 12 items per section; ≤ 16384 bytes total.",
+    "memory {text, file?}; decision notes require reason and by.",
+    "",
+    "done[].text is the gist, and it is read by a human: one outcome in plain words, the way you",
+    "would tell a teammate at standup. No file paths, no commit ids, no library names unless the",
+    "library is the outcome. The specifics go in done[].detail, which is read by agents. So:",
+    "  text: Buyers can now check out from the cart on their phone",
+    "  detail: Checkout control is the link itself; pendingCheckout flag plus cart-null detection;",
+    "  opens in native top-level hosts, new tab on desktop",
+    "Give 3–8 done items — one per outcome, not one per file you touched.",
+    "remaining[].text is one action, imperative and short; where you would join two actions in one",
+    "item, write two items instead. why is what stays broken or blocked until it is done.",
+    "memory[] is the facts you saved to a memory file this span (Claude Code auto-memory,",
+    "CLAUDE.md, MEMORY.md, .claude/memory): the fact as you wrote it, and the file it went to.",
+    "",
+    "Caps: goal ≤ 400 chars; done text ≤ 140 and detail ≤ 300; remaining text and why ≤ 100;",
+    "notes text ≤ 500 and reason ≤ 300; memory text ≤ 200; files ≤ 20 per done item;",
+    "blocked_by ≤ 10; ≤ 12 items per section; ≤ 16384 bytes total.",
     "Strings: no single quote (') and no backslash (\\) anywhere in the JSON — write an",
     "apostrophe as \u2019 (U+2019), a double quote inside a string as \u201d (U+201D), a backslash",
     "as \u29f5 (U+29F5), and keep every string on one line (the JSON itself may span lines).",
@@ -87,6 +113,15 @@ export function checkpointInstruction(input: InstructionInput): string {
       ? "No open backlog items. Use `\"new\": true` on a remaining item worth tracking."
       : `Open backlog ids for \`ref\` + \`rel\`: ${input.openIds.join(", ")}`,
   ];
+
+  const memoryFiles = input.memoryFiles ?? [];
+  if (memoryFiles.length > 0) {
+    lines.push(
+      "",
+      `You wrote to ${memoryFiles.length === 1 ? "this memory file" : "these memory files"} this span: ${memoryFiles.join(", ")}.`,
+      "Record what you saved there as memory[] entries, one fact per entry, with its file.",
+    );
+  }
 
   const previous = input.previousErrors?.trim();
   if (previous !== undefined && previous !== "") {
@@ -119,10 +154,16 @@ export interface WorkspaceTarget {
 export function workspaceCheckpointInstruction(input: {
   targets: readonly WorkspaceTarget[];
   previousErrors?: string | undefined;
+  memoryFiles?: readonly string[] | undefined;
 }): string {
   const first = input.targets[0];
   if (first === undefined) throw new RangeError("workspaceCheckpointInstruction: no targets");
-  const base = checkpointInstruction({ sessionId: first.sessionId, openIds: [], previousErrors: input.previousErrors });
+  const base = checkpointInstruction({
+    sessionId: first.sessionId,
+    openIds: [],
+    previousErrors: input.previousErrors,
+    memoryFiles: input.memoryFiles,
+  });
   const commands = input.targets.map(
     (target) => `workledger checkpoint --session ${target.sessionId} --repo ${target.root} --payload '<json>'`,
   );

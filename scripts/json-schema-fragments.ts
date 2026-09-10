@@ -9,6 +9,7 @@ import {
   HistoryEntry,
   HumanStamp,
   MAX_PAYLOAD_BYTES,
+  MemoryItem,
   NoteObject,
   Provenance,
   RemainingItemObject,
@@ -216,6 +217,7 @@ function checkpointPayloadDocument(): JsonObject {
   const done = propsOf(DoneItemObject);
   const remaining = propsOf(RemainingItemObject);
   const note = propsOf(NoteObject);
+  const memory = propsOf(MemoryItem);
 
   const arraySection = (name: string, def: string): JsonObject =>
     block(
@@ -243,6 +245,7 @@ function checkpointPayloadDocument(): JsonObject {
       done: arraySection("done", "DoneItem"),
       remaining: arraySection("remaining", "RemainingItem"),
       notes: arraySection("notes", "Note"),
+      memory: arraySection("memory", "MemoryItem"),
     }),
     $defs: block({
       DoneItem: block({
@@ -251,6 +254,7 @@ function checkpointPayloadDocument(): JsonObject {
         required: requiredOf(DoneItemObject, ["text", "verified"], "DoneItem"),
         properties: block({
           text: pick(done["text"] as JsonObject, ["type", "minLength", "maxLength", "description"], "DoneItem.text"),
+          detail: pick(done["detail"] as JsonObject, ["type", "minLength", "maxLength", "description"], "DoneItem.detail"),
           files: pick(done["files"] as JsonObject, ["type", "items", "maxItems", "description"], "DoneItem.files"),
           commit: pick(done["commit"] as JsonObject, ["type", "pattern"], "DoneItem.commit"),
           verified: pick(done["verified"] as JsonObject, ["type", "enum"], "DoneItem.verified"),
@@ -296,6 +300,16 @@ function checkpointPayloadDocument(): JsonObject {
         if: { properties: { type: { const: "decision" } } },
         then: { required: ["by", "reason"] },
         description: descriptionOf(NoteObject, "Note"),
+      }),
+      MemoryItem: block({
+        type: "object",
+        additionalProperties: additionalPropertiesOf(MemoryItem, false, "MemoryItem"),
+        required: requiredOf(MemoryItem, ["text"], "MemoryItem"),
+        properties: block({
+          text: pick(memory["text"] as JsonObject, ["type", "minLength", "maxLength", "description"], "MemoryItem.text"),
+          file: pick(memory["file"] as JsonObject, ["type", "minLength", "description"], "MemoryItem.file"),
+        }),
+        description: descriptionOf(MemoryItem, "MemoryItem"),
       }),
     }),
     "x-limits": block({
@@ -418,22 +432,24 @@ function sessionFrontmatterDocument(): JsonObject {
       }),
     }),
     "x-body": block({
-      sections: ["## Goal", "## Done", "## Remaining", "## Notes"],
+      sections: ["## Goal", "## Done", "## Remaining", "## Notes", "## Memory"],
       "line-prefix": "- [cp <n>] ",
       "goal-form":
         "- [cp <n>] <goal>; the Goal section holds exactly one line, replaced (not appended) whenever a payload carries a goal",
       "section-order":
         "Done and Remaining are newest-checkpoint-first; Notes is chronological; payload order is kept within one checkpoint",
       "done-form":
-        "- [cp <n>] <text> files: <a>, <b> · commit: <hash> · verified: <v>; attributes in that order joined by ' · ' (U+00B7 with a space either side); files and commit omitted when absent; verified always present",
+        "- [cp <n>] <gist>, then one continuation line indented by two spaces carrying 'detail: <detail> · commit: <hash> · files: <a>, <b> · verified: <v>'; attributes in that order joined by ' · ' (U+00B7 with a space either side); detail, commit and files omitted when absent; verified always present. Lines written before amendment 11 carry 'files: … · commit: … · verified: …' inline after the text and still parse",
       "remaining-form":
         "- [cp <n>] → WL-<ulid> (new|updates|closes) <text>; why: <why>; then '; blocked_by: <ids joined by \", \">' only when the payload carries the key, 'none' when present and empty",
       "note-form":
         "- <type> [cp <n>]<' by <by>' for decisions>: <text><'; reason: <reason>' for decisions>",
+      "memory-form":
+        "- [cp <n>] <text><' file: <path>' when the item names one>; the section is chronological like Notes and is absent from a file written before amendment 11",
       "unparsed-lines":
         "a line matching no form is preserved verbatim at the foot of its own section and exposed by the parser as unparsed[]; blank lines inside a section are structural and not preserved",
       amended:
-        "2026-09-09 amendment 2: goal-form, section-order, done-form, remaining-form, unparsed-lines frozen from PR #22 golden files",
+        "2026-09-09 amendment 2: goal-form, section-order, done-form, remaining-form, unparsed-lines frozen from PR #22 golden files; 2026-09-10 P8 amendment 11: done-form gains the indented continuation, sections and memory-form gain ## Memory",
     }),
   });
 }

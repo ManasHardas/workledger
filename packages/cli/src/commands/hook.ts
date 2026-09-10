@@ -22,7 +22,7 @@
  * transcript scanner and the block text (`./hook-context.ts`) arrive only on the block ladder.
  * `packages/cli/test/hook-timing.test.ts` measures it and asserts core stays out.
  */
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -405,6 +405,13 @@ export async function stop(ctx: Context): Promise<number> {
     return EXIT_OK;
   };
 
+  /**
+   * The memory files this span wrote to, for the block text (P8 amendment 11). Called on the
+   * block ladder only, never on the allow path the timing budget covers.
+   */
+  const memoryFilesForBlock = (): string[] =>
+    memoryFilesInSpan(advance.transcript_path ?? undefined, offset, size ?? 0);
+
   // A private session records boundaries only; `stop_hook_active` is the harness telling us a
   // Stop hook has already blocked this attempt — the documented loop guard, which is in addition
   // to the index's never-twice rule (hooks-claude-code.md §Outputs emitted → Stop); and
@@ -436,7 +443,7 @@ export async function stop(ctx: Context): Promise<number> {
       last_attempt_exit: null,
       last_attempt_errors: null,
     });
-    return raiseBlock(ctx, targets, undefined);
+    return raiseBlock(ctx, targets, undefined, memoryFilesForBlock());
   }
 
   if (blocks === 1) {
@@ -448,7 +455,7 @@ export async function stop(ctx: Context): Promise<number> {
     const failed = rows.find((row) => row.last_attempt_at !== null && (row.last_attempt_exit ?? 0) !== 0);
     if (failed !== undefined) {
       db.updateSession(ulid, { ...advance, blocks_since_checkpoint: 2 });
-      return raiseBlock(ctx, targets, failed.last_attempt_errors ?? undefined);
+      return raiseBlock(ctx, targets, failed.last_attempt_errors ?? undefined, memoryFilesForBlock());
     }
     // A checkpoint on this row resets its block state itself, so a session about its own repo
     // is never here with a success. One filed elsewhere leaves this row's counters to the hook:
@@ -484,6 +491,98 @@ export async function stop(ctx: Context): Promise<number> {
     data["checkpoint_failures"] = (typeof current === "number" ? current : 0) + 1;
   });
   return EXIT_OK;
+}
+
+/**
+ * A path a memory fact is saved to (P8 amendment 11): Claude Code auto-memory
+ * (`~/.claude/projects/<slug>/memory/…`), a project memory dir (`.claude/memory/…`), or a
+ * `CLAUDE.md` / `MEMORY.md` anywhere.
+ */
+export function isMemoryPath(file: string): boolean {
+  const normalized = file.replaceAll("\\", "/");
+  const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (base === "CLAUDE.md" || base === "MEMORY.md") return true;
+  return normalized.includes("/.claude/memory/") || /\/\.claude\/projects\/[^/]+\/memory\//.test(normalized);
+}
+
+/** The most transcript bytes {@link memoryFilesInSpan} reads, from the end of the span. */
+export const MAX_MEMORY_SCAN_BYTES = 2_000_000;
+
+/**
+ * Memory files the session wrote to in `[from, to)` of its transcript, derived from the
+ * `Write` / `Edit` tool inputs the span records (P8 amendment 11). Distinct, in first-seen order.
+ *
+ * This is the second place in workledger that opens a transcript — the first is
+ * `src/extract/transcript.ts` — and it is fenced as tightly: it runs on the Stop **block** path
+ * only, never on the allow path the timing budget covers; it reads at most
+ * {@link MAX_MEMORY_SCAN_BYTES} from the end of the span; it keeps `file_path` strings and
+ * nothing else, and they go into the block text on stderr and nowhere near the ledger
+ * (CLAUDE.md: "Transcript excerpts never enter the repo"). Any failure is an empty list: a
+ * transcript the hook cannot read is not a reason to fail the block.
+ */
+export function memoryFilesInSpan(
+  transcriptPath: string | undefined,
+  from: number,
+  to: number,
+): string[] {
+  if (transcriptPath === undefined || transcriptPath === "") return [];
+  const files: string[] = [];
+  const seen = new Set<string>();
+  try {
+    const size = statSync(transcriptPath).size;
+    const end = Math.min(to <= 0 ? size : to, size);
+    const start = Math.max(0, Math.max(from, end - MAX_MEMORY_SCAN_BYTES));
+    const length = end - start;
+    if (length <= 0) return [];
+    const fd = openSync(transcriptPath, "r");
+    let text: string;
+    try {
+      const buffer = Buffer.allocUnsafe(length);
+      let read = 0;
+      while (read < length) {
+        const n = readSync(fd, buffer, read, length - read, start + read);
+        if (n === 0) break;
+        read += n;
+      }
+      text = buffer.subarray(0, read).toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+    for (const line of text.split("\n")) {
+      // The cheap string test first: most records carry no `file_path` and must not be parsed.
+      if (!line.includes("\"file_path\"")) continue;
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        // A record truncated by the span boundary, or a line the harness wrote partially.
+        continue;
+      }
+      for (const file of writtenFiles(record)) {
+        if (!isMemoryPath(file) || seen.has(file)) continue;
+        seen.add(file);
+        files.push(file);
+      }
+    }
+  } catch {
+    return files;
+  }
+  return files;
+}
+
+/** The `file_path` of every `Write` / `Edit` tool use inside one transcript record. */
+function writtenFiles(record: unknown): string[] {
+  const content = (record as { message?: { content?: unknown } } | null)?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const part of content) {
+    const use = part as { type?: unknown; name?: unknown; input?: { file_path?: unknown } };
+    if (use?.type !== "tool_use") continue;
+    if (use.name !== "Write" && use.name !== "Edit") continue;
+    const file = use.input?.file_path;
+    if (typeof file === "string" && file !== "") out.push(file);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

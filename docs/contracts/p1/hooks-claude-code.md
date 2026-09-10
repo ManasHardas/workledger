@@ -104,6 +104,24 @@ reuses the existing session record when the `session_id` is known, otherwise cre
   "goal ≤ 400 chars; text, why and reason ≤ 300 chars (notes text ≤ 500); files ≤ 20 per done
   item; blocked_by ≤ 10; ≤ 12 items per section; ≤ 16384 bytes total" — because the first
   headless replay lost a turn to the unstated 300-character `done[].text` cap.
+- **Instruction v4** (amendment 2026-09-10, #117; `docs/contracts/p8/daemon-and-api.md`
+  amendment 11): v3's command line, string rule and previous-errors block are unchanged; the
+  wording is not. `done[].text` is asked for as the gist a human reads — one outcome in plain
+  words, the way you would tell a teammate at standup, no file paths and no commit ids — with the
+  specifics moved to the new `done[].detail`, stated with one worked pair ("Buyers can now check
+  out from the cart on their phone" versus "Checkout control is the link itself; pendingCheckout
+  flag plus cart-null detection; opens in native top-level hosts, new tab on desktop"). It asks
+  for 3–8 done items, one action per remaining item, and the new `memory[]`. The `Caps:` line
+  becomes "goal ≤ 400 chars; done text ≤ 140 and detail ≤ 300; remaining text and why ≤ 100;
+  notes text ≤ 500 and reason ≤ 300; memory text ≤ 200; files ≤ 20 per done item; blocked_by ≤ 10;
+  ≤ 12 items per section; ≤ 16384 bytes total".
+- **Memory derivation** (v4): before it raises a block, the Stop hook scans the transcript span
+  since the last checkpoint for `Write` and `Edit` tool inputs whose `file_path` is under a memory
+  path (`~/.claude/projects/*/memory/`, `.claude/memory/`, any `CLAUDE.md` or `MEMORY.md`) and
+  names the distinct files in the instruction, so the agent records what it saved there as
+  `memory[]` entries. It runs on the block path only, reads at most 2 MB from the end of the span,
+  keeps `file_path` strings and nothing else, and fails to an empty list — the allow path and its
+  timing budget are untouched.
 
 ### SessionEnd
 

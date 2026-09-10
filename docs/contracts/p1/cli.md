@@ -61,6 +61,16 @@ digest — per repo it touched). Without `--repo` the repo above the cwd is used
 repair instruction adds `--repo <root>` to the pinned command whenever the session's cwd is not
 the repo, and the resume is spawned in that cwd.
 
+*Amendment (2026-09-10, #117; `docs/contracts/p8/daemon-and-api.md` amendment 11).* The payload is
+additive-versioned rather than frozen: `done[].text` is now the **gist** a human reads (≤ 140
+chars, an outcome in plain words, no paths and no commit ids), the optional `done[].detail`
+(≤ 300) carries the specifics for agents, `remaining[].text` and `remaining[].why` tighten to 100
+each, and the optional `memory[]` (`{ text ≤ 200, file? }`) records facts the session saved to a
+memory file. Instruction v4 states all of it. `workledger brief` carries `text` and `detail`
+together, because the brief is read by agents; the session view shows the gist alone. Payloads
+written against the older caps still validate, and ledger files whose Done lines carry their
+evidence inline still parse.
+
 Steps, in order, each failing fast:
 
 1. Resolve the session: `--session`, else `WORKLEDGER_SESSION`, else the single open session for

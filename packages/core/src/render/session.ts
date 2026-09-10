@@ -14,14 +14,26 @@
  * - [cp 2] Ship the upload size limit
  *
  * ## Done
- * - [cp 2] Added retry to the upload client. files: src/upload.ts · commit: a1b2c3d · verified: tests-passed
+ * - [cp 2] Buyers can now check out from the cart on their phone
+ *   detail: Checkout control is the link itself · commit: a1b2c3d · files: src/cart/checkout.ts · verified: tests-passed
  *
  * ## Remaining
  * - [cp 2] → WL-01J9… (new) Add a size limit before upload; why: server rejects >50 MB silently
  *
  * ## Notes
  * - decision [cp 2] by human: Keep uploads synchronous; reason: the async path needs the queue work
+ *
+ * ## Memory
+ * - [cp 2] gh needs the ManasHardas token prefix file: ~/.claude/projects/-Users-x/memory/MEMORY.md
  * ```
+ *
+ * **P8 amendment 11 (2026-09-10).** A Done line is the *gist* for humans; everything else —
+ * `detail`, `commit`, `files`, `verified`, in that order — goes on one indented continuation
+ * line below it, so a human reads outcomes and an agent reads the specifics. Files written
+ * before the amendment carry the evidence inline (`<text> files: … · commit: … · verified: …`)
+ * and still parse: the inline form is read whenever a line carries it, and a continuation is read
+ * whenever the next line is indented. `## Memory` is the fifth section, chronological like Notes;
+ * a file without it parses as having none.
  *
  * Three readings the spec leaves open, resolved here in favour of a parse that never has to
  * guess where prose ends (each is asserted by a golden file):
@@ -72,6 +84,7 @@ import {
   type DoneItem,
   type Note,
   type NoteBy,
+  type MemoryItem,
   type NoteType,
   type RemainingItem,
   type SessionFrontmatter,
@@ -99,16 +112,23 @@ import {
   validate,
 } from "./common.js";
 
-/** The four body headings, in the order the renderer emits them (`x-body.sections`). */
-export const SESSION_SECTIONS = ["## Goal", "## Done", "## Remaining", "## Notes"] as const;
+/** The five body headings, in the order the renderer emits them (`x-body.sections`). */
+export const SESSION_SECTIONS = ["## Goal", "## Done", "## Remaining", "## Notes", "## Memory"] as const;
 
 const GOAL_HEADING = SESSION_SECTIONS[0];
 const DONE_HEADING = SESSION_SECTIONS[1];
 const REMAINING_HEADING = SESSION_SECTIONS[2];
 const NOTES_HEADING = SESSION_SECTIONS[3];
+const MEMORY_HEADING = SESSION_SECTIONS[4];
 
-/** Evidence keys of a Done line, in the order they are emitted. */
+/** Evidence keys of a pre-amendment-11 inline Done line, in the order they were emitted. */
 const DONE_KEYS = ["files", "commit", "verified"] as const;
+/** Keys of a Done continuation line, in the order they are emitted (amendment 11). */
+const CONTINUATION_KEYS = ["detail", "commit", "files", "verified"] as const;
+/** The indent that marks a Done continuation line. */
+const CONTINUATION_INDENT = "  ";
+/** The one trailing key of a Memory line. */
+const MEMORY_FILE_KEY = "file";
 /** Trailing keys of a Remaining line, in the order they are emitted. */
 const REMAINING_KEYS = ["why", "blocked_by"] as const;
 /** Separator between a Remaining line's text and its trailing keys. */
@@ -139,12 +159,24 @@ export interface GoalLine extends SessionLine {
   text: string;
 }
 
-/** A `## Done` line with its evidence split off the prose. */
+/**
+ * A `## Done` line with its evidence split off the prose. `raw` spans both lines when the entry
+ * carries a continuation (amendment 11), so a re-emit keeps the pair together.
+ */
 export interface DoneLine extends SessionLine {
+  /** The gist for humans. */
   text: string;
+  /** The specifics for agents, from the continuation line; absent on pre-amendment lines. */
+  detail?: string;
   files: string[];
   commit?: string;
   verified?: Verified;
+}
+
+/** A `## Memory` line: one fact the session saved to a memory file (amendment 11). */
+export interface MemoryLine extends SessionLine {
+  text: string;
+  file?: string;
 }
 
 /** A `## Remaining` line with its backlog reference split off the prose. */
@@ -170,8 +202,8 @@ export interface NoteLine extends SessionLine {
 /** How a Remaining item relates to the backlog item it names. */
 export type ResolvedRel = "new" | "updates" | "closes";
 
-/** The four body sections, keyed the way {@link ParsedSession} exposes them. */
-export type SessionSectionName = "goal" | "done" | "remaining" | "notes";
+/** The five body sections, keyed the way {@link ParsedSession} exposes them. */
+export type SessionSectionName = "goal" | "done" | "remaining" | "notes" | "memory";
 
 /**
  * A body line that does not match its section's form — a hand-typed entry, or prose someone left
@@ -203,6 +235,8 @@ export interface ParsedSession {
   done: DoneLine[];
   remaining: RemainingLine[];
   notes: NoteLine[];
+  /** Empty for a file written before amendment 11. */
+  memory: MemoryLine[];
   /**
    * Lines that did not match their section's form, in the order they were read. They are re-emitted
    * verbatim at the foot of their own section on the next write, so a hand edit is never deleted.
@@ -238,14 +272,32 @@ export function renderGoalLine(n: number, goal: string): string {
   return `- ${cpTag(n)} ${oneLine(goal)}`;
 }
 
-/** Render one `## Done` line: prose, then `files`, `commit`, and `verified` joined by ` · `. */
+/**
+ * Render one `## Done` entry: the gist line, then an indented continuation carrying `detail`,
+ * `commit`, `files` and `verified` joined by ` · ` (amendment 11). Two lines, joined by `\n`.
+ */
 export function renderDoneLine(n: number, item: DoneItem): string {
   const attributes: string[] = [];
+  if (item.detail !== undefined) attributes.push(`detail: ${oneLine(item.detail)}`);
+  if (item.commit !== undefined) attributes.push(`commit: ${item.commit}`);
   const files = (item.files ?? []).map(oneLine).filter((file) => file.length > 0);
   if (files.length > 0) attributes.push(`files: ${files.join(", ")}`);
-  if (item.commit !== undefined) attributes.push(`commit: ${item.commit}`);
   attributes.push(`verified: ${item.verified}`);
-  return `- ${cpTag(n)} ${oneLine(item.text)} ${attributes.join(ATTR_SEPARATOR)}`;
+  return `- ${cpTag(n)} ${oneLine(item.text)}\n${CONTINUATION_INDENT}${attributes.join(ATTR_SEPARATOR)}`;
+}
+
+/**
+ * The Done text the brief carries (P8 amendment 11). The brief is read by agents, so it gets the
+ * gist *and* the detail; the session view shows the gist alone.
+ */
+export function doneBriefText(line: Pick<DoneLine, "text" | "detail">): string {
+  return line.detail === undefined || line.detail === "" ? line.text : `${line.text} — ${line.detail}`;
+}
+
+/** Render one `## Memory` line: the fact, then ` file: <path>` when the item names one. */
+export function renderMemoryLine(n: number, item: MemoryItem): string {
+  const file = item.file === undefined ? "" : ` ${MEMORY_FILE_KEY}: ${oneLine(item.file)}`;
+  return `- ${cpTag(n)} ${oneLine(item.text)}${file}`;
 }
 
 /** Render one `## Remaining` line against the backlog id the caller resolved it to. */
@@ -273,13 +325,14 @@ function renderSection(heading: string, lines: readonly string[]): string {
   return lines.length === 0 ? heading : `${heading}\n${lines.join("\n")}`;
 }
 
-/** Assemble the four sections, keeping any preamble above them and unknown blocks below. */
+/** Assemble the five sections, keeping any preamble above them and unknown blocks below. */
 function renderBody(
   sections: {
     goal: readonly string[];
     done: readonly string[];
     remaining: readonly string[];
     notes: readonly string[];
+    memory: readonly string[];
   },
   preamble = "",
   extra = "",
@@ -289,6 +342,7 @@ function renderBody(
     renderSection(DONE_HEADING, sections.done),
     renderSection(REMAINING_HEADING, sections.remaining),
     renderSection(NOTES_HEADING, sections.notes),
+    renderSection(MEMORY_HEADING, sections.memory),
   ];
   return `${preamble}${blocks.join("\n\n")}\n${extra === "" ? "" : `\n${extra}`}`;
 }
@@ -301,7 +355,7 @@ export function createSessionText(frontmatter: SessionFrontmatter): string {
   const data = validate(SessionFrontmatterSchema, frontmatter, "the session frontmatter", "invalid-input");
   return stringifyFrontmatter(
     data as unknown as Record<string, unknown>,
-    renderBody({ goal: [], done: [], remaining: [], notes: [] }),
+    renderBody({ goal: [], done: [], remaining: [], notes: [], memory: [] }),
   );
 }
 
@@ -309,12 +363,13 @@ export function createSessionText(frontmatter: SessionFrontmatter): string {
 // Parsing
 // ---------------------------------------------------------------------------
 
-/** Split a body into the four known sections plus whatever surrounds them. */
+/** Split a body into the five known sections plus whatever surrounds them. */
 function splitBody(body: string): {
   goal: string[];
   done: string[];
   remaining: string[];
   notes: string[];
+  memory: string[];
   preamble: string;
   extra: string;
 } {
@@ -323,6 +378,7 @@ function splitBody(body: string): {
     [DONE_HEADING, []],
     [REMAINING_HEADING, []],
     [NOTES_HEADING, []],
+    [MEMORY_HEADING, []],
   ]);
   const preamble: string[] = [];
   const extra: string[] = [];
@@ -360,6 +416,7 @@ function splitBody(body: string): {
     done: known.get(DONE_HEADING) ?? [],
     remaining: known.get(REMAINING_HEADING) ?? [],
     notes: known.get(NOTES_HEADING) ?? [],
+    memory: known.get(MEMORY_HEADING) ?? [],
     preamble: block(preamble),
     extra: block(extra),
   };
@@ -457,9 +514,11 @@ function parseGoalLine(line: string): GoalLine | undefined {
   return { cp: prefix.n, raw: line, text: prefix.rest };
 }
 
-function parseDoneLine(line: string): DoneLine | undefined {
-  const prefix = readCpPrefix(line);
-  if (prefix === undefined) return undefined;
+/**
+ * Read a Done line whose evidence is inline — the pre-amendment-11 form, and the form any line
+ * with no continuation below it is read as. `prefix` is the already-read `- [cp n] ` head.
+ */
+function parseDoneLine(line: string, prefix: { n: number; rest: string }): DoneLine {
   const { head, attributes } = takeAttributes(prefix.rest, ATTR_SEPARATOR, DONE_KEYS);
   const inHead = takeHeadAttribute(head, DONE_KEYS, new Set(attributes.keys()));
   if (inHead.key !== undefined) attributes.set(inHead.key, inHead.value!);
@@ -478,6 +537,56 @@ function parseDoneLine(line: string): DoneLine | undefined {
     done.verified = verified as Verified;
   }
   return done;
+}
+
+/**
+ * Read a Done continuation line (`  detail: … · commit: … · files: … · verified: …`) into the
+ * attributes it carries, or `undefined` when the indented line is not one. Consumed right to
+ * left over the closed key set like an inline line; whatever the evidence keys did not claim
+ * has to be the `detail`, so a leftover that is not `detail: …` makes the line a stray.
+ */
+function parseDoneContinuation(line: string): Map<string, string> | undefined {
+  if (!line.startsWith(CONTINUATION_INDENT)) return undefined;
+  const segments = line.slice(CONTINUATION_INDENT.length).split(ATTR_SEPARATOR);
+  const attributes = new Map<string, string>();
+  let si = segments.length - 1;
+  for (let ki = CONTINUATION_KEYS.length - 1; ki >= 1 && si >= 0; ki -= 1) {
+    const key = CONTINUATION_KEYS[ki]!;
+    const value = readAttribute(segments[si]!, key);
+    if (value !== undefined && plausible(key, value)) {
+      attributes.set(key, value);
+      si -= 1;
+    }
+  }
+  if (si >= 0) {
+    const detail = readAttribute(segments.slice(0, si + 1).join(ATTR_SEPARATOR), CONTINUATION_KEYS[0]);
+    if (detail === undefined || detail === "") return undefined;
+    attributes.set(CONTINUATION_KEYS[0], detail);
+  }
+  return attributes.size === 0 ? undefined : attributes;
+}
+
+/** Fold a continuation's attributes into the gist line's record; the continuation wins. */
+function applyContinuation(done: DoneLine, line: string, attributes: Map<string, string>): void {
+  done.raw = `${done.raw}\n${line}`;
+  const detail = attributes.get("detail");
+  if (detail !== undefined) done.detail = detail;
+  const files = attributes.get("files");
+  if (files !== undefined) done.files = splitList(files);
+  const commit = attributes.get("commit");
+  if (commit !== undefined) done.commit = commit;
+  const verified = attributes.get("verified");
+  if (verified !== undefined) done.verified = verified as Verified;
+}
+
+function parseMemoryLine(line: string): MemoryLine | undefined {
+  const prefix = readCpPrefix(line);
+  if (prefix === undefined) return undefined;
+  const marker = ` ${MEMORY_FILE_KEY}: `;
+  const at = prefix.rest.lastIndexOf(marker);
+  const file = at === -1 ? undefined : prefix.rest.slice(at + marker.length).trimEnd();
+  if (file === undefined || file === "") return { cp: prefix.n, raw: line, text: prefix.rest };
+  return { cp: prefix.n, raw: line, text: prefix.rest.slice(0, at), file };
 }
 
 function parseRemainingLine(line: string): RemainingLine | undefined {
@@ -557,13 +666,38 @@ export function parseSessionText(text: string): ParsedSession {
     return out;
   };
 
+  // Done is the one section with a two-line form: an indented line right after a gist line is
+  // its continuation (amendment 11); any other indented line is a stray. A line that has a
+  // continuation is read as prose only — every attribute is on the continuation — so a gist
+  // that itself contains ` · files: fake.ts` keeps it instead of losing it to the evidence.
+  const done: DoneLine[] = [];
+  for (let i = 0; i < sections.done.length; i += 1) {
+    const line = sections.done[i]!;
+    const prefix = line.startsWith(CONTINUATION_INDENT) ? undefined : readCpPrefix(line);
+    if (prefix === undefined) {
+      unparsed.push({ section: "done", line });
+      continue;
+    }
+    const next = sections.done[i + 1];
+    const continuation = next === undefined ? undefined : parseDoneContinuation(next);
+    if (continuation === undefined) {
+      done.push(parseDoneLine(line, prefix));
+      continue;
+    }
+    const value: DoneLine = { cp: prefix.n, raw: line, text: prefix.rest, files: [] };
+    applyContinuation(value, next!, continuation);
+    done.push(value);
+    i += 1;
+  }
+
   return {
     frontmatter,
     data: parsed.data,
     goal: collect("goal", parseGoalLine),
-    done: collect("done", parseDoneLine),
+    done,
     remaining: collect("remaining", parseRemainingLine),
     notes: collect("notes", parseNoteLine),
+    memory: collect("memory", parseMemoryLine),
     unparsed,
     preamble: sections.preamble,
     extra: sections.extra,
@@ -597,8 +731,8 @@ function resolveRef(item: RemainingItem, index: number, refs: ResolvedRefs): Res
  * Append checkpoint `stamp.n` to a session file.
  *
  * Frontmatter gains the stamp; the Goal is replaced when the payload carries one and left alone
- * when it does not; Done and Remaining gain the new lines above the existing ones; Notes gain
- * theirs below. Existing lines are re-emitted exactly as they were read.
+ * when it does not; Done and Remaining gain the new lines above the existing ones; Notes and
+ * Memory gain theirs below. Existing lines are re-emitted exactly as they were read.
  *
  * The render is idempotent by refusal, not by merge: a stamp whose `n` is already in
  * `checkpoints[]` — or is behind the last one — is a {@link RenderError} with code
@@ -660,6 +794,7 @@ export function appendCheckpoint(
   });
 
   const noteLines = body.notes.map((note) => renderNoteLine(checkpoint.n, note));
+  const memoryLines = body.memory.map((item) => renderMemoryLine(checkpoint.n, item));
 
   const data = { ...session.data };
   const priorStamps = Array.isArray(data["checkpoints"])
@@ -679,6 +814,7 @@ export function appendCheckpoint(
           ...strays("remaining"),
         ],
         notes: [...session.notes.map((line) => line.raw), ...noteLines, ...strays("notes")],
+        memory: [...session.memory.map((line) => line.raw), ...memoryLines, ...strays("memory")],
       },
       session.preamble,
       session.extra,

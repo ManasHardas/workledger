@@ -145,11 +145,11 @@ const REFS_2 = new Map<string, ResolvedRef>([
 ]);
 
 describe("createSessionText", () => {
-  it("writes validated frontmatter and the four empty section headings", () => {
+  it("writes validated frontmatter and the five empty section headings", () => {
     const text = createSessionText(FRONTMATTER);
     expect(text).toBe(golden("checkpoint-1.in"));
     const { body } = { body: text.slice(text.lastIndexOf("\n---\n") + 5) };
-    expect(body).toBe("## Goal\n\n## Done\n\n## Remaining\n\n## Notes\n");
+    expect(body).toBe("## Goal\n\n## Done\n\n## Remaining\n\n## Notes\n\n## Memory\n");
     for (const heading of SESSION_SECTIONS) expect(text).toContain(`${heading}\n`);
   });
 
@@ -173,14 +173,15 @@ describe("appendCheckpoint golden files", () => {
     const second = appendCheckpoint(golden("checkpoint-2.in"), PAYLOAD_2, CP2, REFS_2);
     expect(second.text).toBe(golden("checkpoint-2.out"));
 
-    // The Done and Notes blocks of §4.1 are reproduced character for character; Remaining differs
-    // from the printed spec only in carrying full 26-character ULIDs and the schema-required
-    // `; why:` that the spec's abbreviated example omits.
+    // The Done and Notes blocks of §4.1 are reproduced character for character, with the §4.1
+    // Done lines split by P8 amendment 11 into a gist and its indented continuation; Remaining
+    // differs from the printed spec only in carrying full 26-character ULIDs and the
+    // schema-required `; why:` that the spec's abbreviated example omits.
     expect(second.text).toContain(
-      "- [cp 2] Added retry to the upload client. files: src/upload.ts, src/upload.test.ts · commit: a1b2c3d · verified: tests-passed",
+      "- [cp 2] Added retry to the upload client.\n  commit: a1b2c3d · files: src/upload.ts, src/upload.test.ts · verified: tests-passed",
     );
     expect(second.text).toContain(
-      "- [cp 1] Reproduced the timeout with a 40 MB fixture. files: fixtures/big.bin · verified: not-verified",
+      "- [cp 1] Reproduced the timeout with a 40 MB fixture.\n  files: fixtures/big.bin · verified: not-verified",
     );
     expect(second.text).toContain(
       "- discovery [cp 1]: The upload service strips Content-Length on redirect; retries must re-stream.",
@@ -635,7 +636,7 @@ describe("hand-edited lines survive a write (CR blocker)", () => {
   function handEdited(): string {
     return golden("checkpoint-1.out")
       .replace("## Done\n", `## Done\n${STRAY_DONE}\n`)
-      .replace(/\n$/, `\n${STRAY_NOTES}\nsecond line of the same paragraph\n`);
+      .replace("\n\n## Memory\n", `\n${STRAY_NOTES}\nsecond line of the same paragraph\n\n## Memory\n`);
   }
 
   it("surfaces a line that matches no form instead of guessing at it", () => {
@@ -658,7 +659,7 @@ describe("hand-edited lines survive a write (CR blocker)", () => {
     // At the foot of its own section, not adrift in another one.
     const doneBlock = appended.split("## Done\n")[1]!.split("\n\n")[0]!;
     expect(doneBlock.split("\n").at(-1)).toBe(STRAY_DONE);
-    expect(appended.split("## Notes\n")[1]!.trimEnd().split("\n").slice(-2)).toEqual([
+    expect(appended.split("## Notes\n")[1]!.split("\n\n")[0]!.trimEnd().split("\n").slice(-2)).toEqual([
       STRAY_NOTES,
       "second line of the same paragraph",
     ]);
@@ -790,5 +791,110 @@ describe("errors stay debuggable (SRE important 2)", () => {
       section: "done",
       line: "- [cp 99999999999999999999] not a real checkpoint",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P8 amendment 11 — gists for humans, detail for agents, memory
+// ---------------------------------------------------------------------------
+
+describe("amendment 11: gist line, indented continuation, memory section", () => {
+  const GIST = "Buyers can now check out from the cart on their phone";
+  const DETAIL =
+    "Checkout control is the link itself; pendingCheckout flag plus cart-null detection; opens in native top-level hosts, new tab on desktop";
+  const payload = {
+    goal: "Let buyers check out from the cart on a phone",
+    done: [
+      {
+        text: GIST,
+        detail: DETAIL,
+        files: ["src/cart/checkout.ts", "src/cart/host.ts"],
+        commit: "a1b2c3d",
+        verified: "tests-passed",
+      },
+      { text: "Old-style item with no detail", commit: "0447dab", verified: "not-verified" },
+    ],
+    remaining: [],
+    notes: [],
+    memory: [
+      { text: "gh needs the ManasHardas token prefix", file: "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+      { text: "A fact with no file" },
+    ],
+  } as unknown as CheckpointPayload;
+
+  it("renders the gist as the line and detail, commit, files, verified as an indented continuation", () => {
+    const { text } = appendCheckpoint(golden("checkpoint-1.in"), payload, CP1);
+    const doneBlock = text.split("## Done\n")[1]!.split("\n\n")[0]!;
+    expect(doneBlock.split("\n")).toEqual([
+      `- [cp 1] ${GIST}`,
+      `  detail: ${DETAIL} · commit: a1b2c3d · files: src/cart/checkout.ts, src/cart/host.ts · verified: tests-passed`,
+      "- [cp 1] Old-style item with no detail",
+      "  commit: 0447dab · verified: not-verified",
+    ]);
+    expect(text).toContain(
+      "## Memory\n- [cp 1] gh needs the ManasHardas token prefix file: ~/.claude/projects/-Users-x/memory/MEMORY.md\n- [cp 1] A fact with no file\n",
+    );
+  });
+
+  it("round-trips detail and memory through render and parse", () => {
+    const { text } = appendCheckpoint(golden("checkpoint-1.in"), payload, CP1);
+    const parsed = parseSessionText(text);
+    expect(parsed.unparsed).toEqual([]);
+    expect(parsed.done).toHaveLength(2);
+    expect(parsed.done[0]).toMatchObject({
+      cp: 1,
+      text: GIST,
+      detail: DETAIL,
+      files: ["src/cart/checkout.ts", "src/cart/host.ts"],
+      commit: "a1b2c3d",
+      verified: "tests-passed",
+    });
+    expect(parsed.done[1]).toMatchObject({ text: "Old-style item with no detail", files: [], commit: "0447dab", verified: "not-verified" });
+    expect(parsed.done[1]?.detail).toBeUndefined();
+    expect(parsed.memory).toEqual([
+      { cp: 1, raw: "- [cp 1] gh needs the ManasHardas token prefix file: ~/.claude/projects/-Users-x/memory/MEMORY.md", text: "gh needs the ManasHardas token prefix", file: "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+      { cp: 1, raw: "- [cp 1] A fact with no file", text: "A fact with no file" },
+    ]);
+    // The two-line raw re-emits verbatim, so a second append keeps cp 1 exactly.
+    const second = appendCheckpoint(text, { done: [], remaining: [], notes: [] } as unknown as CheckpointPayload, CP2).text;
+    expect(second).toContain(`- [cp 1] ${GIST}\n  detail: ${DETAIL} · commit: a1b2c3d`);
+    expect(parseSessionText(second).done[0]).toEqual(parsed.done[0]);
+    expect(parseSessionText(second).memory).toEqual(parsed.memory);
+  });
+
+  it("still parses a pre-amendment file, whose Done lines carry the evidence inline and no ## Memory", () => {
+    const parsed = parseSessionText(golden("legacy-inline"));
+    expect(parsed.unparsed).toEqual([]);
+    expect(parsed.memory).toEqual([]);
+    expect(parsed.done[0]).toMatchObject({
+      cp: 2,
+      text: "Added retry to the upload client.",
+      files: ["src/upload.ts", "src/upload.test.ts"],
+      commit: "a1b2c3d",
+      verified: "tests-passed",
+    });
+    expect(parsed.done[0]?.detail).toBeUndefined();
+    // Appending to it adds the new form beside the old lines, and the old lines are untouched.
+    const appended = appendCheckpoint(golden("legacy-inline"), payload, CP3).text;
+    expect(appended).toContain("- [cp 2] Added retry to the upload client. files: src/upload.ts, src/upload.test.ts · commit: a1b2c3d · verified: tests-passed\n");
+    expect(appended).toContain("## Memory\n- [cp 3] gh needs");
+    expect(parseSessionText(appended).done).toHaveLength(4);
+  });
+
+  it("detail that itself contains ` · verified: tests-passed` does not swallow the real evidence", () => {
+    const tricky = {
+      goal: "g",
+      done: [{ text: "Gist", detail: "tail · verified: tests-passed", files: ["a.ts"], verified: "tests-failed" }],
+      remaining: [],
+      notes: [],
+    } as unknown as CheckpointPayload;
+    const [done] = parseSessionText(appendCheckpoint(golden("checkpoint-1.in"), tricky, CP1).text).done;
+    expect(done).toMatchObject({ text: "Gist", detail: "tail · verified: tests-passed", files: ["a.ts"], verified: "tests-failed" });
+  });
+
+  it("an indented line that is not a continuation is a stray, kept verbatim", () => {
+    const withStray = golden("checkpoint-1.out").replace("## Done\n", "## Done\n  someone indented prose here\n");
+    const parsed = parseSessionText(withStray);
+    expect(parsed.unparsed).toEqual([{ section: "done", line: "  someone indented prose here" }]);
   });
 });

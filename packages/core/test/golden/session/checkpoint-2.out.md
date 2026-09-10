@@ -34,8 +34,10 @@ checkpoints:
 - [cp 1] Make the 40 MB upload stop timing out
 
 ## Done
-- [cp 2] Added retry to the upload client. files: src/upload.ts, src/upload.test.ts · commit: a1b2c3d · verified: tests-passed
-- [cp 1] Reproduced the timeout with a 40 MB fixture. files: fixtures/big.bin · verified: not-verified
+- [cp 2] Added retry to the upload client.
+  commit: a1b2c3d · files: src/upload.ts, src/upload.test.ts · verified: tests-passed
+- [cp 1] Reproduced the timeout with a 40 MB fixture.
+  files: fixtures/big.bin · verified: not-verified
 
 ## Remaining
 - [cp 2] → WL-01J9AB00000000000000000000 (new) Add a size limit before upload; why: server rejects >50 MB with no message
@@ -47,3 +49,5 @@ checkpoints:
 - decision [cp 2] by human: Keep uploads synchronous for now; reason: async path needs the queue work first.
 - blocker [cp 2]: Staging has no 50 MB fixture; cannot verify the limit path.
 - question [cp 2]: Should partial uploads be resumable, or is restart acceptable?
+
+## Memory
