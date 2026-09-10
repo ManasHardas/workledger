@@ -296,8 +296,10 @@ describe("repos (0003_repos.sql)", () => {
   it("is seeded from the sessions an older index already had", () => {
     const db = open();
     // Roll the schema back to before the table existed, re-insert the way 0002 left things,
-    // and let `openIndex` apply 0003 over it.
+    // and let `openIndex` apply 0003 (and 0004, whose column has to go too) over it.
     db.connection.exec("DROP TABLE repos");
+    db.connection.exec("DROP INDEX jobs_by_source_status");
+    db.connection.exec("ALTER TABLE jobs DROP COLUMN source");
     db.connection.prepare("UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'").run();
     db.connection
       .prepare(
