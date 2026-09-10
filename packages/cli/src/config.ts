@@ -42,6 +42,11 @@ export interface HookConfig {
   brief: BriefSettings;
   /** `SessionEnd` sets `needs_repair` when `turns_since_checkpoint` exceeds this. */
   stale_turns: number;
+  /**
+   * How stale an open session's transcript mtime must be before `scan` calls it crashed
+   * (docs/contracts/p3/cli.md §`workledger scan`).
+   */
+  orphan_minutes: number;
   /** Repo paths that are always private: boundary record only, no brief, never a block. */
   private_paths: string[];
 }
@@ -51,6 +56,7 @@ export const DEFAULT_CONFIG: HookConfig = {
   thresholds: { bytes: 2000000, minutes: 20, turns: 15 },
   brief: { inject: true, max_tokens: 2000 },
   stale_turns: 5,
+  orphan_minutes: 30,
   private_paths: [],
 };
 
@@ -225,6 +231,7 @@ export function parseConfig(text: string): HookConfig {
       max_tokens: positiveInt(brief["max_tokens"], defaults.brief.max_tokens),
     },
     stale_turns: positiveInt(entries.get("stale_turns")?.value, defaults.stale_turns),
+    orphan_minutes: positiveInt(entries.get("orphan_minutes")?.value, defaults.orphan_minutes),
     private_paths: sequence(entries.get("private_paths")) ?? [...defaults.private_paths],
   };
 }

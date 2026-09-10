@@ -36,7 +36,10 @@ import { rebuildIndex } from "../src/index/rebuild.js";
 const FIXTURE_SESSIONS = path.join(import.meta.dirname, "fixtures", "sessions");
 const REPO = "/repos/workledger";
 
-/** Column list of `sessions`, verbatim from the frozen DDL, in declaration order. */
+/**
+ * Column list of `sessions`, in declaration order: the P1 DDL plus `pending_trigger`, which
+ * `0002_jobs.sql` appends for the repair path (plans/feature-p3-data-flow.md §Repair by resume).
+ */
 const SESSION_COLUMNS = [
   "ulid",
   "repo_path",
@@ -56,6 +59,7 @@ const SESSION_COLUMNS = [
   "last_attempt_exit",
   "last_attempt_errors",
   "updated_at",
+  "pending_trigger",
 ];
 
 /** Column list of `checkpoints`, verbatim from the frozen DDL, in declaration order. */
@@ -106,6 +110,21 @@ describe("openIndex", () => {
     expect(columnsOf(db, "sessions")).toEqual(SESSION_COLUMNS);
     expect(columnsOf(db, "checkpoints")).toEqual(CHECKPOINT_COLUMNS);
     expect(columnsOf(db, "schema_meta")).toEqual(["key", "value"]);
+    expect(columnsOf(db, "jobs")).toEqual([
+      "id",
+      "kind",
+      "session_ulid",
+      "repo_path",
+      "status",
+      "attempts",
+      "created_at",
+      "started_at",
+      "finished_at",
+      "heartbeat_at",
+      "error",
+      "cost_estimate_usd",
+      "log_path",
+    ]);
   });
 
   it("creates WORKLEDGER_HOME when it does not exist yet", () => {
@@ -156,18 +175,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    expect(row?.value).toBe("1");
+    // Bumped by every migration that lands; `0002_jobs.sql` is the latest.
+    expect(row?.value).toBe("2");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0002_second.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0001_first.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0004_fourth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0003_third.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
-    // The real 0001 is already applied at version 1, so only 0002 is new.
-    expect(migrate(db.connection, dir)).toEqual(["0002_second.sql"]);
-    expect(schemaVersion(db.connection)).toBe(2);
+    // The real migrations have already taken the database past their own versions, so a fresh
+    // directory is only applied from the first file that is newer than the recorded version.
+    expect(migrate(db.connection, dir)).toEqual(["0003_third.sql", "0004_fourth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(4);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -190,7 +211,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql"]);
   });
 });
 

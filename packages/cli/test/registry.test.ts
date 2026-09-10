@@ -8,11 +8,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 
 /**
- * The commands `--help` must list: the six from docs/contracts/p1/cli.md plus `serve`
- * (docs/contracts/p2/api.md) and `note`, which P2 adds alongside the now-live `backlog`
- * (docs/contracts/p2/backlog-cli.md).
+ * The commands `--help` must list: the six from docs/contracts/p1/cli.md, `serve`
+ * (docs/contracts/p2/api.md) and `note` alongside the now-live `backlog`
+ * (docs/contracts/p2/backlog-cli.md), and `scan`, `repair` and `jobs` from P3
+ * (docs/contracts/p3/cli.md).
  */
-const COMMANDS = ["init", "hook", "checkpoint", "brief", "doctor", "serve", "backlog", "note"];
+const COMMANDS = [
+  "init",
+  "hook",
+  "checkpoint",
+  "brief",
+  "doctor",
+  "serve",
+  "scan",
+  "repair",
+  "jobs",
+  "backlog",
+  "note",
+];
 
 /**
  * Every P1 command now has a body, so none of them can be invoked from here: each would read the
@@ -27,6 +40,9 @@ const OPTIONS: Record<string, string[]> = {
   doctor: ["--json"],
   // `--no-open` is one option in commander's model: it defines `open`, defaulted to true.
   serve: ["--repo", "--port", "--no-open"],
+  scan: ["--repo", "--json"],
+  repair: ["--extract", "--yes", "--timeout", "--force"],
+  jobs: ["--repo", "--json", "--cancel", "--retry"],
   // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
   // is registered here beyond the pass-through argument.
   backlog: [],
@@ -58,7 +74,7 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the eight commands", () => {
+  it("registers exactly the eleven commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 

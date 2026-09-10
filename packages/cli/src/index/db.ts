@@ -82,6 +82,15 @@ export interface SessionRow {
   last_attempt_exit: number | null;
   /** The stderr text of the last failed `checkpoint`; field paths only, never values. */
   last_attempt_errors: string | null;
+  /**
+   * The trigger the next checkpoint in this session must stamp, or `null`.
+   *
+   * Written by the repair runner before it spawns the harness and cleared by the checkpoint
+   * that consumes it (plans/feature-p3-data-flow.md §Repair by resume), which is what makes a
+   * resumed agent's `workledger checkpoint --session <ulid>` stamp `trigger: repair` without
+   * anything on its command line saying so.
+   */
+  pending_trigger: string | null;
   updated_at: string;
 }
 
@@ -247,6 +256,7 @@ const UPDATABLE_COLUMNS = new Set<keyof SessionRow>([
   "last_attempt_at",
   "last_attempt_exit",
   "last_attempt_errors",
+  "pending_trigger",
   "updated_at",
 ]);
 
@@ -275,6 +285,12 @@ export interface IndexDb {
   /** `max(n) + 1` for a session. Only meaningful inside the write transaction that uses it. */
   nextCheckpointNumber(ulid: string): number;
   insertCheckpoint(row: CheckpointRow): void;
+  /**
+   * How many checkpoints a session has. `scan` asks this of every open session in a repo, so it
+   * is a COUNT rather than a `listCheckpoints().length` — the orphan sweep's budget is 200 ms
+   * for 500 sessions (plans/feature-p3-data-flow.md §Budgets).
+   */
+  countCheckpoints(ulid: string): number;
   /**
    * Allocate `n` and insert the checkpoint under one `BEGIN IMMEDIATE`, so two concurrent
    * `workledger checkpoint` invocations for one session serialize and the second sees `n + 1`
@@ -313,6 +329,7 @@ const SESSION_COLUMNS = [
   "last_attempt_at",
   "last_attempt_exit",
   "last_attempt_errors",
+  "pending_trigger",
   "updated_at",
 ] as const satisfies ReadonlyArray<keyof SessionRow>;
 
@@ -340,6 +357,7 @@ function completeSession(session: NewSession): SessionRow {
     last_attempt_at: null,
     last_attempt_exit: null,
     last_attempt_errors: null,
+    pending_trigger: null,
     updated_at: new Date().toISOString(),
     ...given,
   };
@@ -382,6 +400,9 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     "DELETE FROM checkpoints WHERE session_ulid IN (SELECT ulid FROM sessions WHERE repo_path = ?)",
   );
   const deleteSessionsForRepo = db.prepare<[string]>("DELETE FROM sessions WHERE repo_path = ?");
+  // Jobs key on `session_ulid`; leaving them behind after `rebuildIndex` would point the queue
+  // at sessions that no longer exist and hold the partial unique index against a fresh scan.
+  const deleteJobsForRepo = db.prepare<[string]>("DELETE FROM jobs WHERE repo_path = ?");
 
   const selectNextN = db.prepare<[string], { next: number }>(
     "SELECT COALESCE(MAX(n), 0) + 1 AS next FROM checkpoints WHERE session_ulid = ?",
@@ -392,6 +413,9 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   );
   const selectCheckpoints = db.prepare<[string], CheckpointRow>(
     "SELECT * FROM checkpoints WHERE session_ulid = ? ORDER BY n",
+  );
+  const countCheckpointsStmt = db.prepare<[string], { count: number }>(
+    "SELECT COUNT(*) AS count FROM checkpoints WHERE session_ulid = ?",
   );
 
   // `updateSession` sits behind `recordAttempt`, `resetAfterCheckpoint` and `giveUp`, i.e. the
@@ -435,6 +459,7 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   const clearRepoTx = db.transaction((repoPath: string) => {
     deleteCheckpointsForRepo.run(repoPath);
     deleteSessionsForRepo.run(repoPath);
+    deleteJobsForRepo.run(repoPath);
   });
 
   return {
@@ -460,6 +485,7 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     },
 
     nextCheckpointNumber: (ulid) => selectNextN.get(ulid)?.next ?? 1,
+    countCheckpoints: (ulid) => countCheckpointsStmt.get(ulid)?.count ?? 0,
     insertCheckpoint: (row) => {
       insertCheckpointStmt.run(row);
     },
@@ -487,6 +513,9 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         last_attempt_at: reset.at,
         last_attempt_exit: 0,
         last_attempt_errors: null,
+        // The pending trigger is consumed by the checkpoint that stamped it: a repaired session
+        // that keeps running must not stamp `repair` on every later checkpoint too.
+        pending_trigger: null,
         updated_at: reset.at,
       });
     },
