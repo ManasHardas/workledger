@@ -38,6 +38,30 @@ export type {
   RepairInput,
   ScanSummary,
 } from "./jobs.js";
+export { onboardingRoutes } from "./routes/onboarding.js";
+export type { OnboardingRouteDeps } from "./routes/onboarding.js";
+export { ONBOARDING_METHODS, ONBOARDING_WINDOWS, isOnboardingRefusal } from "./onboarding.js";
+export type {
+  DiscoverResult,
+  ExtractionEstimate,
+  HistoryResult,
+  HistoryWindow,
+  InitInput,
+  InitRepoResult,
+  InitResult,
+  OnboardingMethod,
+  OnboardingOps,
+  OnboardingRefusal,
+  OnboardingRefusalCode,
+  OnboardingStatus,
+  OnboardingWindow,
+  PlanInput,
+  PlanResult,
+  RepoCandidate,
+  ResumeEstimate,
+  RunInput,
+  RunResult,
+} from "./onboarding.js";
 export {
   buildExcerpt,
   excerptCachePath,
