@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { RepairSheet } from "../jobs/repair-sheet.js";
-import { useSource } from "../../lib/source-context.js";
+import { useRepoId, useSource } from "../../lib/source-context.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
 import { detailHref } from "./detail-route.js";
 import { SessionCard } from "./session-card.js";
@@ -31,6 +31,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  */
 export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
   const source = useSource();
+  const repo = useRepoId();
   const [cursor, setCursor] = useState(-1);
   const cards = useRef<(HTMLAnchorElement | null)[]>([]);
   const cursorRef = useRef(cursor);
@@ -61,13 +62,13 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
         const session = sessions[at];
         if (!session) return;
         event.preventDefault();
-        window.location.hash = detailHref(session.frontmatter.id);
+        window.location.hash = detailHref(repo, session.frontmatter.id);
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sessions]);
+  }, [sessions, repo]);
 
   return (
     <ul className="flex flex-col gap-3" aria-label="Sessions, newest first">

@@ -5,6 +5,7 @@ import { App } from "../src/app.js";
 import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import {
   createSource,
+  type AppSource,
   type Health,
   type Identity,
   type LedgerEvent,
@@ -15,15 +16,23 @@ import {
 
 const fixture = createSource("fixture");
 
+/** The first fixture repo: every per-repo route in this file is `#/r/<id>/…` under it. */
+const REPO = "0123456789ab";
+
 /**
  * A writable, live `LedgerSource` built by delegating every read to the fixture source and letting
  * a test replace only the calls it cares about. The fixture source itself is read-only by design,
  * so it cannot exercise `resolveNote` — but nothing in a view may assume otherwise, which is why
  * both capability shapes are rendered here.
  */
-function stubSource(overrides: Partial<LedgerSource> = {}): LedgerSource {
-  return {
+function stubSource(overrides: Partial<LedgerSource> = {}): AppSource {
+  const source: AppSource = {
     capabilities: { write: true, live: true, provenance: false },
+    // The machine half (P8): the fixture's repos, and this very stub as every repo's source.
+    listRepos: () => fixture.listRepos(),
+    listAllNotes: (q) => fixture.listAllNotes(q),
+    listAllJobs: () => fixture.listAllJobs(),
+    forRepo: () => source,
     listSessions: (q) => fixture.listSessions(q),
     getSession: (ulid) => fixture.getSession(ulid),
     listBacklog: (q) => fixture.listBacklog(q),
@@ -53,9 +62,10 @@ function stubSource(overrides: Partial<LedgerSource> = {}): LedgerSource {
     subscribe: () => () => {},
     ...overrides,
   };
+  return source;
 }
 
-function renderAt(route: string, source: LedgerSource) {
+function renderAt(route: string, source: AppSource) {
   window.location.hash = route;
   return render(<App source={source} />);
 }
@@ -92,7 +102,7 @@ afterEach(cleanup);
 
 describe("Needs you", () => {
   it("renders every open note with its session goal and checkpoint", async () => {
-    renderAt("#/needs-you", stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+    renderAt(`#/r/${REPO}/needs`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
     expect(await screen.findByText(BLOCKER)).toBeDefined();
     expect(await screen.findByText(SESSION.goal!)).toBeDefined();
@@ -110,7 +120,7 @@ describe("Needs you", () => {
         return SESSION;
       },
     });
-    renderAt("#/needs-you", source);
+    renderAt(`#/r/${REPO}/needs`, source);
 
     fireEvent.click(await screen.findByRole("button", { name: "Resolve" }));
     fireEvent.change(screen.getByLabelText("Your decision"), {
@@ -133,7 +143,7 @@ describe("Needs you", () => {
   it("names the session author from identities.yaml, with the email as the tooltip", async () => {
     const email = SESSION.frontmatter.author.email;
     renderAt(
-      "#/needs-you",
+      `#/r/${REPO}/needs`,
       stubSource({
         listNotes: async () => NOTES,
         getSession: async () => SESSION,
@@ -156,7 +166,7 @@ describe("Needs you", () => {
 
     for (const identities of reads) {
       renderAt(
-        "#/needs-you",
+        `#/r/${REPO}/needs`,
         stubSource({
           listNotes: async () => NOTES,
           getSession: async () => SESSION,
@@ -176,7 +186,7 @@ describe("Needs you", () => {
     let identities: Identity[] = [];
     const handlers = new Set<(event: LedgerEvent) => void>();
     renderAt(
-      "#/needs-you",
+      `#/r/${REPO}/needs`,
       stubSource({
         listNotes: async () => NOTES,
         getSession: async () => SESSION,
@@ -195,7 +205,7 @@ describe("Needs you", () => {
   });
 
   it("disables resolving on a read-only source", async () => {
-    renderAt("#/needs-you", createSource("fixture"));
+    renderAt(`#/r/${REPO}/needs`, createSource("fixture"));
 
     const resolve = await screen.findAllByRole("button", { name: "Resolve" });
     expect(resolve.length).toBeGreaterThan(0);
@@ -255,7 +265,7 @@ describe("Health", () => {
     within(await screen.findByRole("listitem", { name: row })).getByText(/^(ok|warn|broken)$/);
 
   it("badges each row with its reading", async () => {
-    renderAt("#/health", stubSource({ health: async () => HEALTH }));
+    renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
 
     expect((await statusOf("claude-code")).textContent).toBe("ok");
     // No harness fault reads `broken` — `workledger doctor` grades them all warn-or-ok, and this
@@ -268,7 +278,7 @@ describe("Health", () => {
   });
 
   it("shows the doctor detail: the probe, its complaints, open sessions and the last hook", async () => {
-    renderAt("#/health", stubSource({ health: async () => HEALTH }));
+    renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
 
     // The real probe fields, not a placeholder summary.
     const claude = within(await screen.findByRole("listitem", { name: "claude-code" }));
@@ -290,7 +300,7 @@ describe("Health", () => {
 
 describe("keyboard help", () => {
   it("toggles the shortcut overlay on ?", async () => {
-    renderAt("#/ledger", stubSource());
+    renderAt(`#/r/${REPO}/ledger`, stubSource());
     expect(screen.queryByRole("dialog")).toBeNull();
 
     fireEvent.keyDown(window, { key: "?" });
@@ -304,7 +314,7 @@ describe("keyboard help", () => {
   });
 
   it("asks the current view to focus its search box on /", () => {
-    renderAt("#/ledger", stubSource());
+    renderAt(`#/r/${REPO}/ledger`, stubSource());
     let asked = 0;
     const listener = () => (asked += 1);
     window.addEventListener("focus-search", listener);

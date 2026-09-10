@@ -3,16 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { messageOf } from "../../lib/errors.js";
 import { useSource } from "../../lib/source-context.js";
 
-import type { Job } from "../../lib/ledger-source.js";
+import type { Job, LedgerSource } from "../../lib/ledger-source.js";
 
 /** The list's three read states. Per-row write failures live in `errors`, keyed by job id. */
-export type JobsState =
+export type JobsState<J extends Job = Job> =
   | { state: "loading" }
   | { state: "error"; message: string }
-  | { state: "ready"; value: Job[] };
+  | { state: "ready"; value: J[] };
 
-export interface JobsQueue {
-  result: JobsState;
+export interface JobsQueue<J extends Job = Job> {
+  result: JobsState<J>;
   /** The last failure per job id, cleared when that row's next write starts. */
   errors: Record<string, string>;
   /** Ids with a write in flight, so their buttons disable without freezing the list. */
@@ -28,13 +28,18 @@ function without<T>(map: Record<string, T>, key: string): Record<string, T> {
   return Object.fromEntries(Object.entries(map).filter(([k]) => k !== key));
 }
 
-function replace(jobs: Job[], next: Job): Job[] {
+/**
+ * A row's replacement keeps whatever the list's element type carried beyond `Job` — the `repo`
+ * of an aggregate row — because a `cancelJob` answers with a bare `Job`.
+ */
+function replace<J extends Job>(jobs: J[], next: Job): J[] {
   const at = jobs.findIndex((job) => job.id === next.id);
-  return at < 0 ? [next, ...jobs] : jobs.map((job, i) => (i === at ? next : job));
+  if (at < 0) return [next as J, ...jobs];
+  return jobs.map((job, i) => (i === at ? { ...job, ...next } : job));
 }
 
 /** Newest first — the order p3/api.md promises, re-applied here rather than trusted. */
-function newestFirst(jobs: Job[]): Job[] {
+function newestFirst<J extends Job>(jobs: J[]): J[] {
   return [...jobs].sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
@@ -51,13 +56,25 @@ function newestFirst(jobs: Job[]): Job[] {
  */
 export function useJobs(status?: string): JobsQueue {
   const source = useSource();
-  const [result, setResult] = useState<JobsState>({ state: "loading" });
+  return useJobList(
+    useCallback(() => source.listJobs(status), [source, status]),
+    source,
+  );
+}
+
+/**
+ * The machinery behind {@link useJobs}, over any list read and any event stream: the per-repo
+ * queue reads `listJobs` through its scoped source, the machine-wide one (P8) reads
+ * `listAllJobs` and listens on the unscoped stream, where every repo's `job.changed` arrives.
+ */
+export function useJobList<J extends Job>(list: () => Promise<J[]>, events: Pick<LedgerSource, "subscribe">): JobsQueue<J> {
+  const [result, setResult] = useState<JobsState<J>>({ state: "loading" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, true>>({});
   const live = useRef(true);
 
   const reload = useCallback(() => {
-    source.listJobs(status).then(
+    list().then(
       (jobs) => {
         if (live.current) setResult({ state: "ready", value: newestFirst(jobs) });
       },
@@ -65,19 +82,19 @@ export function useJobs(status?: string): JobsQueue {
         if (live.current) setResult({ state: "error", message: messageOf(error) });
       },
     );
-  }, [source, status]);
+  }, [list]);
 
   useEffect(() => {
     live.current = true;
     reload();
-    const stop = source.subscribe((event) => {
+    const stop = events.subscribe((event) => {
       if (event.type === "job.changed") reload();
     });
     return () => {
       live.current = false;
       stop();
     };
-  }, [reload, source]);
+  }, [reload, events]);
 
   const act = useCallback((id: string, call: () => Promise<Job>) => {
     setErrors((prior) => without(prior, id));

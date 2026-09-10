@@ -5,8 +5,11 @@ import { TRANSCRIPT_NOTICE } from "../src/features/ledger/provenance-panel.js";
 import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { createSource } from "../src/lib/ledger-source.js";
 import type { LedgerEvent, LedgerSource, SessionQuery } from "../src/lib/ledger-source.js";
-import { SourceProvider } from "../src/lib/source-context.js";
+import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
 import { LedgerView } from "../src/routes/ledger.js";
+
+/** The first fixture repo: the Ledger's links and detail route live under `#/r/<id>/ledger`. */
+const REPO = "0123456789ab";
 
 const OPEN_SESSION = FIXTURE_SESSIONS.find((s) => s.frontmatter.status === "open")!;
 const ENDED_SESSION = FIXTURE_SESSIONS.find((s) => s.frontmatter.status !== "open")!;
@@ -40,9 +43,11 @@ function liveSource() {
 
 function renderLedger(source: LedgerSource = createSource("fixture")) {
   return render(
-    <SourceProvider source={source}>
-      <LedgerView />
-    </SourceProvider>,
+    <RepoIdProvider id={REPO}>
+      <SourceProvider source={source}>
+        <LedgerView />
+      </SourceProvider>
+    </RepoIdProvider>,
   );
 }
 
@@ -52,7 +57,7 @@ function showAll() {
 }
 
 beforeEach(() => {
-  window.location.hash = "#/ledger";
+  window.location.hash = `#/r/${REPO}/ledger`;
 });
 
 afterEach(cleanup);
@@ -125,18 +130,18 @@ describe("ledger list", () => {
     await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.keyDown(window, { key: "j" });
-    expect(document.activeElement?.getAttribute("href")).toBe(`#/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
 
     fireEvent.keyDown(window, { key: "j" });
     expect(document.activeElement?.getAttribute("href")).toBe(
-      `#/ledger/${ENDED_SESSION.frontmatter.id}`,
+      `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`,
     );
 
     fireEvent.keyDown(window, { key: "k" });
-    expect(document.activeElement?.getAttribute("href")).toBe(`#/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
 
     fireEvent.keyDown(window, { key: "Enter" });
-    expect(window.location.hash).toBe(`#/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(window.location.hash).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
   });
 
   it("leaves j and k alone while the search box has focus", async () => {
@@ -172,7 +177,7 @@ describe("ledger list", () => {
 
 describe("session detail", () => {
   beforeEach(() => {
-    window.location.hash = `#/ledger/${ENDED_SESSION.frontmatter.id}`;
+    window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
   it("shows Goal, Done, Remaining and Notes with their [cp n] markers", async () => {

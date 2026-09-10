@@ -1,6 +1,7 @@
 import { Badge } from "../../components/ui/badge.js";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
+import { useRepoId } from "../../lib/source-context.js";
 import { detailHref } from "./detail-route.js";
 import { formatInstant } from "./format.js";
 
@@ -16,7 +17,7 @@ function statusVariant(status: string) {
  * One session, summarised: goal, when it started, who ran it, on what harness, its status, how many
  * checkpoints it has, and how much is done versus still remaining (design spec §8, Ledger).
  *
- * The whole card is one link to `#/ledger/<ulid>`, so it is reachable by Tab, activates on Enter
+ * The whole card is one link to `#/r/<repo>/ledger/<ulid>`, so it is reachable by Tab, activates on Enter
  * for free, and the list's `j`/`k` handler only has to move focus.
  */
 export function SessionCard({
@@ -30,6 +31,7 @@ export function SessionCard({
   onFocus: () => void;
   ref?: React.Ref<HTMLAnchorElement>;
 }) {
+  const repo = useRepoId();
   const { frontmatter } = session;
   const remaining = session.remaining.length;
   const done = session.done.length;
@@ -37,7 +39,7 @@ export function SessionCard({
   return (
     <a
       ref={ref}
-      href={detailHref(frontmatter.id)}
+      href={detailHref(repo, frontmatter.id)}
       onFocus={onFocus}
       data-active={active ? "" : undefined}
       className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"

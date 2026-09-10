@@ -1,10 +1,11 @@
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardHeader } from "../../components/ui/card.js";
+import { repoHref } from "../../lib/router.js";
 import { detailHref } from "../ledger/detail-route.js";
 import { canCancel, canRetry, elapsed, formatWhen, shortId, statusVariant } from "./format.js";
 
-import type { Job } from "../../lib/ledger-source.js";
+import type { Job, Repo } from "../../lib/ledger-source.js";
 
 /**
  * One `jobs` row: what it is, what it is doing, to which session, and what went wrong.
@@ -14,10 +15,13 @@ import type { Job } from "../../lib/ledger-source.js";
  * that a repair that failed at 3am must be legible at 9am without opening the index.
  *
  * The session is a link into the Ledger rather than 26 characters of ULID as text: the job is only
- * interesting next to the session it is repairing.
+ * interesting next to the session it is repairing. `repoId` is the repo that link lives under;
+ * `repo`, when given, is the machine-wide tab's repo column (P8) and links to that repo's queue.
  */
 export function JobRow({
   job,
+  repoId,
+  repo,
   now,
   pending,
   error,
@@ -26,6 +30,8 @@ export function JobRow({
   canWrite,
 }: {
   job: Job;
+  repoId: string;
+  repo?: Repo;
   now: number;
   pending: boolean;
   error: string | undefined;
@@ -44,9 +50,18 @@ export function JobRow({
               <Badge variant="outline">{`${String(job.attempts)} attempts`}</Badge>
             ) : null}
             <span className="font-mono text-xs text-muted-foreground">{shortId(job.id)}</span>
+            {repo === undefined ? null : (
+              <a
+                href={repoHref(repo.id, "jobs")}
+                aria-label={`${repo.name} — Jobs`}
+                className="rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {repo.name}
+              </a>
+            )}
           </div>
           <a
-            href={detailHref(job.session_ulid)}
+            href={detailHref(repoId, job.session_ulid)}
             className="w-fit rounded-sm font-mono text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {job.session_ulid}
