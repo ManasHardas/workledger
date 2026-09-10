@@ -1064,6 +1064,76 @@
       "review_iterations": 1,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "a write, or five references with a path-tool input or cd; Bash mentions alone never attribute; cross-repo sessions need a write; workspaces regardless of git ancestors; migration 0008"
+    },
+    {
+      "session": 3,
+      "wave": "P8-5",
+      "kind": "pr_merge",
+      "pr": 115,
+      "issue": 114,
+      "agent_role": "backend",
+      "class": "resume-in-start-directory fix (lean, CR)",
+      "tokens_implementer": 134000,
+      "tokens_reviewers": 74000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "a backfilled session is resumed in the directory its transcript was recorded in, not the target repo; session-not-found mapped to a clear error"
+    },
+    {
+      "session": 3,
+      "wave": "P8-5",
+      "kind": "pr_merge",
+      "pr": 120,
+      "issue": 116,
+      "agent_role": "backend",
+      "class": "session start dir and context repos, first-of-class (lean, CR)",
+      "tokens_implementer": 109000,
+      "tokens_reviewers": 103000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "sessions carry startDir and contextRepos; one content inference shared by discovery, backfill and the Stop hook; migration 0009; about/startedIn on the API; amendment 10"
+    },
+    {
+      "session": 3,
+      "wave": "P8-5",
+      "kind": "pr_merge",
+      "pr": 122,
+      "issue": 117,
+      "agent_role": "backend",
+      "class": "human-gist payload, first-of-class (lean, CR)",
+      "tokens_implementer": 424000,
+      "tokens_reviewers": 113000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "done[].detail, memory[], tighter caps, instruction v4 asks for human gists; 0 review fix-cycles plus one rebase; amendment 11"
+    },
+    {
+      "session": 3,
+      "wave": "P8-5",
+      "kind": "pr_merge",
+      "pr": 123,
+      "issue": 119,
+      "agent_role": "backend+frontend",
+      "class": "Home workspaces grouping (lean, CR)",
+      "tokens_implementer": 438000,
+      "tokens_reviewers": 259000,
+      "review_iterations": 1,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "Home groups projects first then folders with sessions; GET /api/workspaces; ledger without the Open/All tabs; amendment 12"
+    },
+    {
+      "session": 3,
+      "wave": "P8-5",
+      "kind": "pr_merge",
+      "pr": 126,
+      "issue": 118,
+      "agent_role": "backend+frontend",
+      "class": "session view gists and memory (lean, CR)",
+      "tokens_implementer": 304000,
+      "tokens_reviewers": 99000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "session view shows gists with a detail drawer, notes split, a Memory section; server projects detail and memory"
     }
   ]
 }
