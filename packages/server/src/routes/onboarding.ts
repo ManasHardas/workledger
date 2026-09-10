@@ -51,10 +51,13 @@ function readCsv(raw: string | undefined): string[] | undefined {
  * Checked at the route as well as in the op, because the two guard different callers: the op
  * protects `workledger onboard`, this protects the loopback listener from a body that names a
  * directory `init` would otherwise scaffold hook files into.
+ *
+ * `allowEmpty` is `init` with workspaces named (amendment 12): Home's "Install hooks" enables a
+ * folder whose repos are already tracked, so there is no repo to list.
  */
-function readRepos(body: Record<string, unknown>): string[] {
+function readRepos(body: Record<string, unknown>, allowEmpty = false): string[] {
   const value = body["repos"];
-  if (!Array.isArray(value) || value.length === 0) {
+  if (!Array.isArray(value) || (value.length === 0 && !allowEmpty)) {
     throw badRequest("repos must be a non-empty array of paths");
   }
   for (const item of value) {
@@ -188,9 +191,9 @@ export function onboardingRoutes(deps: OnboardingRouteDeps): Hono {
   api.post("/onboarding/init", async (c) => {
     const body = await readBody(c);
     rejectUnknown(body, ["repos", "harnesses", "workspaces"]);
-    const repos = readRepos(body);
-    const harnesses = readHarnesses(body);
     const workspaces = readWorkspaces(body);
+    const repos = readRepos(body, workspaces !== undefined && workspaces.length > 0);
+    const harnesses = readHarnesses(body);
     const result = await call(() =>
       deps.ops.init({
         repos,
@@ -228,6 +231,10 @@ export function onboardingRoutes(deps: OnboardingRouteDeps): Hono {
   });
 
   api.get("/onboarding/status", async (c) => c.json(await call(() => deps.ops.status())));
+
+  // Amendment 12: Home's "Folders with sessions". Machine-wide like the rest, and a read, so the
+  // write guard above does not apply; loopback-only like every route.
+  api.get("/workspaces", async (c) => c.json(await call(() => deps.ops.workspaces())));
 
   return api;
 }

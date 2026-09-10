@@ -27,6 +27,7 @@ import {
   FIXTURE_PLAN_RESUME,
   FIXTURE_REPOS,
   FIXTURE_SESSIONS,
+  FIXTURE_WORKSPACES,
   fixtureInitResult,
 } from "./fixtures.js";
 
@@ -58,6 +59,7 @@ import type {
   RunResult,
   ScanSummary,
   SessionQuery,
+  Workspace,
 } from "@workledger/api-client";
 
 export { isSuggested } from "@workledger/api-client";
@@ -103,6 +105,7 @@ export type {
   ScanSummary,
   SessionQuery,
   Turn,
+  Workspace,
   WorkspaceCandidate,
 } from "@workledger/api-client";
 
@@ -238,6 +241,11 @@ class FixtureSource implements LedgerSource, MachineSource, OnboardingSource {
 
   async status(): Promise<OnboardingStatus> {
     return FIXTURE_ONBOARDING_STATUS;
+  }
+
+  /** Amendment 12: Home's "Folders with sessions", canned like the rest of the wizard's reads. */
+  async workspaces(): Promise<Workspace[]> {
+    return FIXTURE_WORKSPACES;
   }
 
   async listRepos(): Promise<Repo[]> {

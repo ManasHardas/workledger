@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { messageOf } from "../../lib/errors.js";
-import type { AppSource, Repo } from "../../lib/ledger-source.js";
+import type { AppSource, Repo, Workspace } from "../../lib/ledger-source.js";
 import type { Async } from "../../lib/use-async.js";
 
 /** How long a burst of events is allowed to coalesce into one `/api/repos` re-read. */
@@ -76,4 +76,46 @@ export function useLiveRepos(source: AppSource): Async<Repo[]> {
   }, [source]);
 
   return result;
+}
+
+/**
+ * `GET /api/workspaces` (daemon-and-api.md amendment 12) — Home's second group.
+ *
+ * Folders are not repos, so no `repos.changed` frame announces one: the list is read on mount and
+ * re-read on {@link REPOS_CHANGED_EVENT}, which the wizard and Home's own "Install hooks" fire
+ * after an `init`, plus whatever `reload` the caller keeps. It is deliberately *not* re-read on
+ * every SSE frame the way the repo cards are — nothing on these cards moves per checkpoint except
+ * a session count, and the walk behind the route reads directory metadata for the whole machine.
+ *
+ * A source from before amendment 12 has no `workspaces` method; the group then reports nothing
+ * rather than throwing, which is what keeps a Dome card or an older daemon rendering Home.
+ */
+export function useLiveWorkspaces(source: AppSource): { result: Async<Workspace[]>; reload: () => void } {
+  const [result, setResult] = useState<Async<Workspace[]>>({ state: "loading" });
+  const [nonce, setNonce] = useState(0);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    let live = true;
+    if (typeof source.workspaces !== "function") {
+      setResult({ state: "ready", value: [] });
+      return;
+    }
+    source.workspaces().then(
+      (value) => {
+        if (live) setResult({ state: "ready", value });
+      },
+      (error: unknown) => {
+        if (live) setResult({ state: "error", message: messageOf(error) });
+      },
+    );
+    const onChanged = () => setNonce((n) => n + 1);
+    window.addEventListener(REPOS_CHANGED_EVENT, onChanged);
+    return () => {
+      live = false;
+      window.removeEventListener(REPOS_CHANGED_EVENT, onChanged);
+    };
+  }, [source, nonce]);
+
+  return { result, reload };
 }

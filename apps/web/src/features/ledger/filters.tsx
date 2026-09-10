@@ -87,14 +87,11 @@ export function LedgerFilterBar({
   onChange,
   q,
   onQChange,
-  statusLocked,
 }: {
   filters: LedgerFilters;
   onChange: (next: LedgerFilters) => void;
   q: string;
   onQChange: (next: string) => void;
-  /** True on the "Open" tab, where the scope already pins the status. */
-  statusLocked?: boolean;
 }) {
   const authors = useAuthors();
   const set = <K extends keyof LedgerFilters>(key: K, value: LedgerFilters[K]) =>
@@ -127,8 +124,7 @@ export function LedgerFilterBar({
         />
         <LedgerFilterSelect
           label="Status"
-          value={statusLocked ? "open" : filters.status}
-          disabled={statusLocked}
+          value={filters.status}
           onChange={(event) => set("status", event.target.value)}
           options={STATUS_OPTIONS}
         />

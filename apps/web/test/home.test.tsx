@@ -1,12 +1,12 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { formatRelative } from "../src/features/home/format.js";
 import { REPOS_REFRESH_MS, announceReposChanged } from "../src/features/home/live.js";
-import { FIXTURE_REPOS } from "../src/lib/fixtures.js";
-import { createSource, type AppSource, type LedgerEvent, type Repo } from "../src/lib/ledger-source.js";
+import { FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
+import { createSource, type AppSource, type InitInput, type LedgerEvent, type Repo, type Workspace } from "../src/lib/ledger-source.js";
 import { repoHref } from "../src/lib/router.js";
 
 const [WORKLEDGER, DASHERO] = FIXTURE_REPOS as [Repo, Repo];
@@ -66,6 +66,124 @@ describe("relative time", () => {
     expect(formatRelative("2026-09-09T09:10:00Z", now)).toBe("2 h ago");
     expect(formatRelative("2026-09-01T12:00:00Z", now)).toBe("8 d ago");
     expect(formatRelative("not a date", now)).toBe("not a date");
+  });
+});
+
+/**
+ * Amendment 11's second group: the folders `GET /api/workspaces` reports. A fixture source answers
+ * `FIXTURE_WORKSPACES`; these override it where the case needs a different machine.
+ */
+function withWorkspaces(list: Workspace[], init?: (input: InitInput) => Promise<unknown>): AppSource {
+  const base = createSource("fixture");
+  return Object.assign(Object.create(base) as AppSource, {
+    workspaces: () => Promise.resolve(list),
+    ...(init === undefined ? {} : { initRepos: init }),
+  });
+}
+
+describe("Home — folders with sessions (amendment 11)", () => {
+  const [DOME, NOTES, HARD_TALKS] = FIXTURE_WORKSPACES as [Workspace, Workspace, Workspace];
+
+  it("shows the projects first and the non-repo folders in a second group below", async () => {
+    renderHome();
+    const headings = await screen.findAllByRole("heading", { level: 2 });
+    expect(headings.map((h) => h.textContent)).toEqual(["Projects", "Folders with sessions"]);
+
+    const folders = screen.getByRole("list", { name: "Folders with sessions" });
+    const cards = within(folders).getAllByRole("listitem");
+    expect(cards).toHaveLength(FIXTURE_WORKSPACES.length);
+    // No folder pretends to be a project: none of these cards is a link into a ledger.
+    expect(within(folders).queryAllByRole("link")).toEqual([]);
+
+    // A folder with transcripts and no repo under it is still listed — that is the operator's
+    // rule ("simply because transcripts are found in a folder doesn't mean that folder is a
+    // repo"): it belongs here, never in Projects.
+    expect(cards[1]!.textContent).toContain(NOTES.path);
+    expect(within(cards[1]!).getByText("tracked repos").nextElementSibling?.textContent).toBe("0");
+    expect(within(screen.getByRole("list", { name: "Projects" })).queryByText(NOTES.path)).toBeNull();
+  });
+
+  it("states each folder's hooks, sessions and last session", async () => {
+    renderHome();
+    const folders = await screen.findByRole("list", { name: "Folders with sessions" });
+    const first = within(folders).getAllByRole("listitem")[0]!;
+
+    expect(first.textContent).toContain(DOME.name);
+    expect(first.textContent).toContain(DOME.path);
+    expect(within(first).getByText("no hooks")).toBeDefined();
+    expect(within(first).getByText("sessions").nextElementSibling?.textContent).toBe(String(DOME.sessions));
+    expect(within(first).getByText("tracked repos").nextElementSibling?.textContent).toBe("2");
+    expect(within(first).getByText("last session").nextElementSibling?.textContent).toBe(
+      formatRelative(DOME.lastSessionAt, NOW),
+    );
+
+    const hooked = within(folders).getAllByRole("listitem")[2]!;
+    expect(hooked.textContent).toContain(HARD_TALKS.name);
+    expect(within(hooked).getByText("hooks installed")).toBeDefined();
+    expect(within(hooked).getByText("registered")).toBeDefined();
+    expect(within(hooked).queryByRole("button", { name: "Install hooks" })).toBeNull();
+    expect(within(hooked).getByText("last session").nextElementSibling?.textContent).toBe("never");
+  });
+
+  it("installs hooks with POST /api/onboarding/init carrying the folder and no repo, then re-reads", async () => {
+    const inits: InitInput[] = [];
+    let hooked = false;
+    const source = Object.assign(Object.create(createSource("fixture")) as AppSource, {
+      workspaces: () => Promise.resolve([{ ...DOME, hooksInstalled: hooked }]),
+      initRepos: (input: InitInput) => {
+        inits.push(input);
+        hooked = true;
+        return Promise.resolve({ results: [], workspaces: [{ path: DOME.path, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] }] });
+      },
+    });
+    renderHome(source);
+
+    const button = await screen.findByRole("button", { name: "Install hooks" });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect(inits).toEqual([{ repos: [], workspaces: [DOME.path] }]);
+    // The re-read replaces the action with the installed badge; nothing needs a reload.
+    expect(await screen.findByText("hooks installed")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Install hooks" })).toBeNull();
+  });
+
+  it("reports a failed install beside the folder and leaves the rest of Home alone", async () => {
+    const source = withWorkspaces([DOME], () => Promise.reject(new Error("hook file is read-only")));
+    renderHome(source);
+    const button = await screen.findByRole("button", { name: "Install hooks" });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("hook file is read-only");
+    expect(screen.getByRole("list", { name: "Projects" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Install hooks" })).toBeDefined();
+  });
+
+  it("drops the whole group on a machine whose sessions all start inside repos", async () => {
+    renderHome(withWorkspaces([]));
+    await screen.findByRole("list", { name: "Projects" });
+    expect(screen.queryByRole("heading", { name: "Folders with sessions" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Folders with sessions" })).toBeNull();
+  });
+
+  it("reports a folder read that failed rather than hiding the group", async () => {
+    const broken = Object.assign(Object.create(createSource("fixture")) as AppSource, {
+      workspaces: () => Promise.reject(new Error("index is locked")),
+    });
+    renderHome(broken);
+    await screen.findByRole("heading", { name: "Folders with sessions" });
+    expect((await screen.findByRole("alert")).textContent).toContain("index is locked");
+  });
+
+  it("renders Home against a source from before amendment 12 with no folder group", async () => {
+    const older = Object.assign(Object.create(createSource("fixture")) as AppSource, { workspaces: undefined });
+    renderHome(older);
+    await screen.findByRole("list", { name: "Projects" });
+    expect(screen.queryByRole("heading", { name: "Folders with sessions" })).toBeNull();
   });
 });
 

@@ -14,6 +14,21 @@ export function needsRepair(session: ParsedSession): boolean {
   return session.frontmatter.status === "crashed" || session.frontmatter.needs_repair;
 }
 
+/**
+ * The open sessions first, then the rest, each newest first (amendment 11: no Open/All tabs —
+ * "simply show the open ledgers at the top").
+ *
+ * A stable partition rather than a sort key, so the newest-first order `useLiveSessions` already
+ * imposed survives inside each half, and so a session that ends while the page is open moves down
+ * the list rather than out of it.
+ */
+export function openFirst(sessions: ParsedSession[]): ParsedSession[] {
+  const open = sessions.filter((session) => session.frontmatter.status === "open");
+  return open.length === 0 || open.length === sessions.length
+    ? sessions
+    : [...open, ...sessions.filter((session) => session.frontmatter.status !== "open")];
+}
+
 /** True when the keystroke belongs to whatever the user is typing in, not to the list. */
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -22,7 +37,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * The card list, newest first, with the `j`/`k` navigation of design spec §8.
+ * The card list, in the order it is handed ({@link openFirst} for the Ledger), with the `j`/`k`
+ * navigation of design spec §8.
  *
  * `j` and `k` move a cursor down and up and focus that card; `Enter` opens it. Focus and the cursor
  * are kept in step in both directions — tabbing onto a card makes it the cursor — so the keyboard
@@ -71,7 +87,7 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
   }, [sessions, repo]);
 
   return (
-    <ul className="flex flex-col gap-3" aria-label="Sessions, newest first">
+    <ul className="flex flex-col gap-3" aria-label="Sessions, open first then newest first">
       {sessions.map((session, index) => (
         <li key={session.frontmatter.id} className="flex flex-col gap-2">
           <SessionCard

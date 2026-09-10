@@ -49,6 +49,7 @@ import type {
   RunResult,
   ScanSummary,
   SourceCapabilities,
+  Workspace,
 } from "./types.js";
 
 import { globalEventSource, subscribeSse } from "./events.js";
@@ -209,6 +210,11 @@ export class LocalServerSource implements LedgerSource, MachineSource, Onboardin
 
   status(): Promise<OnboardingStatus> {
     return this.#getMachine<OnboardingStatus>("/api/onboarding/status");
+  }
+
+  /** Amendment 12. Machine-wide and a plain read, so no `?repo=` and no write guard. */
+  workspaces(): Promise<Workspace[]> {
+    return this.#getMachine<Workspace[]>("/api/workspaces");
   }
 
   // --- LedgerSource ---------------------------------------------------------------------------

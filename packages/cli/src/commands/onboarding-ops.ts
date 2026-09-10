@@ -17,6 +17,7 @@ import { backfillPlan, drainOnboardingBackfill, onboardingStatus, queueOnboardin
 import { discoverRepos } from "../onboarding/discover.js";
 import { historyWindows } from "../onboarding/history.js";
 import { initRepos } from "../onboarding/init.js";
+import { listWorkspaces } from "../onboarding/workspaces.js";
 import type { OnboardingIo } from "../onboarding/io.js";
 import type { ServeIo } from "./serve.js";
 import type { OnboardingMethod, OnboardingOps } from "@workledger/server";
@@ -57,5 +58,6 @@ export function onboardingOps(
       return { jobs: queued.jobs };
     },
     status: () => onboardingStatus(oio),
+    workspaces: () => listWorkspaces(oio),
   };
 }

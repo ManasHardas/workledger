@@ -349,8 +349,8 @@ test.describe("onboarding, full system", () => {
       await page.goto(`${fixture.url}/#/`);
       await page.getByRole("link", { name, exact: true }).click();
       await expect(page).toHaveURL(/#\/r\/[^/]+\/ledger$/);
-      // The Ledger opens on the "Open" scope; a backfilled session is `repaired`, so it is under "All".
-      await page.getByRole("tab", { name: "All" }).click();
+      // Amendment 11: one list, no scope tabs — the `repaired` session is on screen at once.
+      await expect(page.getByRole("tab")).toHaveCount(0);
       const card = page.getByRole("link", { name: GOAL });
       await expect(card).toBeVisible();
       await expect(card).toContainText("repaired");

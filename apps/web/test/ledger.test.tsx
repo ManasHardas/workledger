@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TRANSCRIPT_NOTICE } from "../src/features/ledger/provenance-panel.js";
 import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { createSource } from "../src/lib/ledger-source.js";
-import type { LedgerEvent, LedgerSource, SessionQuery } from "../src/lib/ledger-source.js";
+import type { LedgerEvent, LedgerSource, ParsedSession, SessionQuery } from "../src/lib/ledger-source.js";
 import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
+import { openFirst } from "../src/features/ledger/session-list.js";
 import { LedgerView } from "../src/routes/ledger.js";
 
 /** The first fixture repo: the Ledger's links and detail route live under `#/r/<id>/ledger`. */
@@ -51,10 +52,8 @@ function renderLedger(source: LedgerSource = createSource("fixture")) {
   );
 }
 
-/** The Ledger opens on the "Open" scope; most assertions want every fixture session. */
-function showAll() {
-  fireEvent.mouseDown(screen.getByRole("tab", { name: "All" }));
-}
+/** Amendment 11: one list, no scope tabs — every session is on screen from the first render. */
+const SESSION_LIST = /Sessions, open first/;
 
 beforeEach(() => {
   window.location.hash = `#/r/${REPO}/ledger`;
@@ -63,11 +62,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ledger list", () => {
-  it("renders a card per fixture session, newest first", async () => {
+  it("renders a card per fixture session, newest first, with no Open/All tabs (amendment 11)", async () => {
     renderLedger();
-    showAll();
 
-    const list = await screen.findByRole("list", { name: /Sessions, newest first/ });
+    expect(screen.queryAllByRole("tab")).toEqual([]);
+    expect(screen.queryByRole("tablist")).toBeNull();
+
+    const list = await screen.findByRole("list", { name: SESSION_LIST });
     const cards = within(list).getAllByRole("listitem");
     expect(cards).toHaveLength(FIXTURE_SESSIONS.length);
 
@@ -98,7 +99,6 @@ describe("ledger list", () => {
   it("filters the list through listSessions({ q })", async () => {
     const { source, reads } = liveSource();
     renderLedger(source);
-    showAll();
     await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), {
@@ -112,12 +112,15 @@ describe("ledger list", () => {
 
   it("offers author, harness, status and since filters", async () => {
     renderLedger();
-    showAll();
-    await screen.findByRole("list", { name: /Sessions, newest first/ });
+    await screen.findByRole("list", { name: SESSION_LIST });
 
     for (const label of ["Author", "Harness", "Status", "Since"]) {
-      expect(screen.getByLabelText(label)).toBeDefined();
+      const control = screen.getByLabelText(label);
+      expect(control).toBeDefined();
+      // No scope tab pins the status any more; every filter is the operator's to set.
+      expect((control as HTMLSelectElement).disabled).toBe(false);
     }
+    expect((screen.getByLabelText("Status") as HTMLSelectElement).value).toBe("");
     fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "cursor" } });
     expect(
       await screen.findByText(/No sessions match/),
@@ -126,7 +129,6 @@ describe("ledger list", () => {
 
   it("moves between cards with j/k and opens the focused one with Enter", async () => {
     renderLedger();
-    showAll();
     await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.keyDown(window, { key: "j" });
@@ -146,7 +148,7 @@ describe("ledger list", () => {
 
   it("leaves j and k alone while the search box has focus", async () => {
     renderLedger();
-    await screen.findByRole("list", { name: /Sessions, newest first/ });
+    await screen.findByRole("list", { name: SESSION_LIST });
     const search = screen.getByRole("searchbox", { name: "Search sessions" });
     search.focus();
 
@@ -172,6 +174,54 @@ describe("ledger list", () => {
       emit({ type: "backlog.changed", id: "WL-01JBQ50R6TT4YB8H2ZC3D9KQ7M" });
     });
     expect(reads.length).toBe(afterSession);
+  });
+});
+
+/**
+ * Amendment 11's ordering, on a ledger where it is visible: an *ended* session started later than
+ * the open one. Newest-first alone would bury the running session; open-first must not.
+ */
+describe("open sessions first, then the rest (amendment 11)", () => {
+  const NEWER_ENDED: ParsedSession = {
+    ...ENDED_SESSION,
+    goal: "an ended session started after the open one",
+    frontmatter: { ...ENDED_SESSION.frontmatter, id: "01JBQZZZZZZZZZZZZZZZZZZZZZ", started: "2026-09-09T23:00:00Z" },
+  };
+  const OLDER_OPEN: ParsedSession = {
+    ...OPEN_SESSION,
+    frontmatter: { ...OPEN_SESSION.frontmatter, started: "2026-09-09T08:02:00Z" },
+  };
+
+  it("partitions without disturbing the newest-first order inside either half", () => {
+    expect(openFirst([NEWER_ENDED, OLDER_OPEN]).map((s) => s.frontmatter.id)).toEqual([
+      OLDER_OPEN.frontmatter.id,
+      NEWER_ENDED.frontmatter.id,
+    ]);
+    // All open, or none open: the list is handed back untouched.
+    expect(openFirst([OLDER_OPEN])).toEqual([OLDER_OPEN]);
+    expect(openFirst([NEWER_ENDED])).toEqual([NEWER_ENDED]);
+    expect(openFirst([])).toEqual([]);
+  });
+
+  it("puts the open session at the top of the one list, and j lands on it first", async () => {
+    const base = createSource("fixture");
+    const source = Object.assign(Object.create(base) as LedgerSource, {
+      listSessions: () => Promise.resolve([NEWER_ENDED, OLDER_OPEN]),
+    });
+    renderLedger(source);
+
+    const list = await screen.findByRole("list", { name: SESSION_LIST });
+    const cards = within(list).getAllByRole("listitem");
+    expect(cards.map((card) => card.textContent)).toEqual([
+      expect.stringContaining(OLDER_OPEN.goal!),
+      expect.stringContaining(NEWER_ENDED.goal!),
+    ]);
+
+    // The keyboard cursor walks the list as rendered, so `j` reaches the open session first.
+    fireEvent.keyDown(window, { key: "j" });
+    expect(document.activeElement?.getAttribute("href")).toBe(
+      `#/r/${REPO}/ledger/${OLDER_OPEN.frontmatter.id}`,
+    );
   });
 });
 
