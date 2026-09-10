@@ -44,9 +44,12 @@ export type {
   Health,
   Identity,
   Job,
+  JobAcrossRepos,
   LedgerEvent,
   LedgerSource,
   Line,
+  MachineSource,
+  NoteAcrossRepos,
   NoteBy,
   NoteLine,
   NoteRef,
@@ -54,6 +57,7 @@ export type {
   ParsedSession,
   Priority,
   RemainingLine,
+  Repo,
   ScanSummary,
   SessionFrontmatter,
   SessionQuery,
@@ -63,7 +67,7 @@ export type {
   Verified,
 } from "./types.js";
 
-import type { LedgerSource } from "./types.js";
+import type { LedgerSource, MachineSource } from "./types.js";
 import type { LocalServerSourceOptions } from "./local-server-source.js";
 
 import { ApiClientError } from "./errors.js";
@@ -73,8 +77,12 @@ import { LocalServerSource } from "./local-server-source.js";
  * The factory `apps/web` calls. `kind` is a string rather than a class so that swapping a Dome
  * card in for the local server later is a one-word change in the app and no change at all in a
  * view (ledger-source.md).
+ *
+ * The result is both a `LedgerSource` (over `opts.repo`, or the server's one repo) and a
+ * `MachineSource` (P8: `listRepos`, the aggregates, `forRepo`), so a Home view and a per-repo
+ * view are built from the same call.
  */
-export function createSource(kind: "local", opts: LocalServerSourceOptions): LedgerSource {
+export function createSource(kind: "local", opts: LocalServerSourceOptions): LedgerSource & MachineSource {
   if (kind !== "local") {
     throw new ApiClientError("unknown-source", `unknown LedgerSource kind: ${String(kind)}`);
   }

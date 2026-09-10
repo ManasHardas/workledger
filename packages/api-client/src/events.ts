@@ -85,22 +85,24 @@ export function toLedgerEvent(name: string, data: string): LedgerEvent | undefin
     return undefined;
   }
   const record = payload === null || typeof payload !== "object" ? {} : (payload as Record<string, unknown>);
+  // P8's stamp, passed through when present so a scoped source can filter on it.
+  const stamp = typeof record["repo"] === "string" ? { repo: record["repo"] } : {};
   if (name === "session.changed") {
     const ulid = record["ulid"];
-    return typeof ulid === "string" ? { type: "session.changed", ulid } : undefined;
+    return typeof ulid === "string" ? { type: "session.changed", ulid, ...stamp } : undefined;
   }
   if (name === "backlog.changed") {
     const id = record["id"];
-    return typeof id === "string" ? { type: "backlog.changed", id } : undefined;
+    return typeof id === "string" ? { type: "backlog.changed", id, ...stamp } : undefined;
   }
   if (name === "job.changed") {
     const id = record["id"];
     const status = record["status"];
     return typeof id === "string" && typeof status === "string"
-      ? { type: "job.changed", id, status }
+      ? { type: "job.changed", id, status, ...stamp }
       : undefined;
   }
-  return name === "notes.changed" ? { type: "notes.changed" } : { type: "health.changed" };
+  return name === "notes.changed" ? { type: "notes.changed", ...stamp } : { type: "health.changed", ...stamp };
 }
 
 /**

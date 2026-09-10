@@ -215,6 +215,21 @@ export const FIXTURE_NOTES: NoteRef[] = [
 export const FIXTURE_HEALTH: Health = {
   cli: "0.0.1",
   repo: REPO,
+  // P8: the served repos ride along on every health report. The fixture is one repo.
+  repos: [
+    {
+      id: "0123456789ab",
+      path: REPO,
+      name: "workledger",
+      enabled: true,
+      harnesses: ["claude-code"],
+      sessions7d: 3,
+      openBacklog: 4,
+      openNotes: 2,
+      lastHookAt: "2026-09-09T08:02:00Z",
+      health: "ok",
+    },
+  ],
   // `DoctorEntry` is `workledger doctor`'s harness probe verbatim (api.md §Read models).
   harnesses: [
     {
