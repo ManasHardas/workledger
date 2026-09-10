@@ -165,6 +165,13 @@ export interface HarnessAdapter {
    * wait. Pure; `now` is the caller's clock so the reset instant is testable.
    */
   detectUsageLimit?(output: string, now: Date): UsageLimit | undefined;
+
+  /**
+   * Whether a resume's output says the harness has no session by that id where it was run —
+   * #114. Optional for the same reason as {@link HarnessAdapter.detectUsageLimit}: only a harness
+   * whose wording is known can answer it. Pure.
+   */
+  detectSessionNotFound?(output: string): boolean;
 }
 
 /** A non-empty string field, or `undefined` for anything else (including a wrong type). */

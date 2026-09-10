@@ -87,7 +87,19 @@ export const claudeCodeAdapter: HarnessAdapter = {
   // "You've hit your session limit · resets 1am (America/Los_Angeles)" and its siblings — the
   // one exit 1 a repair must wait out rather than report (#100).
   detectUsageLimit,
+
+  detectSessionNotFound,
 };
+
+/**
+ * "No conversation found with session ID: <id>" — what `claude --resume` prints when the
+ * directory it is run in has no session by that id (#114). Claude Code keeps sessions per
+ * project slug of the working directory, so this is the resume having been spawned somewhere
+ * other than where the session was started, not a session that is gone.
+ */
+export function detectSessionNotFound(output: string): boolean {
+  return /No conversation found with session ID/i.test(output);
+}
 
 /**
  * `claude -p <instruction> --resume <id> --allowedTools "Bash(workledger checkpoint*)"`.

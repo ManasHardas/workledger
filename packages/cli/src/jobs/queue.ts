@@ -56,6 +56,13 @@ export interface JobRow {
 export const USAGE_LIMIT_CODE = "harness-usage-limit";
 
 /**
+ * The `error_code` of a resume the harness answered "No conversation found with session ID"
+ * (#114): the harness looks a session up by the directory it is run in, and the directory the
+ * job tried is not where the session was started. The job's `error` names that directory.
+ */
+export const SESSION_NOT_FOUND_CODE = "session-not-found";
+
+/**
  * How many usage-window waits one job may take before it is failed for good.
  *
  * Three, like {@link MAX_ATTEMPTS}: a window that has reset three times without the resume

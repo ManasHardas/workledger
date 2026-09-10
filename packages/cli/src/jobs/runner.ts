@@ -25,6 +25,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   MAX_RUNNING_MACHINE,
   MAX_USAGE_WAITS,
+  SESSION_NOT_FOUND_CODE,
   USAGE_LIMIT_CODE,
   claimJob,
   completeJob,
@@ -52,7 +53,7 @@ export interface JobResult extends JobOutcome {
    * With {@link JobResult.retryAfter} it turns a failure into a wait: the runner puts the row
    * back with that instant instead of failing it.
    */
-  code?: typeof USAGE_LIMIT_CODE | undefined;
+  code?: typeof USAGE_LIMIT_CODE | typeof SESSION_NOT_FOUND_CODE | undefined;
   /** ISO instant the window resets; required for the wait, ignored without the code. */
   retryAfter?: string | undefined;
   /**
@@ -180,7 +181,8 @@ async function runOne(
     });
     return "failed";
   }
-  failJob(db, job.id, now, outcome);
+  // Any other code names the failure for the Jobs card; `errorCode` is what the row stores.
+  failJob(db, job.id, now, { ...outcome, errorCode: result.code });
   return "failed";
 }
 
