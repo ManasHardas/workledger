@@ -84,6 +84,9 @@ function openSession(
     status: "open",
     transcript_path: transcript,
     turns_since_checkpoint: options.turnsSince ?? 3,
+    // A row last touched an hour ago: old enough that a missing transcript counts, so the
+    // "transcript-missing" cases below are testing the file check and not the age floor.
+    updated_at: new Date(NOW.getTime() - 60 * 60_000).toISOString(),
   });
   for (let n = 1; n <= (options.checkpoints ?? 0); n += 1) {
     db.insertCheckpoint({
@@ -146,6 +149,26 @@ describe("runScan", () => {
 
     expect(result.orphans[0]).toMatchObject({ reason: "transcript-missing", idleMinutes: null });
     expect(result.queued).toBe(1);
+  });
+
+  it("leaves a session whose transcript has not been written yet alone", async () => {
+    // What `SessionStart` leaves behind: the path the harness reported, and no file at it. The
+    // e2e caught the sweep calling this crashed on the very hook that opened the session.
+    openSession("S1", { idleMinutes: null });
+    db.updateSession("S1", { updated_at: NOW.toISOString() });
+
+    expect((await scan()).orphans).toEqual([]);
+    expect(db.getSessionByUlid("S1")?.status).toBe("open");
+  });
+
+  it("never sweeps the session a SessionStart sweep was triggered by", async () => {
+    openSession("S1", { idleMinutes: 90 });
+    openSession("S2", { idleMinutes: 90 });
+
+    const result = await scan({ skipUlid: "S1" });
+
+    expect(result.orphans.map((orphan) => orphan.ulid)).toEqual(["S2"]);
+    expect(db.getSessionByUlid("S1")?.status).toBe("open");
   });
 
   it("leaves a session whose transcript is still fresh alone", async () => {

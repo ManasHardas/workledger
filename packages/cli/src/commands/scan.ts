@@ -54,6 +54,12 @@ export interface ScanIo {
   newId: () => string;
   /** Cap on how many sessions one sweep examines; the opportunistic caller passes 20. */
   limit?: number | undefined;
+  /**
+   * A session to leave alone — the one whose `SessionStart` triggered an opportunistic sweep.
+   * It is by definition alive, and it is the session least likely to have a transcript on disk
+   * yet, so it is also the one a naive sweep would call crashed first.
+   */
+  skipUlid?: string | undefined;
   /** Wall-clock budget; the opportunistic caller passes 200 ms. Checked between sessions. */
   budgetMs?: number | undefined;
 }
@@ -68,6 +74,13 @@ function mtimeMs(file: string | null): number | undefined {
   }
 }
 
+/** Whole minutes since an ISO instant, or `undefined` when it cannot be read. */
+function minutesSince(iso: string | null, now: Date): number | undefined {
+  if (iso === null) return undefined;
+  const at = Date.parse(iso);
+  return Number.isNaN(at) ? undefined : (now.getTime() - at) / 60_000;
+}
+
 /**
  * Whether one open session is an orphan, and why.
  *
@@ -76,6 +89,11 @@ function mtimeMs(file: string | null): number | undefined {
  * The second clause is what keeps the sweep off a session that is merely idle *and* fully
  * described — there is nothing for a repair to recover from a session whose every turn is
  * already in the ledger.
+ *
+ * "Missing" is held to the same clock as "stale", measured against the index row's `updated_at`
+ * because a file that is not there has no mtime of its own. Without that, a session would be
+ * declared crashed during its own `SessionStart`: the hook records the transcript path the
+ * harness reports, and the harness has not written the file yet. The e2e found exactly that.
  */
 export function classifyOrphan(
   session: SessionRow,
@@ -85,6 +103,8 @@ export function classifyOrphan(
 
   const mtime = mtimeMs(session.transcript_path);
   if (mtime === undefined) {
+    const age = minutesSince(session.updated_at, options.now);
+    if (age !== undefined && age < options.orphanMinutes) return undefined;
     return { ulid: session.ulid, reason: "transcript-missing", idleMinutes: null, jobId: null };
   }
   const idleMinutes = (options.now.getTime() - mtime) / 60_000;
@@ -116,6 +136,7 @@ export async function runScan(io: ScanIo): Promise<ScanResult> {
   const { parseFrontmatter, stringifyFrontmatter } = await import("@workledger/core/frontmatter");
 
   for (const session of open) {
+    if (session.ulid === io.skipUlid) continue;
     if (result.examined >= limit) break;
     // Between sessions rather than inside one: a half-marked session — frontmatter written, row
     // not updated — is the one state this sweep must never leave behind.

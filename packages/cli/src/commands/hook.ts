@@ -207,7 +207,7 @@ async function sessionStart(ctx: Context): Promise<number> {
     }
   }
 
-  await opportunisticScan(ctx);
+  await opportunisticScan(ctx, ulid);
   return EXIT_OK;
 }
 
@@ -228,7 +228,7 @@ export const OPPORTUNISTIC_SCAN_MS = 200;
  * brief has already been written to stdout, and this catch. A hook that failed here would wedge
  * a session over bookkeeping for sessions that are already over.
  */
-async function opportunisticScan(ctx: Context): Promise<void> {
+async function opportunisticScan(ctx: Context, ulid: string): Promise<void> {
   try {
     const { newSessionId } = await import("@workledger/core/ids");
     const { runScan } = await import("./scan.js");
@@ -239,6 +239,8 @@ async function opportunisticScan(ctx: Context): Promise<void> {
       newId: newSessionId,
       limit: OPPORTUNISTIC_SCAN_LIMIT,
       budgetMs: OPPORTUNISTIC_SCAN_MS,
+      // The session this hook is starting is alive by construction.
+      skipUlid: ulid,
     });
   } catch (error) {
     ctx.io.stderr(`workledger: hook SessionStart: scan skipped (${describe(error)})`);
