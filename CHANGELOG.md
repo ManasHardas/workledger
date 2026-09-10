@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — P3 Recovery and backfill, P4 Codex and Cursor (2026-09-09)
+
+- `workledger scan`: orphaned sessions (transcript idle past `orphan_minutes`) become `crashed` with a queued repair; runs opportunistically at SessionStart and every 5 minutes under `serve`.
+- `workledger repair <ulid>`: headless resume of the harness session asking for a checkpoint since the last one (`trigger: repair`); detached process-group kill on timeout; `--extract` falls back to an API model over the transcript slice only with explicit consent and a printed cost estimate; the API key is read from the environment per request and never stored.
+- `workledger backfill --since 7d|14d|30d|all`: metadata-only enumeration of the harness store, an estimate table, `--dry-run`, consent, resumable job queue with concurrency, `source: backfill` sessions.
+- `workledger jobs`: list, cancel, retry; the server exposes jobs, `job.changed` over SSE, and a per-checkpoint transcript excerpt endpoint (turns with tool counts, cached locally, never in the repo).
+- Web: Jobs view with scan, repair, and backfill actions behind the consent dialog; provenance excerpt viewer in session detail.
+- Harnesses: Codex (`.codex/hooks.json`, `codex exec resume` for repair) and Cursor (`.cursor/hooks.json`, `followup_message` block, `user_email` as author, repair by extraction only); `workledger hook … --harness`, `init` and `doctor` cover all three.
+- Proven end to end: a Claude Code session killed at its first tool call is marked crashed by `scan` and repaired by resume; three fixture sessions backfill and are skipped on re-run; a Codex session records a checkpoint from the block instruction.
+
 ## 0.1.0 — P2 Local UI (2026-09-09)
 
 - `workledger serve`: local Hono server on loopback with a file watcher and server-sent events,

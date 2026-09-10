@@ -1,6 +1,6 @@
 {
   "name": "workledger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Local observer for coding-agent sessions: checkpoint digests, ledger, backlog.",
   "license": "MIT",

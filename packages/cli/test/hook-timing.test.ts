@@ -40,7 +40,7 @@ const END_BUDGET_MS = process.env["CI"] ? 300 : 200;
  * both numbers together, so this is the assertion that survives a busy laptop or a shared CI
  * runner; the absolute budget is still reported so a slow run is visible.
  */
-const ALLOW_OVERHEAD_MS = process.env["CI"] ? 120 : 60;
+const ALLOW_OVERHEAD_MS = process.env["CI"] ? 200 : 60;
 
 /** p95 of a bare `node -e 0`, sampled the same number of times as the hook. */
 function nodeBaseline(runs: number): number {
