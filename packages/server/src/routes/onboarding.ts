@@ -13,8 +13,16 @@
 import { Hono } from "hono";
 
 import { ApiError, badRequest, toApiError } from "../errors.js";
-import { ONBOARDING_METHODS, ONBOARDING_WINDOWS, isOnboardingRefusal } from "../onboarding.js";
+import {
+  ONBOARDING_METHODS,
+  ONBOARDING_WINDOWS,
+  REFUSAL_STATUS,
+  isOnboardingRefusal,
+  repoPathProblem,
+  rootPathProblem,
+} from "../onboarding.js";
 import { readBody, readBoolean, rejectUnknown } from "./body.js";
+import type { MiddlewareHandler } from "hono";
 import type { OnboardingMethod, OnboardingOps, OnboardingWindow, PlanInput, RunInput } from "../onboarding.js";
 
 /** What the onboarding routes need from `createApp`. */
@@ -37,19 +45,69 @@ function readCsv(raw: string | undefined): string[] | undefined {
   return items.length === 0 ? undefined : items;
 }
 
-/** A non-empty array of non-empty strings. */
-function readPaths(body: Record<string, unknown>, field: string): string[] {
-  const value = body[field];
+/**
+ * A non-empty array of repo paths, each one a real git repository.
+ *
+ * Checked at the route as well as in the op, because the two guard different callers: the op
+ * protects `workledger onboard`, this protects the loopback listener from a body that names a
+ * directory `init` would otherwise scaffold hook files into.
+ */
+function readRepos(body: Record<string, unknown>): string[] {
+  const value = body["repos"];
   if (!Array.isArray(value) || value.length === 0) {
-    throw badRequest(`${field} must be a non-empty array of paths`);
+    throw badRequest("repos must be a non-empty array of paths");
   }
   for (const item of value) {
     if (typeof item !== "string" || item.trim() === "") {
-      throw badRequest(`${field} must hold non-empty strings`);
+      throw badRequest("repos must hold non-empty strings");
     }
+    const problem = repoPathProblem(item);
+    if (problem !== undefined) throw new ApiError(400, "invalid-repo", problem);
   }
   return value as string[];
 }
+
+/** `?roots=` entries, each an absolute existing directory. */
+function readRoots(raw: string | undefined): string[] | undefined {
+  const roots = readCsv(raw);
+  for (const root of roots ?? []) {
+    const problem = rootPathProblem(root);
+    if (problem !== undefined) throw new ApiError(400, "invalid-root", problem);
+  }
+  return roots;
+}
+
+/** `Origin`'s host, or `undefined` for an absent or unparseable header. */
+function originHost(origin: string | undefined): string | undefined {
+  if (origin === undefined) return undefined;
+  try {
+    return new URL(origin).host;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The write guard for `/api/onboarding/*`.
+ *
+ * The listener binds loopback, which keeps the network out but not the browser: any page the
+ * operator has open can `fetch("http://127.0.0.1:7419/api/onboarding/init", { method: "POST" })`
+ * and, without this, enable repos on their machine. Two checks close that. A request that
+ * carries an `Origin` must carry the server's own — the host the request was addressed to — and
+ * a body must declare itself JSON, which a cross-site HTML form cannot. No `Origin` at all is
+ * `curl`, the CLI, or a same-origin navigation, and is allowed.
+ */
+export const onboardingWriteGuard: MiddlewareHandler = async (c, next) => {
+  const origin = originHost(c.req.header("origin"));
+  if (origin !== undefined && origin !== c.req.header("host")) {
+    throw new ApiError(403, "forbidden-origin", "cross-origin requests to /api/onboarding are refused");
+  }
+  const type = c.req.header("content-type") ?? "";
+  if (!/^application\/json(?:\s*;|$)/i.test(type.trim())) {
+    throw new ApiError(415, "content-type-required", "POST /api/onboarding/* needs content-type: application/json");
+  }
+  await next();
+};
 
 /** An optional array of harness names. */
 function readHarnesses(body: Record<string, unknown>): string[] | undefined {
@@ -77,7 +135,7 @@ function readChoice<T extends string>(
 /** The three fields `plan` and `run` share. */
 function readPlan(body: Record<string, unknown>): PlanInput {
   return {
-    repos: readPaths(body, "repos"),
+    repos: readRepos(body),
     since: readChoice<OnboardingWindow>(body, "since", ONBOARDING_WINDOWS),
     method: readChoice<OnboardingMethod>(body, "method", ONBOARDING_METHODS),
   };
@@ -88,7 +146,7 @@ async function call<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    if (isOnboardingRefusal(error)) throw new ApiError(409, error.code, error.message);
+    if (isOnboardingRefusal(error)) throw new ApiError(REFUSAL_STATUS[error.code], error.code, error.message);
     throw toApiError(error);
   }
 }
@@ -96,22 +154,27 @@ async function call<T>(run: () => Promise<T>): Promise<T> {
 /** `/api/onboarding/{discover,history,init,plan,run,status}`. */
 export function onboardingRoutes(deps: OnboardingRouteDeps): Hono {
   const api = new Hono();
+  api.on("POST", "/onboarding/*", onboardingWriteGuard);
 
   api.get("/onboarding/discover", async (c) => {
-    const roots = readCsv(c.req.query("roots"));
+    const roots = readRoots(c.req.query("roots"));
     return c.json(await call(() => deps.ops.discover(roots)));
   });
 
   api.get("/onboarding/history", async (c) => {
     const repos = readCsv(c.req.query("repos"));
     if (repos === undefined) throw badRequest("repos is required: a comma-separated list of paths");
+    for (const repo of repos) {
+      const problem = repoPathProblem(repo);
+      if (problem !== undefined) throw new ApiError(400, "invalid-repo", problem);
+    }
     return c.json(await call(() => deps.ops.history(repos)));
   });
 
   api.post("/onboarding/init", async (c) => {
     const body = await readBody(c);
     rejectUnknown(body, ["repos", "harnesses"]);
-    const repos = readPaths(body, "repos");
+    const repos = readRepos(body);
     const harnesses = readHarnesses(body);
     const result = await call(() =>
       deps.ops.init(harnesses === undefined ? { repos } : { repos, harnesses }),

@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { configFile } from "../config.js";
 import { findRepoRoot } from "../ledger-fs.js";
+import { assertRootPaths } from "./repo-path.js";
 import { claudeProjects, codexSessions, isDirectory } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
 import type { DiscoverResult, RepoCandidate } from "@workledger/server";
@@ -30,12 +31,12 @@ function skipped(name: string): boolean {
   return name === "node_modules" || name.startsWith(".");
 }
 
-/** A `~`-rooted or relative root, made absolute. */
-function resolveRoot(root: string, io: OnboardingIo): string {
+/** A `~`-rooted root, expanded. Anything else is taken as given and must already be absolute. */
+function expandRoot(root: string, io: OnboardingIo): string {
   const trimmed = root.trim();
   if (trimmed === "~") return io.homeDir;
   if (trimmed.startsWith("~/")) return path.join(io.homeDir, trimmed.slice(2));
-  return path.resolve(io.cwd, trimmed);
+  return trimmed;
 }
 
 /** A candidate with no session counts yet. */
@@ -81,7 +82,9 @@ function walkRoot(root: string, into: (repo: string) => void): void {
 
 /** The step, over the stores under `io.homeDir` and the given (or default) roots. */
 export function discoverRepos(options: { roots?: string[] | undefined }, io: OnboardingIo): DiscoverResult {
-  const roots = (options.roots ?? []).map((root) => resolveRoot(root, io));
+  // The default root may be absent (a machine with no `~/Projects`) and is simply empty; a root
+  // the caller named has to be an absolute existing directory (`./repo-path.ts`).
+  const roots = assertRootPaths((options.roots ?? []).map((root) => expandRoot(root, io)));
   if (roots.length === 0) roots.push(path.join(io.homeDir, DEFAULT_ROOT));
 
   const known = new Map<string, RepoCandidate>();

@@ -14,8 +14,6 @@
  * `consent: true`, and `run` with method `extract` when `ANTHROPIC_API_KEY` is absent. Both are
  * raised *before* a row is written.
  */
-import path from "node:path";
-
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
 import { BacklogOpError } from "../backlog-ops.js";
 import {
@@ -30,13 +28,13 @@ import { estimateExtraction } from "../extract/run.js";
 import { enqueueJob } from "../jobs/queue.js";
 import { isEnabled } from "../ledger-fs.js";
 import { withIndex } from "./io.js";
+import { OnboardingRefusalError, assertRepoPaths } from "./repo-path.js";
 import type { BackfillIo, BackfillPlan } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
 import type { OnboardingIo } from "./io.js";
 import type {
   Job,
   OnboardingMethod,
-  OnboardingRefusalCode,
   OnboardingStatus,
   PlanInput,
   PlanResult,
@@ -44,19 +42,11 @@ import type {
   RunResult,
 } from "@workledger/server";
 
-/** The `source` every job the wizard queues carries (migration `0003_job_source`). */
+// Re-exported so the tests and the CLI keep one import path for the refusal.
+export { OnboardingRefusalError } from "./repo-path.js";
+
+/** The `source` every job the wizard queues carries (migration `0004_job_source`). */
 export const ONBOARDING_SOURCE = "onboarding";
-
-/** A refusal the route answers with 409 and the code, verbatim. */
-export class OnboardingRefusalError extends Error {
-  readonly code: OnboardingRefusalCode;
-
-  constructor(code: OnboardingRefusalCode, message: string) {
-    super(message);
-    this.name = "OnboardingRefusalError";
-    this.code = code;
-  }
-}
 
 /** `ANTHROPIC_API_KEY`, or `undefined` for absent and empty alike. */
 function apiKey(io: OnboardingIo): string | undefined {
@@ -76,8 +66,7 @@ interface RepoPlan {
 /** The P3 plan for each repo, in the wizard's window. */
 async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promise<RepoPlan[]> {
   const plans: RepoPlan[] = [];
-  for (const given of input.repos) {
-    const root = path.resolve(io.cwd, given);
+  for (const root of assertRepoPaths(input.repos)) {
     const config = loadConfig(root);
     const plan = planBackfill(enumerateStore(io.homeDir, root), {
       db,
@@ -103,6 +92,7 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
 
 /** The plan step: how many sessions, and what digesting them costs by the chosen method. */
 export async function backfillPlan(input: PlanInput, io: OnboardingIo): Promise<PlanResult> {
+  assertRepoPaths(input.repos);
   if (input.since === "none") return { sessions: 0, estimate: null };
   return await withIndex(io, async (db) => {
     const plans = await planRepos(input, io, db);
@@ -159,6 +149,7 @@ async function backfillIo(db: IndexDb, root: string, io: OnboardingIo): Promise<
  * chose not to resume.
  */
 export async function queueOnboardingBackfill(input: RunInput, io: OnboardingIo): Promise<QueuedBackfill> {
+  assertRepoPaths(input.repos);
   if (input.consent !== true) {
     throw new OnboardingRefusalError(
       "consent-required",
@@ -172,8 +163,7 @@ export async function queueOnboardingBackfill(input: RunInput, io: OnboardingIo)
       `extraction calls the Anthropic API; set ${API_KEY_ENV} in the server's environment first`,
     );
   }
-  for (const given of input.repos) {
-    const root = path.resolve(io.cwd, given);
+  for (const root of assertRepoPaths(input.repos)) {
     if (!isEnabled(root)) {
       throw new BacklogOpError(`${root} is not an enabled repo; run init first`, "usage");
     }

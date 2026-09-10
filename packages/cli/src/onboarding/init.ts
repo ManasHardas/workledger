@@ -7,11 +7,13 @@
  * `workledger init --yes` writes" true by construction, including its one refusal — a repo whose
  * git identity is empty — and its idempotence: a repo that is already enabled gets its missing
  * hook files and nothing else, and reports no hook written when none was.
+ *
+ * Every path is checked first (`./repo-path.ts`): one relative or non-git entry refuses the
+ * whole request before any repo is touched, because a plain directory must never be scaffolded.
  */
-import path from "node:path";
-
 import { runInitReport } from "../commands/init.js";
 import { EXIT_OK } from "../exit-codes.js";
+import { assertRepoPaths } from "./repo-path.js";
 import type { InitIo } from "../commands/init.js";
 import type { OnboardingIo } from "./io.js";
 import type { InitInput, InitRepoResult, InitResult } from "@workledger/server";
@@ -19,8 +21,7 @@ import type { InitInput, InitRepoResult, InitResult } from "@workledger/server";
 /** The step. One repo's failure is reported in its own row and stops nothing else. */
 export async function initRepos(input: InitInput, io: OnboardingIo): Promise<InitResult> {
   const results: InitRepoResult[] = [];
-  for (const given of input.repos) {
-    const repo = path.resolve(io.cwd, given);
+  for (const repo of assertRepoPaths(input.repos)) {
     const err: string[] = [];
     const initIo: InitIo = {
       cwd: io.cwd,

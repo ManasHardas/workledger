@@ -8,6 +8,10 @@
  * the op is reached, refuses `run` without consent, and turns the op's `api-key-required` into
  * the contract's 409. The real ops are asserted in `packages/cli/test/onboarding.test.ts`.
  */
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { appFor, fakeJob, seedRepo } from "./helpers.js";
@@ -54,7 +58,7 @@ class FakeOnboardingOps implements OnboardingOps {
     });
   init = async (input: InitInput): Promise<InitResult> =>
     this.#record("init", [input], {
-      results: input.repos.map((path) => ({ path, ok: path !== "/r/bad", hooksWritten: [".claude/settings.json"], trustSteps: [] })),
+      results: input.repos.map((path) => ({ path, ok: !path.endsWith("/bad"), hooksWritten: [".claude/settings.json"], trustSteps: [] })),
     });
   plan = async (input: PlanInput): Promise<PlanResult> =>
     this.#record("plan", [input], { sessions: 3, estimate: { seconds: 68 } });
@@ -67,16 +71,26 @@ class FakeOnboardingOps implements OnboardingOps {
 let repo: TempRepo;
 let ops: FakeOnboardingOps;
 let server: ServerApp;
+/** Real directories, because the routes check the paths a body names before the op sees them. */
+let dir: string;
+let repoA: string;
+let repoBad: string;
 
 beforeEach(() => {
   repo = seedRepo();
   ops = new FakeOnboardingOps();
   server = appFor(repo, { onboarding: ops });
+  dir = mkdtempSync(path.join(os.tmpdir(), "workledger-onboarding-routes-"));
+  repoA = path.join(dir, "a");
+  repoBad = path.join(dir, "bad");
+  mkdirSync(path.join(repoA, ".git"), { recursive: true });
+  mkdirSync(path.join(repoBad, ".git"), { recursive: true });
 });
 
 afterEach(() => {
   server.close();
   repo.cleanup();
+  rmSync(dir, { recursive: true, force: true });
 });
 
 async function get(url: string): Promise<{ status: number; body: unknown }> {
@@ -84,12 +98,24 @@ async function get(url: string): Promise<{ status: number; body: unknown }> {
   return { status: response.status, body: await response.json() };
 }
 
-async function post(url: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+/** A same-origin JSON POST — what the wizard sends. `headers` overrides the defaults. */
+async function post(url: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: unknown }> {
   const response = await server.app.request(url, {
     method: "POST",
-    ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
+    headers: { "content-type": "application/json", ...headers },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: response.status, body: await response.json() };
+}
+
+/** `body.error.code`. */
+function code(body: unknown): string {
+  return (body as { error: { code: string } }).error.code;
+}
+
+/** A url-encoded `?repos=` list. */
+function q(...paths: string[]): string {
+  return encodeURIComponent(paths.join(","));
 }
 
 /** A refusal in the shape the CLI's `OnboardingRefusalError` has. */
@@ -104,8 +130,16 @@ describe("GET /api/onboarding/discover", () => {
     expect(body).toEqual(await ops.discover());
     ops.calls.length = 0;
 
-    await get("/api/onboarding/discover?roots=%2Fa%2C%20~%2Fwork%2C");
-    expect(ops.calls).toEqual([{ op: "discover", args: [["/a", "~/work"]] }]);
+    await get(`/api/onboarding/discover?roots=${q(dir, ` ${repoA}`, "")}`);
+    expect(ops.calls).toEqual([{ op: "discover", args: [[dir, repoA]] }]);
+  });
+
+  it("400s invalid-root for a relative, missing or non-directory root", async () => {
+    for (const root of ["Projects", path.join(dir, "nowhere"), path.join(dir, "file.txt")]) {
+      const { status, body } = await get(`/api/onboarding/discover?roots=${q(root)}`);
+      expect([status, code(body)]).toEqual([400, "invalid-root"]);
+    }
+    expect(ops.calls).toEqual([]);
   });
 });
 
@@ -114,19 +148,45 @@ describe("GET /api/onboarding/history", () => {
     expect((await get("/api/onboarding/history")).status).toBe(400);
     expect(ops.calls).toEqual([]);
 
-    const { status, body } = await get("/api/onboarding/history?repos=%2Fr%2Fa%2C%2Fr%2Fb");
+    const { status, body } = await get(`/api/onboarding/history?repos=${q(repoA, repoBad)}`);
     expect(status).toBe(200);
     expect((body as HistoryResult).windows["30d"]).toEqual({ sessions: 2, bytes: 20 });
-    expect(ops.calls).toEqual([{ op: "history", args: [["/r/a", "/r/b"]] }]);
+    expect(ops.calls).toEqual([{ op: "history", args: [[repoA, repoBad]] }]);
+  });
+
+  it("400s invalid-repo for a path that is not a git repository", async () => {
+    const { status, body } = await get(`/api/onboarding/history?repos=${q(repoA, "a")}`);
+    expect([status, code(body)]).toEqual([400, "invalid-repo"]);
+    expect(ops.calls).toEqual([]);
   });
 });
 
 describe("POST /api/onboarding/init", () => {
   it("initialises the listed repos and forwards harnesses", async () => {
-    const { status, body } = await post("/api/onboarding/init", { repos: ["/r/a", "/r/bad"], harnesses: ["codex"] });
+    const { status, body } = await post("/api/onboarding/init", { repos: [repoA, repoBad], harnesses: ["codex"] });
     expect(status).toBe(200);
     expect((body as InitResult).results.map((r) => r.ok)).toEqual([true, false]);
-    expect(ops.calls).toEqual([{ op: "init", args: [{ repos: ["/r/a", "/r/bad"], harnesses: ["codex"] }] }]);
+    expect(ops.calls).toEqual([{ op: "init", args: [{ repos: [repoA, repoBad], harnesses: ["codex"] }] }]);
+  });
+
+  it("400s invalid-repo for a relative path, a missing one, a plain directory and a symlink to one", async () => {
+    const plain = path.join(dir, "plain");
+    mkdirSync(plain);
+    const link = path.join(dir, "link");
+    symlinkSync(plain, link);
+    for (const given of ["a", path.join(dir, "missing"), plain, link]) {
+      // The valid repo first: the whole request is refused, not just the bad entry.
+      const bodies: Record<string, unknown> = {
+        init: { repos: [repoA, given] },
+        plan: { repos: [repoA, given], since: "7d", method: "none" },
+        run: { repos: [repoA, given], since: "7d", method: "none", consent: true },
+      };
+      for (const [route, request] of Object.entries(bodies)) {
+        const { status, body } = await post(`/api/onboarding/${route}`, request);
+        expect([route, given, status, code(body)]).toEqual([route, given, 400, "invalid-repo"]);
+      }
+    }
+    expect(ops.calls).toEqual([]);
   });
 
   it("tells the app about every repo it enabled", async () => {
@@ -136,65 +196,103 @@ describe("POST /api/onboarding/init", () => {
     const app = new Hono().route("/api", onboardingRoutes({ ops, onEnabled: (path) => void enabled.push(path) }));
     const response = await app.request("/api/onboarding/init", {
       method: "POST",
-      body: JSON.stringify({ repos: ["/r/a", "/r/bad"] }),
+      body: JSON.stringify({ repos: [repoA, repoBad] }),
       headers: { "content-type": "application/json" },
     });
     expect(response.status).toBe(200);
-    expect(enabled).toEqual(["/r/a"]);
+    expect(enabled).toEqual([repoA]);
   });
 
   it("400s an empty list, a non-string path, an unknown field and bad harnesses", async () => {
     expect((await post("/api/onboarding/init", { repos: [] })).status).toBe(400);
     expect((await post("/api/onboarding/init", { repos: [1] })).status).toBe(400);
-    expect((await post("/api/onboarding/init", { repos: ["/r/a"], nope: true })).status).toBe(400);
-    expect((await post("/api/onboarding/init", { repos: ["/r/a"], harnesses: "codex" })).status).toBe(400);
+    expect((await post("/api/onboarding/init", { repos: [repoA], nope: true })).status).toBe(400);
+    expect((await post("/api/onboarding/init", { repos: [repoA], harnesses: "codex" })).status).toBe(400);
     expect(ops.calls).toEqual([]);
   });
 });
 
 describe("POST /api/onboarding/plan", () => {
   it("forwards the three fields and returns the estimate", async () => {
-    const { status, body } = await post("/api/onboarding/plan", { repos: ["/r/a"], since: "30d", method: "resume" });
+    const { status, body } = await post("/api/onboarding/plan", { repos: [repoA], since: "30d", method: "resume" });
     expect(status).toBe(200);
     expect(body).toEqual({ sessions: 3, estimate: { seconds: 68 } });
-    expect(ops.calls).toEqual([{ op: "plan", args: [{ repos: ["/r/a"], since: "30d", method: "resume" }] }]);
+    expect(ops.calls).toEqual([{ op: "plan", args: [{ repos: [repoA], since: "30d", method: "resume" }] }]);
   });
 
   it("400s a window or method outside the contract", async () => {
-    expect((await post("/api/onboarding/plan", { repos: ["/r/a"], since: "14d", method: "resume" })).status).toBe(400);
-    expect((await post("/api/onboarding/plan", { repos: ["/r/a"], since: "7d", method: "magic" })).status).toBe(400);
-    expect((await post("/api/onboarding/plan", { repos: ["/r/a"], since: "7d" })).status).toBe(400);
+    expect((await post("/api/onboarding/plan", { repos: [repoA], since: "14d", method: "resume" })).status).toBe(400);
+    expect((await post("/api/onboarding/plan", { repos: [repoA], since: "7d", method: "magic" })).status).toBe(400);
+    expect((await post("/api/onboarding/plan", { repos: [repoA], since: "7d" })).status).toBe(400);
     expect(ops.calls).toEqual([]);
   });
 });
 
 describe("POST /api/onboarding/run", () => {
   it("answers 202 with the queued jobs once consent is given", async () => {
-    const { status, body } = await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "resume", consent: true });
+    const { status, body } = await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume", consent: true });
     expect(status).toBe(202);
     expect((body as RunResult).jobs).toHaveLength(1);
-    expect(ops.calls).toEqual([{ op: "run", args: [{ repos: ["/r/a"], since: "7d", method: "resume", consent: true }] }]);
+    expect(ops.calls).toEqual([{ op: "run", args: [{ repos: [repoA], since: "7d", method: "resume", consent: true }] }]);
   });
 
   it("refuses without consent — absent, false, or not a boolean — before the op is reached", async () => {
-    const absent = await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "resume" });
+    const absent = await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume" });
     expect(absent.status).toBe(409);
-    expect((absent.body as { error: { code: string } }).error.code).toBe("consent-required");
-    expect((await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "resume", consent: false })).status).toBe(409);
-    expect((await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "resume", consent: "true" })).status).toBe(400);
+    expect(code(absent.body)).toBe("consent-required");
+    expect((await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume", consent: false })).status).toBe(409);
+    expect((await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume", consent: "true" })).status).toBe(400);
     expect(ops.calls).toEqual([]);
   });
 
   it("turns the op's api-key-required into the contract's 409", async () => {
     ops.next = refusal("api-key-required", "extraction calls the Anthropic API; set ANTHROPIC_API_KEY first");
-    const { status, body } = await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "extract", consent: true });
+    const { status, body } = await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "extract", consent: true });
     expect(status).toBe(409);
     expect(body).toEqual({ error: { code: "api-key-required", message: expect.stringContaining("ANTHROPIC_API_KEY") as string } });
   });
 
   it("maps an ordinary op refusal onto its status", async () => {
-    ops.next = Object.assign(new Error("/r/a is not an enabled repo; run init first"), { code: "usage", details: [] });
-    expect((await post("/api/onboarding/run", { repos: ["/r/a"], since: "7d", method: "resume", consent: true })).status).toBe(400);
+    ops.next = Object.assign(new Error(`${repoA} is not an enabled repo; run init first`), { code: "usage", details: [] });
+    expect((await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume", consent: true })).status).toBe(400);
+  });
+
+  it("turns the op's invalid-repo into a 400", async () => {
+    ops.next = refusal("invalid-repo", `${repoA} is not a git repository (no .git)`);
+    const { status, body } = await post("/api/onboarding/run", { repos: [repoA], since: "7d", method: "resume", consent: true });
+    expect([status, code(body)]).toEqual([400, "invalid-repo"]);
+  });
+});
+
+describe("the write guard on POST /api/onboarding/*", () => {
+  const body = { repos: [] as string[] };
+
+  it("403s forbidden-origin for an Origin that is not the server's own, before the body is read", async () => {
+    for (const origin of ["https://evil.example", "http://127.0.0.1:1", "null"]) {
+      const { status, body: answer } = await post("/api/onboarding/init", body, { origin, host: "127.0.0.1:7419" });
+      expect([origin, status, code(answer)]).toEqual([origin, 403, "forbidden-origin"]);
+    }
+    expect(ops.calls).toEqual([]);
+  });
+
+  it("allows the server's own origin and a request with no Origin at all", async () => {
+    const own = await post("/api/onboarding/init", { repos: [repoA] }, { origin: "http://127.0.0.1:7419", host: "127.0.0.1:7419" });
+    expect(own.status).toBe(200);
+    expect((await post("/api/onboarding/init", { repos: [repoA] })).status).toBe(200);
+    expect(ops.calls).toHaveLength(2);
+  });
+
+  it("415s content-type-required without application/json, and accepts a charset suffix", async () => {
+    const response = await server.app.request("/api/onboarding/init", { method: "POST", body: JSON.stringify({ repos: [repoA] }) });
+    expect([response.status, code(await response.json())]).toEqual([415, "content-type-required"]);
+    expect((await post("/api/onboarding/init", { repos: [repoA] }, { "content-type": "text/plain" })).status).toBe(415);
+    expect((await post("/api/onboarding/init", { repos: [repoA] }, { "content-type": "application/json; charset=utf-8" })).status).toBe(200);
+    expect(ops.calls).toHaveLength(1);
+  });
+
+  it("leaves the GET routes alone", async () => {
+    const response = await server.app.request("/api/onboarding/status", { headers: { origin: "https://evil.example" } });
+    expect(response.status).toBe(200);
   });
 });
 

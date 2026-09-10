@@ -11,6 +11,9 @@
  * and `packages/cli/src/commands/onboarding-ops.ts` satisfies it structurally, which makes a drift
  * a compile error at the injection site rather than a 500 in front of the wizard.
  */
+import { realpathSync, statSync } from "node:fs";
+import path from "node:path";
+
 import type { Job } from "./jobs.js";
 
 /** The backfill windows the wizard offers; `none` is "no backfill". */
@@ -143,14 +146,71 @@ export interface OnboardingStatus {
  * P3 repair route uses for the same refusal. Anything else an op throws goes through
  * `toApiError` like every other injected op's refusal.
  */
-export type OnboardingRefusalCode = "api-key-required" | "consent-required";
+export type OnboardingRefusalCode =
+  | "api-key-required"
+  | "consent-required"
+  | "invalid-repo"
+  | "invalid-root";
 
 /** An error carrying an {@link OnboardingRefusalCode}. */
 export interface OnboardingRefusal extends Error {
   readonly code: OnboardingRefusalCode;
 }
 
-const REFUSALS: readonly string[] = ["api-key-required", "consent-required"];
+const REFUSALS: readonly string[] = ["api-key-required", "consent-required", "invalid-repo", "invalid-root"];
+
+/** The HTTP status each refusal carries: the path ones are the caller's mistake, the rest a state. */
+export const REFUSAL_STATUS: Readonly<Record<OnboardingRefusalCode, 400 | 409>> = {
+  "api-key-required": 409,
+  "consent-required": 409,
+  "invalid-repo": 400,
+  "invalid-root": 400,
+};
+
+/**
+ * Why `given` is not a repo the wizard may touch, or `undefined` when it is one.
+ *
+ * Absolute, existing after symlinks are resolved, a directory, and holding a `.git` entry — a
+ * directory, or the file a git worktree keeps in its place. Nothing else is ever scaffolded:
+ * `init` writes hook files, and a plain directory that happens to be named in a request body
+ * must not grow a `.claude/settings.json`.
+ */
+export function repoPathProblem(given: string): string | undefined {
+  if (!path.isAbsolute(given)) return `${given} is not an absolute path`;
+  let real: string;
+  try {
+    real = realpathSync(given);
+  } catch {
+    return `${given} does not exist`;
+  }
+  if (!isDirectory(real)) return `${given} is not a directory`;
+  try {
+    statSync(path.join(real, ".git"));
+  } catch {
+    return `${given} is not a git repository (no .git)`;
+  }
+  return undefined;
+}
+
+/** Why `given` cannot be walked for repos: it must be an absolute, existing directory. */
+export function rootPathProblem(given: string): string | undefined {
+  if (!path.isAbsolute(given)) return `${given} is not an absolute path`;
+  let real: string;
+  try {
+    real = realpathSync(given);
+  } catch {
+    return `${given} does not exist`;
+  }
+  return isDirectory(real) ? undefined : `${given} is not a directory`;
+}
+
+function isDirectory(file: string): boolean {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 /** Is this an {@link OnboardingRefusal}? Structural, for the same reason `isOpError` is. */
 export function isOnboardingRefusal(error: unknown): error is OnboardingRefusal {

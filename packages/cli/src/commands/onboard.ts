@@ -24,6 +24,7 @@ import { discoverRepos } from "../onboarding/discover.js";
 import { historyWindows } from "../onboarding/history.js";
 import { initRepos } from "../onboarding/init.js";
 import { processOnboardingIo } from "../onboarding/io.js";
+import { OnboardingRefusalError } from "../onboarding/repo-path.js";
 import type { OnboardingIo } from "../onboarding/io.js";
 import type {
   DiscoverResult,
@@ -179,6 +180,18 @@ function estimateLabel(plan: PlanResult): string {
 
 /** The command, with its environment injected. @returns the process exit code. */
 export async function runOnboard(options: OnboardOptions, io: OnboardIo): Promise<number> {
+  try {
+    return await onboard(options, io);
+  } catch (error) {
+    // A path that is not a repo, a root that is not a directory: the ops refuse it with the
+    // same code the API answers 400 with, and here that is a usage error.
+    if (!(error instanceof OnboardingRefusalError)) throw error;
+    io.stderr(`workledger onboard: ${error.message}`);
+    return EXIT_USAGE;
+  }
+}
+
+async function onboard(options: OnboardOptions, io: OnboardIo): Promise<number> {
   const json = options.json === true;
   const ask = io.interactive && !json && options.yes !== true;
   const say = (line: string): void => {

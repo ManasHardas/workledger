@@ -38,9 +38,16 @@ export type {
   RepairInput,
   ScanSummary,
 } from "./jobs.js";
-export { onboardingRoutes } from "./routes/onboarding.js";
+export { onboardingRoutes, onboardingWriteGuard } from "./routes/onboarding.js";
 export type { OnboardingRouteDeps } from "./routes/onboarding.js";
-export { ONBOARDING_METHODS, ONBOARDING_WINDOWS, isOnboardingRefusal } from "./onboarding.js";
+export {
+  ONBOARDING_METHODS,
+  ONBOARDING_WINDOWS,
+  REFUSAL_STATUS,
+  isOnboardingRefusal,
+  repoPathProblem,
+  rootPathProblem,
+} from "./onboarding.js";
 export type {
   DiscoverResult,
   ExtractionEstimate,

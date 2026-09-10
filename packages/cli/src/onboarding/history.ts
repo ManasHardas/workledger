@@ -9,9 +9,8 @@
  * here — the P3 backfill digests Claude Code transcripts, and a window that counted sessions the
  * plan could not digest would promise more than the run delivers.
  */
-import path from "node:path";
-
 import { enumerateStore, filterSince } from "../commands/backfill.js";
+import { assertRepoPaths } from "./repo-path.js";
 import type { OnboardingIo } from "./io.js";
 import type { HistoryResult, HistoryWindow } from "@workledger/server";
 
@@ -26,8 +25,8 @@ export function historyWindows(repos: readonly string[], io: OnboardingIo): Hist
     "30d": { sessions: 0, bytes: 0 },
     "90d": { sessions: 0, bytes: 0 },
   };
-  for (const repo of repos) {
-    const sessions = enumerateStore(io.homeDir, path.resolve(io.cwd, repo));
+  for (const repo of assertRepoPaths(repos)) {
+    const sessions = enumerateStore(io.homeDir, repo);
     for (const window of WINDOWS) {
       for (const session of filterSince(sessions, window, now)) {
         windows[window].sessions += 1;

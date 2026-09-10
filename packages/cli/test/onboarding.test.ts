@@ -12,7 +12,7 @@
  * The drain is never started here: a `resume` would spawn `claude`. What is asserted is the half
  * the wizard is built on — that the rows exist, are tagged, and are what `status` counts.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -174,6 +174,16 @@ describe("discoverRepos", () => {
     expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, harnessSessions: {}, lastSessionAt: null });
   });
 
+  it("refuses a root that is relative, missing, or not a directory", () => {
+    for (const [root, reason] of [
+      ["Projects", "not an absolute path"],
+      [path.join(dir, "nowhere"), "does not exist"],
+      [path.join(repoA, ".git", "config"), "not a directory"],
+    ]) {
+      expect(() => discoverRepos({ roots: [root as string] }, io)).toThrow(reason);
+    }
+  });
+
   it("takes explicit roots, expands ~, and reports enabled repos as such", async () => {
     await initRepos({ repos: [repoC] }, io);
     const result = discoverRepos({ roots: ["~/Projects/repo-c", path.join(home, "Projects", "1")] }, io);
@@ -245,11 +255,37 @@ describe("initRepos", () => {
     const anonymous = path.join(dir, "anon");
     mkdirSync(path.join(anonymous, ".git"), { recursive: true });
 
-    const result = await initRepos({ repos: [anonymous, repoB, path.join(dir, "missing")] }, io);
+    const result = await initRepos({ repos: [anonymous, repoB] }, io);
 
-    expect(result.results.map((r) => r.ok)).toEqual([false, true, false]);
+    expect(result.results.map((r) => r.ok)).toEqual([false, true]);
     expect(result.results[0]?.error).toContain("user.name");
-    expect(result.results[2]?.error).toContain("does not exist");
+  });
+
+  it("refuses a relative path, a missing path, a plain directory and a symlink to one, touching nothing", async () => {
+    const plain = path.join(dir, "plain");
+    mkdirSync(plain);
+    const link = path.join(dir, "link");
+    symlinkSync(plain, link);
+    const cases: Array<[string, string]> = [
+      [path.relative(dir, repoA), "not an absolute path"],
+      [path.join(dir, "missing"), "does not exist"],
+      [plain, "not a git repository"],
+      [link, "not a git repository"],
+    ];
+    for (const [given, reason] of cases) {
+      const refusal = await initRepos({ repos: [repoA, given] }, io).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(OnboardingRefusalError);
+      expect((refusal as OnboardingRefusalError).code).toBe("invalid-repo");
+      expect((refusal as OnboardingRefusalError).message).toContain(reason);
+      // Every op refuses the same way, and the plan and run before they open the index.
+      expect(() => historyWindows([given], io)).toThrow(reason);
+      await expect(backfillPlan({ repos: [given], since: "7d", method: "none" }, io)).rejects.toThrow(reason);
+      await expect(queueOnboardingBackfill({ repos: [given], since: "7d", method: "none", consent: true }, io)).rejects.toThrow(reason);
+    }
+    // The valid repo listed first was not scaffolded either: the request is refused whole.
+    expect(existsSync(path.join(repoA, ".workledger"))).toBe(false);
+    expect(existsSync(path.join(plain, ".workledger"))).toBe(false);
+    expect(existsSync(path.join(plain, SETTINGS_PATH))).toBe(false);
   });
 });
 
@@ -455,8 +491,22 @@ describe("workledger onboard --json", () => {
   it("rejects a window or method it does not know, and an empty selection", async () => {
     expect(await runOnboard({ json: true, select: repoA, since: "1y" }, terminal())).toBe(EXIT_USAGE);
     expect(await runOnboard({ json: true, select: repoA, since: "7d", method: "magic" }, terminal())).toBe(EXIT_USAGE);
-    expect(await runOnboard({ json: true, roots: path.join(dir, "empty") }, { ...terminal(), homeDir: path.join(dir, "empty") })).toBe(EXIT_USAGE);
+    const empty = path.join(dir, "empty");
+    mkdirSync(empty);
+    expect(await runOnboard({ json: true, roots: empty }, { ...terminal(), homeDir: empty })).toBe(EXIT_USAGE);
     expect(err.join("\n")).toContain("no repos selected");
+  });
+
+  it("refuses a relative --select and a relative --roots as usage errors, touching nothing", async () => {
+    expect(await runOnboard({ json: true, select: path.relative(dir, repoA), since: "7d", method: "none", yes: true }, terminal())).toBe(EXIT_USAGE);
+    expect(err.at(-1)).toContain("not an absolute path");
+    expect(await runOnboard({ json: true, roots: "Projects", since: "7d", method: "none", yes: true }, terminal())).toBe(EXIT_USAGE);
+    expect(err.at(-1)).toContain("not an absolute path");
+    const plain = path.join(dir, "plain");
+    mkdirSync(plain);
+    expect(await runOnboard({ json: true, select: plain, since: "7d", method: "none", yes: true }, terminal())).toBe(EXIT_USAGE);
+    expect(existsSync(path.join(plain, ".workledger"))).toBe(false);
+    expect(existsSync(path.join(repoA, ".workledger"))).toBe(false);
   });
 
   it("narrates the steps on a terminal and asks the missing questions", async () => {
