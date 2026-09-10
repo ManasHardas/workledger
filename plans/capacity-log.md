@@ -64,3 +64,32 @@
 - Two process defects found and encoded: shared `/tmp` scratch paths between concurrent agents; removing a worktree from inside it (orchestrator error, twice).
 
 **S2 forecast:** #11 (~1M) + #25 (~300k) in parallel, then #12 (~1.2M), then #13 (~1M) if T-A (3.5M) holds; #14 and Wave 2 likely S3.
+
+## Session 2 — 2026-09-09 (same conversation as S1, continued; P1 close through P5 ship)
+
+**Stage 2 PM:** ACTIVE, orchestrator inline. Lean mode (Clause #12) from the operator's directive; Clause #13 (prototype mode) written into agentwaves but explicitly NOT applied here by the operator.
+
+**Waves executed:** P1 Wave 1 slots 8–10 and 12, Wave 2, Wave 3 (tag), Wave 3.5 (three live sessions). P2 Wave 0 → 3 (tag). P3 Wave 0 → 3 (tag). P4 Wave 0 → 3 (tag). P5 Wave 0 → 3 (tag). P7 Wave 0 started.
+
+**Build PRs merged:** 24 (#26 #27 #28 #29 #30 #42–#51 #60 #61 #65–#71). Direct commits for contracts, amendments, changelogs, version bumps, and two flaky-test fixes.
+
+**Activities completed:** everything in CHANGELOG 0.0.1 → 0.3.0. Real end-to-end proofs: Claude runs the checkpoint from the block instruction; a killed session is scanned and repaired by resume; three fixture sessions backfill; a Codex session checkpoints; UI edits land in files and propagate over SSE.
+
+**Issues filed:** P2 #31–#41, P3 #52–#57, P4 #58–#59, P5 #62–#64, P7 #72–#73 (all five-line, filed directly).
+
+**Discipline holds:**
+- T-D: never fired in S2 (no PR needed a third round).
+- T-G: lean-mode anchors held within ~1.5× on most slots; first-of-class CLI slots ran 0.4–0.6M implementer tokens.
+- T-X: worktree-per-PR with file fences; conflicts on shared files (`index.ts`, `config.ts`, `repair.ts`, `vitest.config.ts`) resolved by union on rebase, once by a builder round-trip.
+- T-Y: two stragglers (#7, #39) closed by hand; one PR body clobbered via a shared `/tmp` path (rule added).
+- Orchestrator errors recorded: removed a worktree from inside it (twice); reported a merge as done when `gh pr merge` had refused (once; tag moved, issue reopened, rule added: check PR state before tagging).
+- HARD CONSTRAINT: every PR stated host verification.
+
+**Calibration findings:**
+- Lean mode cut per-slot cost roughly 3× versus S1's full trio: one reviewer, one fix-cycle, merge on green.
+- Reviews still found a real defect on most PRs (PII, silent data loss, blank page, wrong id minter, orphaned grandchildren, acceptEdits bypass, key-leak paths); the protocol is correctness-first and the operator chose to keep it.
+- Parallelism of 3–6 builds on disjoint packages worked; the serial chains were `checkpoint → hook → init` and `server GET → POST → UI`.
+- Timing tests must be relative to a same-run baseline and have CI-specific ceilings; absolute budgets flake under load.
+- Shared `/tmp` filenames between concurrent agents and in-worktree cwd for cleanup are the two recurring process defects; both are now rules in CLAUDE.md.
+
+**S3 forecast:** P7 Wave 1 (~2 frontend PRs) once the operator supplies the Figma file and node ids; P6 (~3 PRs) only if un-deferred.

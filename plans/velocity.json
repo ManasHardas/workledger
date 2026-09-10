@@ -760,6 +760,45 @@
       "review_iterations": 0,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "rebase conflict after #66; orchestrator mis-reported merge once"
+    },
+    {
+      "session": 2,
+      "wave": "P3-1",
+      "kind": "pr_merge",
+      "pr": 69,
+      "issue": 56,
+      "agent_role": "frontend",
+      "class": "feature-page (lean)",
+      "tokens_implementer": 294494,
+      "tokens_reviewers": 100563,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "P5-1",
+      "kind": "pr_merge",
+      "pr": 70,
+      "issue": 63,
+      "agent_role": "backend",
+      "class": "service-module (lean, CR+security)",
+      "tokens_implementer": 254301,
+      "tokens_reviewers": 113878,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "P5-1",
+      "kind": "pr_merge",
+      "pr": 71,
+      "issue": 64,
+      "agent_role": "frontend",
+      "class": "feature (lean)",
+      "tokens_implementer": 193484,
+      "tokens_reviewers": 77768,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
     }
   ]
 }
