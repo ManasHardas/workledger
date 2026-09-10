@@ -450,7 +450,16 @@ export const Config = z
     stale_turns: z.int().min(1).default(5),
     orphan_minutes: z.int().min(1).default(30),
     private_paths: z.array(z.string()).default([]),
-    auto_commit: z.boolean().default(false),
+    /**
+     * P5 (docs/contracts/p5/config-and-identities.md): `false | on_checkpoint | on_session_end`.
+     * `false` stays legal and stays the default; `true` was never a documented value and is not
+     * accepted, so a repo that means "commit for me" has to say when.
+     */
+    auto_commit: z
+      .union([z.literal(false), z.enum(["on_checkpoint", "on_session_end"])])
+      .default(false),
+    /** The email → display-name map, relative to `.workledger/`. */
+    identities_file: z.string().default("identities.yaml"),
   })
   .loose();
 export type Config = z.infer<typeof Config>;

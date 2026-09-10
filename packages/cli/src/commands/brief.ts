@@ -18,6 +18,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { loadConfig } from "../config.js";
+import { loadIdentities, resolveActor, resolveMaybe } from "../identities.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { findRepoRoot, isEnabled, ledgerPaths, readTextFile } from "../ledger-fs.js";
 import type { BriefInput } from "@workledger/core/brief";
@@ -73,13 +74,25 @@ export async function readBriefInput(root: string): Promise<BriefInput> {
     import("@workledger/core/render/session"),
   ]);
   const paths = ledgerPaths(root);
+  // P5: `.workledger/identities.yaml` maps a git email to a display name, and the brief's owner
+  // column is the most visible place that shows. Applied to the *input* rather than inside
+  // `buildBrief` so `@workledger/core` stays a pure function of what it is handed, and so the
+  // injected brief and `workledger brief` cannot disagree about a name.
+  const identities = loadIdentities(root, loadConfig(root));
 
   const backlog: BriefInput["backlog"] = [];
   for (const file of ledgerFiles(paths.backlog)) {
     const text = readTextFile(file);
     if (text === undefined) continue;
     try {
-      backlog.push({ frontmatter: parseItem(text).frontmatter });
+      const frontmatter = parseItem(text).frontmatter;
+      backlog.push({
+        frontmatter: {
+          ...frontmatter,
+          owner: resolveMaybe(frontmatter.owner, identities),
+          confirmed_by: resolveMaybe(frontmatter.confirmed_by, identities),
+        },
+      });
     } catch {
       continue;
     }
@@ -92,7 +105,10 @@ export async function readBriefInput(root: string): Promise<BriefInput> {
     try {
       const parsed = parseSessionText(text);
       sessions.push({
-        frontmatter: parsed.frontmatter,
+        frontmatter: {
+          ...parsed.frontmatter,
+          author: resolveActor(parsed.frontmatter.author, identities),
+        },
         done: parsed.done.map((line) => line.text),
         notes: parsed.notes.map((line) => ({ type: line.type, text: line.text, cp: line.cp })),
       });

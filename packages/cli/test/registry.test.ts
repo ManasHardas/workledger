@@ -36,14 +36,14 @@ const COMMANDS = [
 const OPTIONS: Record<string, string[]> = {
   // `--harness` on both: `init` writes that harness's hook file, `hook` reads that harness's
   // wire format (docs/contracts/p4/hooks-codex.md, hooks-cursor.md).
-  init: ["--repo", "--yes", "--no-backfill", "--harness"],
+  init: ["--repo", "--yes", "--no-backfill", "--teammate", "--harness"],
   hook: ["--harness"],
   checkpoint: ["--session", "--dry-run"],
   brief: ["--repo", "--max-tokens"],
   doctor: ["--json"],
   // `--no-open` is one option in commander's model: it defines `open`, defaulted to true.
   serve: ["--repo", "--port", "--no-open"],
-  scan: ["--repo", "--json"],
+  scan: ["--repo", "--all", "--json"],
   repair: ["--extract", "--yes", "--timeout", "--force"],
   backfill: ["--repo", "--since", "--concurrency", "--dry-run", "--yes", "--extract-fallback"],
   jobs: ["--repo", "--json", "--cancel", "--retry"],
