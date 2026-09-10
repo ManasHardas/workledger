@@ -21,7 +21,12 @@ checkpoints:
     turns: 1
     transcript_offset: 403614
     trigger: bytes
-ended: 2026-09-09T23:14:37.583Z
+  - n: 2
+    at: 2026-09-10T20:05:14.592Z
+    turns: 3
+    transcript_offset: 499510
+    trigger: minutes
+ended: 2026-09-10T20:05:19.818Z
 end_reason: unknown
 ---
 ## Goal
@@ -35,3 +40,4 @@ end_reason: unknown
 
 ## Notes
 - discovery [cp 1]: A step-1 session-resolution failure in workledger checkpoint is never recorded via recordAttempt because no session row exists yet, so the Stop hook cannot retry-block on it; every later failure goes through the single fail closure that redacts, prints, and records.
+- discovery [cp 2]: Since checkpoint 1 the only work was recording checkpoint 1 of the parent workspace session 01M26DA5R2C461AXKNZFXJ1XKH under /Users/manashardas/Projects, which the workspace Stop hook requested for this same session; no repo files changed and the notes file is still uncommitted.

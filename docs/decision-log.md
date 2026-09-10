@@ -34,3 +34,8 @@ record decisions (see DL-14).
   interactions, not visuals.
 - Whether the outer `~/Projects` git repo (no commits) is intentional; untouched.
 - Who creates `DomeHQ/card-workledger` and when (the Dome founder; not before milestone 7).
+
+## DL-20 — Start directory is storage; context repos are inferred (2026-09-10)
+
+Operator: "It is almost immaterial in which dir the session is started except the fact that the session transcripts are stored there. The session is generally about a specific repo/project which can be inferred from the content of the session. So the first task of an extraction job is to figure out what repo is this session about and where to file the workledger extract." Decision: every session carries `startDir` (where the transcript lives and where a resume runs) and `contextRepos` (inferred from tool inputs: writes, path-tool inputs, references; the start directory's repo only as fallback and tiebreak). Discovery, backfill, and the live Stop hook use one inference. Contract: p8 amendment 10.
+

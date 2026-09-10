@@ -138,3 +138,22 @@ string[], hooksInstalled: boolean }[]` for start directories that are not themse
 take `since: "all"`, `workledger onboard --since all` and `workledger backfill --since all` select
 every transcript attributed to the repo regardless of age. The wizard's history step shows five
 cards: 7 days, 30 days, 90 days, all, none.
+
+## Amendment 10 (2026-09-10) — start directory versus context repos (operator direction)
+
+Two distinct facts about every session. **Start directory** (`startDir`): where the harness was
+launched; it decides only where the transcript is stored and where a headless resume must run.
+**Context repos** (`contextRepos`): the repos the session is about, inferred from its content;
+they decide where checkpoints are filed. The start directory is never an attribution by itself.
+
+Inference, applied identically by discovery, history, backfill, and the Stop hook of any session
+(repo-started or workspace-started): score each candidate root from the transcript's tool inputs
+(writes, then path-tool inputs and `cd`, then references); a root qualifies with ≥1 write, or ≥5
+references including ≥1 path-tool input or `cd`; a session may have several context repos, each
+gets its own checkpoint (`--repo`). When no root qualifies, the repo containing the start
+directory is the fallback context (a session that only talked). The start directory's own repo
+gets no preference beyond that fallback and a tiebreak. The first step of every repair or
+extraction job is this inference; the job records `startDir` and `contextRepos` on the session
+rows, resumes in `startDir`, and files into each context repo. Session views show "started in"
+and "about". Supersedes the cwd clauses of amendment 8 and the cross-repo write rule of #111
+where they conflict; the write rule stays for roots other than the fallback.
