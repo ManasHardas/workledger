@@ -29,7 +29,7 @@ import { workspaceCheckpointInstruction } from "../src/instruction.js";
 import { discoverRepos } from "../src/onboarding/discover.js";
 import { initRepos } from "../src/onboarding/init.js";
 import { touchedRootsOf } from "../src/commands/hook-workspace.js";
-import { MIN_REFERENCES } from "../src/onboarding/touched.js";
+import { MIN_REFERENCES, startedInRepo } from "../src/onboarding/touched.js";
 import { SETTINGS_PATH, hookCommandString } from "../src/settings-merge.js";
 import type { InitIo } from "../src/commands/init.js";
 import type { HookIo } from "../src/commands/hook.js";
@@ -196,8 +196,9 @@ describe("touched roots from the accumulated counts", () => {
     expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES, writes: 0, pathInputs: 1 }, [repoB]: { references: 2, writes: 1, pathInputs: 0 } })).toEqual([repoA, repoB]);
     expect(touchedRootsOf({ [repoA]: { references: 1, writes: 1, pathInputs: 1 }, [repoB]: { references: 1, writes: 2, pathInputs: 1 } })).toEqual([repoB, repoA]);
     expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES - 1, writes: 0, pathInputs: 4 } })).toEqual([]);
-    // Bash text alone never attributes (#110).
+    // Bash text alone never attributes (#110); from inside another repo, only a write does.
     expect(touchedRootsOf({ [repoA]: { references: 20, writes: 0, pathInputs: 0 } })).toEqual([]);
+    expect(touchedRootsOf({ [repoA]: { references: 20, writes: 0, pathInputs: 5 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } }, true)).toEqual([repoB]);
   });
 });
 
@@ -404,6 +405,26 @@ describe("discover, init and doctor with workspaces", () => {
     const result = await discoverRepos({}, onboardingIo());
     expect(result.workspaces).toEqual([{ path: ws, repos: [a], hooksInstalled: false }]);
     expect(result.known.find((c) => c.path === a)).toMatchObject({ startedIn: [ws], touchedSessions: 1 });
+
+    // A read-only session started in the same folder — five Bash mentions and one Read under
+    // `a` — is attributed by the reference rule: `ws` holds a candidate, so it is a workspace
+    // folder outside any repo, the git ancestor notwithstanding.
+    const bash = (i: number): string =>
+      `${JSON.stringify({ type: "assistant", cwd: ws, message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Bash", input: { command: `grep -n x ${a}/src/${i}.ts` } }] } })}\n`;
+    writeFileSync(
+      path.join(store, "s-ws-ro.jsonl"),
+      `${JSON.stringify({ type: "user", cwd: ws })}\n${[0, 1, 2, 3, 4].map(bash).join("")}${JSON.stringify({
+        type: "assistant",
+        cwd: ws,
+        message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Read", input: { file_path: path.join(a, "README.md") } }] },
+      })}\n`,
+      "utf8",
+    );
+    expect((await discoverRepos({}, onboardingIo())).known.find((c) => c.path === a)).toMatchObject({ startedIn: [ws], touchedSessions: 2 });
+    expect(startedInRepo(ws, [outer, a])).toBe(false);
+    expect(startedInRepo(outer, [a])).toBe(true);
+    expect(startedInRepo(path.join(a, "src"), [a])).toBe(true);
+    expect(startedInRepo(path.join(home, "scratch"), [a])).toBe(false);
   });
 
   it("doctor lists each workspace with its hook status", async () => {

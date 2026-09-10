@@ -22,7 +22,7 @@ import { loadConfig } from "../config.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { workspaceCheckpointInstruction } from "../instruction.js";
 import { isEnabled, listOpenBacklogIds } from "../ledger-fs.js";
-import { emptyTally, meetsRule, scanTranscript } from "../onboarding/touched.js";
+import { attributes, emptyTally, scanTranscript, startedInRepo } from "../onboarding/touched.js";
 import { trackedReposUnder } from "./init-workspace.js";
 import { END_REASON_MAP, createSession, describe, firstCrossed, minutesSince, patchFrontmatter } from "./hook.js";
 import type { HookInput } from "../adapters/types.js";
@@ -42,10 +42,14 @@ function readCounts(row: SessionRow): Record<string, TouchTally> {
   }
 }
 
-/** The roots the accumulated counts attribute the session to, most-referenced first. */
-export function touchedRootsOf(counts: Record<string, TouchTally>): string[] {
+/**
+ * The roots the accumulated counts attribute the session to, most-referenced first. `inRepo` is
+ * `startedInRepo` for the workspace: false for a folder that holds its repos, whatever its
+ * ancestors; a write-only rule otherwise.
+ */
+export function touchedRootsOf(counts: Record<string, TouchTally>, inRepo = false): string[] {
   return Object.entries(counts)
-    .filter(([, tally]) => meetsRule(tally))
+    .filter(([, tally]) => attributes(tally, inRepo))
     .sort(([a, ta], [b, tb]) => tb.references - ta.references || tb.writes - ta.writes || a.localeCompare(b))
     .map(([root]) => root);
 }
@@ -174,7 +178,7 @@ async function stop(ctx: Context): Promise<number> {
     return block(ctx, targets, undefined);
   }
 
-  const targets = await openTargets(ctx, touchedRootsOf(readCounts(session)), size);
+  const targets = await openTargets(ctx, touchedRootsOf(readCounts(session), false), size);
   if (blocks === 1) {
     const rows = targets.map((target) => db.getSessionByUlid(target.sessionId)).filter((row): row is SessionRow => row !== undefined);
     const failed = rows.find((row) => row.last_attempt_at !== null && (row.last_attempt_exit ?? 0) !== 0);
@@ -233,7 +237,7 @@ async function scan(ctx: Context, session: SessionRow, transcript: string | unde
       ctx.io.stderr(`workledger: hook Stop: transcript scan skipped (${describe(error)})`);
     }
   }
-  return touchedRootsOf(counts).filter((root) => roots.includes(root));
+  return touchedRootsOf(counts, startedInRepo(ctx.root, roots)).filter((root) => roots.includes(root));
 }
 
 /** One session row and ledger file per touched repo, opened on first use. */

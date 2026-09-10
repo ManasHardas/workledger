@@ -60,6 +60,33 @@ export function meetsRule(tally: TouchTally): boolean {
   return tally.writes >= 1 || (tally.references >= MIN_REFERENCES && tally.pathInputs >= 1);
 }
 
+/**
+ * Whether a session that started in `cwd` started inside a repo, for {@link attributes}: `cwd`
+ * is a repo root itself (its own `.git`), or lies below one of `roots` — the candidate and
+ * enabled repos — while holding none of them. A start directory with no `.git` of its own that
+ * holds a candidate is a workspace folder, outside any repo whatever its git ancestors:
+ * `~/Projects/dome_workspace` under a `~/Projects` that is itself a repo is where its sessions
+ * work, not a corner of `~/Projects`. This is the workspace rule of `discover.ts`, and the one
+ * place discover, history, backfill and the workspace Stop hook decide it.
+ */
+export function startedInRepo(cwd: string, roots: readonly string[]): boolean {
+  const start = path.resolve(cwd);
+  if (existsSync(path.join(start, ".git"))) return true;
+  const below = (dir: string, parent: string): boolean => dir !== parent && dir.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
+  if (roots.some((root) => below(path.resolve(root), start))) return false;
+  return roots.some((root) => below(start, path.resolve(root)));
+}
+
+/**
+ * Whether a tally attributes the session to a root other than the one it started in. The
+ * reference rule ({@link meetsRule}) is for sessions started outside any repo — a workspace
+ * folder — or inside the repo itself; a session started inside another repo counts here only
+ * with a write, because reading or `cd`-ing into a sibling project is routine (#110).
+ */
+export function attributes(tally: TouchTally, inRepo: boolean): boolean {
+  return inRepo ? tally.writes >= 1 : meetsRule(tally);
+}
+
 /** What {@link scanTranscript} needs beyond the file. */
 export interface ScanOptions {
   /** The session's start directory, when the store knows it; the first recorded cwd otherwise. */

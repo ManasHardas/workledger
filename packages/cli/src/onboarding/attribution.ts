@@ -8,7 +8,9 @@
  * least one path-tool input or `cd` among them (#110), gets the session too (`touched.ts`). The
  * reference rule is for sessions started outside any repo — a workspace folder; a session
  * started inside a repo X counts for another repo Y only with a write under Y, because reading
- * or `cd`-ing into a sibling project from X is routine and says nothing about working there. A transcript may therefore count for several repos;
+ * or `cd`-ing into a sibling project from X is routine and says nothing about working there.
+ * "Inside a repo" is `startedInRepo` over the candidates and the enabled repos, the same
+ * reckoning as the workspace Stop hook's, so the two paths cannot diverge. A transcript may therefore count for several repos;
  * it never counts twice for one, because the root its cwd is in is left to the cwd rule.
  *
  * The result is per repo, in the `StoreSession` shape the P3 planner and the backfill already
@@ -18,11 +20,11 @@
  */
 import { realpathSync } from "node:fs";
 
-import { findRepoRoot } from "../ledger-fs.js";
+import { isEnabled } from "../ledger-fs.js";
 import { OS_TEMP_DIRS, underTempDir } from "./repo-path.js";
 import { isDirectory, sessionRepoOf } from "./session-cwd.js";
 import { claudeTranscripts, codexSessions } from "./stores.js";
-import { meetsRule, touchedRoots } from "./touched.js";
+import { attributes, startedInRepo, touchedRoots } from "./touched.js";
 import type { StoreSession } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
 
@@ -120,15 +122,17 @@ export async function attributeTranscripts(
   const keys = [...spellings.keys()];
   const tempDirs = options.tempDirs ?? OS_TEMP_DIRS;
 
+  const repoRoots = [...new Set([...keys, ...db.listRepos().map((repo) => realOr(repo.repo_path)).filter(isEnabled)])];
+
   const all = transcripts(homeDir, tempDirs).sort((a, b) => b.session.mtimeMs - a.session.mtimeMs);
   for (const { harness, session } of all) {
     const own = realOr(sessionRepoOf(session.cwd));
-    const inRepo = findRepoRoot(session.cwd) !== undefined;
+    const inRepo = startedInRepo(realOr(session.cwd), repoRoots);
     const candidates = keys.filter((key) => key !== own);
     if (candidates.length === 0) continue;
     const tallies = await touchedRoots(db, session.file, candidates, { cwd: session.cwd, homeDir });
     for (const [key, tally] of tallies) {
-      if (inRepo ? tally.writes < 1 : !meetsRule(tally)) continue;
+      if (!attributes(tally, inRepo)) continue;
       for (const repo of spellings.get(key) ?? []) {
         const entry = result.get(repo) as RepoAttribution;
         (harness === "codex" ? entry.codex : entry.claude).push({ ...session });

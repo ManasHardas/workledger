@@ -113,8 +113,11 @@ at least 5 references to it of which at least one is a non-Bash path tool input
 (Read/Edit/Write/Glob/Grep/NotebookEdit `file_path`/`path`/`notebook_path` under the root) or a
 Bash `cd` into the root; Bash command text mentions alone never attribute (#110). The reference
 rule applies only to sessions started outside any repo (a workspace folder) or inside the repo
-itself; a session started inside a repo X (its start directory resolves to a repo root) counts for
-a different repo Y only with ≥1 write under Y. A transcript may count for several repos. `history`, `plan` and `run`
+itself; a session started inside a repo X counts for a different repo Y only with ≥1 write under Y.
+"Inside a repo" means the start directory has its own `.git`, or lies below a candidate or enabled
+repo while holding none; a start directory with no `.git` of its own that holds a candidate is a
+workspace folder, outside any repo whatever its git ancestors. A transcript may count for several
+repos. `history`, `plan` and `run`
 use the same attribution; `run` queues one repair job per (session, repo) pair, and the repair
 instruction names the target root.
 
