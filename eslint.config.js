@@ -7,6 +7,15 @@ import tseslint from "typescript-eslint";
  */
 const nodeBuiltins = ["fs", "path", "os", "child_process", "crypto", "url", "node:test"];
 
+/** The `no-restricted-imports` options that keep one package free of Node built-ins. */
+function pureFence(pkg, remedy) {
+  const message = `${pkg} must stay pure TypeScript — ${remedy}.`;
+  return {
+    paths: nodeBuiltins.map((name) => ({ name, message })),
+    patterns: [{ group: ["node:*"], message }],
+  };
+}
+
 export default tseslint.config(
   {
     ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", ".worktrees/**"],
@@ -55,23 +64,18 @@ export default tseslint.config(
   {
     files: ["packages/core/**/*.ts"],
     rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: nodeBuiltins.map((name) => ({
-            name,
-            message:
-              "packages/core must stay pure TypeScript — move side effects into packages/cli.",
-          })),
-          patterns: [
-            {
-              group: ["node:*"],
-              message:
-                "packages/core must stay pure TypeScript — move side effects into packages/cli.",
-            },
-          ],
-        },
-      ],
+      "no-restricted-imports": ["error", pureFence("packages/core", "move side effects into packages/cli")],
+    },
+  },
+  {
+    // `packages/api-client` is isomorphic by contract (docs/contracts/p2/ledger-source.md): it
+    // runs in the browser, under Node and one day inside a Dome card, and reaches the platform
+    // only through `fetch` and `EventSource`. Same fence as core, and for the same reason.
+    // `test/` is excluded — the tests run a real `packages/server` over a temp ledger, which is
+    // exactly the filesystem work the fence keeps out of `src/`.
+    files: ["packages/api-client/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", pureFence("packages/api-client", "reach the platform through fetch and EventSource")],
     },
   },
 );
