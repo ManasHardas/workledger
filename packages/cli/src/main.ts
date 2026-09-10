@@ -140,8 +140,10 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
 
   program
     .command("checkpoint")
-    .description("record a checkpoint; reads a CheckpointPayload on stdin")
+    .description("record a checkpoint from a CheckpointPayload: --payload, --payload-file, or stdin")
     .option("--session <ulid>", "session to record against, when the index lookup is ambiguous")
+    .option("--payload <json>", "the payload as one argument (headless sessions cannot feed stdin)")
+    .option("--payload-file <path>", "read the payload from this file")
     .option("--dry-run", "validate and render without writing anything")
     .action(async (options: CheckpointOptions) => {
       const { checkpointCommand } = await import("./commands/checkpoint.js");

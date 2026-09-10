@@ -1,6 +1,6 @@
 /**
- * The P3 half of the write surface — docs/contracts/p3/api.md's six job routes and the excerpt
- * route.
+ * The P3 half of the write surface — docs/contracts/p3/api.md's six job routes, the excerpt
+ * route, and P8 amendment 5's `GET /jobs/:id/log`.
  *
  * Same division of labour as `./write.ts`: this file validates the body, calls the injected op
  * (`../jobs.ts`), and maps the op's refusal onto the contract's status. It never opens the index
@@ -163,6 +163,14 @@ export function jobRoutes(deps: JobRouteDeps): Hono {
       return c.json(await call(() => run(deps.ops, id, repoRoot)));
     });
   }
+
+  api.get("/jobs/:id/log", async (c) => {
+    const repoRoot = deps.repo(c).root;
+    const id = c.req.param("id");
+    const log = await call(() => deps.ops.jobLog(repoRoot, id));
+    if (log === undefined) throw notFound("job log", id);
+    return c.text(log, 200, { "content-type": "text/plain; charset=utf-8" });
+  });
 
   api.get("/sessions/:ulid/excerpt", async (c) => {
     const repoRoot = deps.repo(c).root;

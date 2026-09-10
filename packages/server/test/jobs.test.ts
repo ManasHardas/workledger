@@ -210,6 +210,26 @@ describe("POST /api/jobs/backfill", () => {
   });
 });
 
+describe("GET /api/jobs/:id/log (p8 amendment 5, #97)", () => {
+  it("serves the job's log as text/plain", async () => {
+    jobs.log = "harness said: recorded\n";
+    const response = await server.app.request("/api/jobs/JOB-1/log");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe("harness said: recorded\n");
+    expect(jobs.calls).toEqual([{ op: "jobLog", args: [repo.root, "JOB-1"] }]);
+  });
+
+  it("is a 404 when the job has no log", async () => {
+    jobs.log = undefined;
+    const { status, body } = await get("/api/jobs/JOB-1/log");
+
+    expect(status).toBe(404);
+    expect((body as { error: { code: string } }).error.code).toBe("not_found");
+  });
+});
+
 describe("POST /api/jobs/:id/{cancel,retry}", () => {
   it("cancels and retries by id", async () => {
     expect(await post("/api/jobs/JOB-1/cancel")).toEqual({

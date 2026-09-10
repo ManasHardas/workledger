@@ -198,7 +198,7 @@ describe("jobOps", () => {
     });
   });
 
-  it("cancels and retries, and reports the refusals with the codes the routes map", async () => {
+  it("cancels and retries, hands a retried job to the runner, and reports the refusals with the codes the routes map", async () => {
     const { job } = enqueueJob(db, {
       kind: "repair",
       sessionUlid: SESSION,
@@ -206,10 +206,14 @@ describe("jobOps", () => {
       newId,
       now: new Date(),
     });
-    const ops = jobOps(io(), () => {});
+    const started: string[] = [];
+    const ops = jobOps(io(), (ulid) => void started.push(ulid));
 
     expect((await ops.cancelJob(repo, job.id)).status).toBe("cancelled");
+    expect(started).toEqual([]);
     expect((await ops.retryJob(repo, job.id)).status).toBe("queued");
+    // A retry from the Jobs view must run, not just re-queue (#97): nothing else in `serve` drains.
+    expect(started).toEqual([SESSION]);
 
     await expect(ops.cancelJob(repo, "nope")).rejects.toMatchObject({ code: "not-found" });
     // A queued job cannot be retried — only a failed or cancelled one.
@@ -236,6 +240,22 @@ describe("jobOps", () => {
     expect(await ops.excerptSpan(repo, SESSION, 3)).toBeUndefined();
     expect(await ops.excerptSpan(repo, "MISSING", 1)).toBeUndefined();
     expect(await ops.excerptSpan("/elsewhere", SESSION, 1)).toBeUndefined();
+  });
+});
+
+describe("jobOps.jobLog (#97)", () => {
+  it("reads the job's log from log_path, and answers undefined for no log or another repo's job", async () => {
+    const { job } = enqueueJob(db, { kind: "repair", sessionUlid: SESSION, repoPath: repo, newId, now: new Date() });
+    const ops = jobOps(io(), () => {});
+    expect(await ops.jobLog(repo, job.id)).toBeUndefined();
+    expect(await ops.jobLog(repo, "nope")).toBeUndefined();
+
+    const logFile = path.join(home, "logs", `${job.id}.log`);
+    mkdirSync(path.dirname(logFile), { recursive: true });
+    writeFileSync(logFile, "the tail\n", "utf8");
+    db.connection.prepare("UPDATE jobs SET log_path = ? WHERE id = ?").run(logFile, job.id);
+    expect(await ops.jobLog(repo, job.id)).toBe("the tail\n");
+    expect(await ops.jobLog(path.join(dir, "other"), job.id)).toBeUndefined();
   });
 });
 

@@ -10,6 +10,10 @@
  * left `running` (heartbeat older than 60 s) and, while a job runs, refreshes that heartbeat on
  * an interval — so the only thing a `kill -9` costs is one re-claimed attempt.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import { resolveHome } from "../index/db.js";
 import {
   HEARTBEAT_INTERVAL_MS,
   claimJob,
@@ -28,6 +32,18 @@ export const DEFAULT_CONCURRENCY = 2;
 /** What a handler says about the job it just ran. */
 export interface JobResult extends JobOutcome {
   ok: boolean;
+  /**
+   * What the job printed — a resumed harness's interleaved stdout and stderr, already capped by
+   * `spawn-resume.ts`. Written by the runner to `<logDir>/<job id>.log` and recorded as the
+   * row's `log_path`, so a failure has a record beyond its one-line `error` (#97). Never inside
+   * the repo: `logDir` is under `WORKLEDGER_HOME`.
+   */
+  output?: string | undefined;
+}
+
+/** `<WORKLEDGER_HOME>/logs` — where {@link RunJobsOptions.logDir} points in every command. */
+export function jobLogDir(home?: string): string {
+  return path.join(resolveHome(home), "logs");
 }
 
 /** Options for {@link runJobs}. */
@@ -49,6 +65,8 @@ export interface RunJobsOptions {
   heartbeatMs?: number;
   /** One progress line on stderr, per cli.md ("progress lines to stderr"). */
   progress?: (line: string) => void;
+  /** Where a job's {@link JobResult.output} is written; no log is kept when omitted. */
+  logDir?: string | undefined;
 }
 
 /** What one {@link runJobs} pass did. */
@@ -97,13 +115,32 @@ async function runOne(
   const current = getJob(db, job.id);
   if (current?.status === "cancelled") return "cancelled";
 
+  const outcome = { ...result, logPath: result.logPath ?? writeLog(job.id, result.output, options) };
   const now = options.now();
   if (result.ok) {
-    completeJob(db, job.id, now, result);
+    completeJob(db, job.id, now, outcome);
     return "done";
   }
-  failJob(db, job.id, now, result);
+  failJob(db, job.id, now, outcome);
   return "failed";
+}
+
+/**
+ * Persist a job's output as `<logDir>/<id>.log` and return the path, or `undefined` when there
+ * is nothing to write. A log that cannot be written is one progress line, not a failed job: the
+ * outcome the handler reported is the job's, and losing its log must not change it.
+ */
+function writeLog(id: string, output: string | undefined, options: RunJobsOptions): string | undefined {
+  if (output === undefined || options.logDir === undefined) return undefined;
+  const file = path.join(options.logDir, `${id}.log`);
+  try {
+    mkdirSync(options.logDir, { recursive: true });
+    writeFileSync(file, output, "utf8");
+  } catch (error) {
+    options.progress?.(`job ${id}: could not write ${file}: ${describe(error)}`);
+    return undefined;
+  }
+  return file;
 }
 
 /**

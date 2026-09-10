@@ -135,7 +135,7 @@ describe("CheckpointPayload", () => {
 
 describe("payload size cap", () => {
   it("measures bytes, not characters", () => {
-    expect(MAX_PAYLOAD_BYTES).toBe(4096);
+    expect(MAX_PAYLOAD_BYTES).toBe(16384);
     expect(payloadByteLength("")).toBe(0);
     expect(payloadByteLength("ascii")).toBe(5);
     expect(payloadByteLength("é")).toBe(2);

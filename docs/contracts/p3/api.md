@@ -9,6 +9,7 @@ POST /api/jobs/backfill     body { since, concurrency?, extractFallback?, consen
                                                    → { jobs: Job[], estimate } (202); dry estimate when consent is false (200)
 POST /api/jobs/:id/cancel                          → Job
 POST /api/jobs/:id/retry                           → Job
+GET  /api/jobs/:id/log                             → text/plain, the job's log_path file; 404 when absent (P8 amendment 5, #97)
 GET  /api/sessions/:ulid/excerpt?cp=<n>            → { cp, offset: [from, to], turns: Turn[] } where
                                                      Turn = { role: "user"|"assistant", text: string, tools: number }
                                                      read from the transcript on this machine; 404 if the file is gone;

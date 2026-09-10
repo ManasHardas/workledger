@@ -21,7 +21,7 @@ import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
 import { enqueueJob } from "../jobs/queue.js";
-import { runJobs } from "../jobs/runner.js";
+import { jobLogDir, runJobs } from "../jobs/runner.js";
 import {
   findRepoRoot,
   isEnabled,
@@ -46,8 +46,8 @@ export interface RepairOptions {
   force?: boolean;
 }
 
-/** The contract's default: `timeoutMs: 300000`. */
-export const DEFAULT_TIMEOUT_S = 300;
+/** The contract's default: `timeoutMs: 600000` (p3/cli.md, amended 2026-09-10 by #97). */
+export const DEFAULT_TIMEOUT_S = 600;
 
 /**
  * The only tools the resumed session may use (cli.md step 2).
@@ -248,12 +248,14 @@ export async function resumeSession(
 
     // The outcome is measured by what landed in the ledger, not by the harness's exit code: a
     // session that exits 0 without running the checkpoint has repaired nothing.
+    // The output rides along either way: the runner writes it to `<home>/logs/<job>.log`, which
+    // is the only record of *why* a resume that exited 0 recorded nothing (#97).
     if (db.countCheckpoints(ulid) > before) {
       await markRepaired(root, ulid, io.now().toISOString());
       db.updateSession(ulid, { status: "repaired", updated_at: io.now().toISOString() });
-      return { ok: true };
+      return { ok: true, output: result.output };
     }
-    return { ok: false, error: failureReason(result, options.timeoutS) };
+    return { ok: false, error: failureReason(result, options.timeoutS), output: result.output };
   } finally {
     // Whatever happened, the next checkpoint in this session is an ordinary one. `checkpoint`
     // clears the column itself when it consumes it; this is the path where it never did.
@@ -339,6 +341,7 @@ export async function runRepair(
     now: io.now,
     handler,
     progress: io.stderr,
+    logDir: jobLogDir(io.home),
   });
 
   if (summary.done === 1) {

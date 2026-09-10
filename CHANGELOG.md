@@ -12,6 +12,7 @@ Built on main; `p8-shipped` and `v0.4.0` follow the operator's walkthrough from 
 - Next and Health fit a 375 px viewport (#91).
 - Install: `.github/workflows/release.yml` on `v*` tags builds, packs, publishes to npm (skipped with a printed command when `NPM_TOKEN` is absent), attaches the tarball to a GitHub release, and updates the Homebrew tap formula (skipped when `TAP_TOKEN` is absent); README install section for `npm install -g workledger` and `brew tap ManasHardas/workledger && brew install workledger` (#82).
 - Proven end to end: a fresh `HOME` with two temp repos and fixture transcripts runs `workledger`, drives the wizard through backfill with a stub `claude`, and Home shows both repos (#95).
+- Headless backfill records checkpoints again (#97): `workledger checkpoint --payload '<json>'` and `--payload-file <path>` beside stdin, instruction v3 prescribing the single-quoted argument with a no-quote/no-backslash string rule (Claude Code's headless permission matcher denies heredocs and heredoc-fed pipes even under `Bash(workledger checkpoint*)`), the payload cap raised 4,096 → 16,384 bytes, the resume timeout 300 → 600 s with a per-session `600 + 120 s/MB` (cap 1,800 s) budget for backfills, the resumed session's output kept in `~/.workledger/logs/<job>.log` and served by `GET /api/jobs/:id/log` as a collapsible Log on the Jobs card, and a retry from the Jobs view that actually runs the job.
 
 ## 0.3.0 — P5 Team (2026-09-09)
 

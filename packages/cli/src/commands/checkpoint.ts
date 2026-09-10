@@ -1,9 +1,13 @@
 /**
- * `workledger checkpoint [--session <ulid>] [--dry-run]` — docs/contracts/p1/cli.md.
+ * `workledger checkpoint [--session <ulid>] [--payload <json> | --payload-file <path>] [--dry-run]`
+ * — docs/contracts/p1/cli.md.
  *
- * The only validated write path into the ledger. Reads a `CheckpointPayload` on stdin and runs
- * the contract's eight numbered steps in order, each failing fast; on any failure nothing is
- * written and the exit code says why (`checkpoint` fails closed, data-flow §7).
+ * The only validated write path into the ledger. Reads a `CheckpointPayload` from exactly one
+ * source — the `--payload` argument, the `--payload-file` path, or stdin — and runs the
+ * contract's eight numbered steps in order, each failing fast; on any failure nothing is
+ * written and the exit code says why (`checkpoint` fails closed, data-flow §7). The argv forms
+ * exist because a headless Claude Code session may not feed stdin at all: its permission matcher
+ * denies heredocs and heredoc-fed pipes even under `Bash(workledger checkpoint*)` (#97).
  *
  * Everything this file does to a payload or a ledger file is done by calling `@workledger/core`
  * — validation, secret scanning, session and backlog rendering — and everything it does to the
@@ -11,6 +15,8 @@
  * rules, and the two side effects core is forbidden to have: the filesystem and SQLite.
  */
 import { Readable } from "node:stream";
+import { openSync, readSync, closeSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
 import {
@@ -61,6 +67,10 @@ import type { IndexDb, SessionRow } from "../index/db.js";
 export interface CheckpointOptions {
   /** The session ulid, when the index lookup would otherwise be ambiguous. */
   session?: string;
+  /** The payload as one argument — the form the instruction prescribes for headless sessions. */
+  payload?: string;
+  /** A file holding the payload, resolved against the cwd. */
+  payloadFile?: string;
   /** Perform steps 1–6 and print the would-be stdout line prefixed `dry-run:`. */
   dryRun?: boolean;
 }
@@ -99,6 +109,24 @@ interface PendingBacklogWrite {
   id: string;
   file: string;
   text: string;
+}
+
+/** Where the raw payload came from — named in the cap's error line and nowhere else. */
+type PayloadSource = "stdin" | "--payload" | "--payload-file";
+
+/**
+ * Read at most `limit` bytes of a file — one byte past the cap is enough to reject it, and a
+ * path an agent typed must not be able to make this command buffer an arbitrary file.
+ */
+function readFileBounded(file: string, limit: number): Buffer {
+  const fd = openSync(file, "r");
+  try {
+    const buffer = Buffer.alloc(limit);
+    const read = readSync(fd, buffer, 0, limit, 0);
+    return buffer.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Read a stream to the end, stopping once `limit` bytes have been exceeded. */
@@ -445,11 +473,32 @@ export async function runCheckpoint(
       return exit;
     };
 
-    // --- Step 2: byte cap, parse, validate --------------------------------------------------
-    const raw = await io.readStdin();
+    // --- Step 2: one source, byte cap, parse, validate --------------------------------------
+    if (options.payload !== undefined && options.payloadFile !== undefined) {
+      return fail(EXIT_USAGE, [`${PAYLOAD_PATH}: pass exactly one of --payload, --payload-file, or stdin`]);
+    }
+    let raw: Buffer;
+    let source: PayloadSource;
+    if (options.payload !== undefined) {
+      raw = Buffer.from(options.payload, "utf8");
+      source = "--payload";
+    } else if (options.payloadFile !== undefined) {
+      source = "--payload-file";
+      try {
+        raw = readFileBounded(path.resolve(io.cwd, options.payloadFile), MAX_PAYLOAD_BYTES + 1);
+      } catch {
+        // The path is the agent's own argument and the reason is almost always "no such file";
+        // neither the path nor the OS message is needed to say so, and neither is scanned yet.
+        return fail(EXIT_USAGE, [`${PAYLOAD_PATH}: --payload-file could not be read`]);
+      }
+    } else {
+      raw = await io.readStdin();
+      source = "stdin";
+    }
     if (raw.byteLength > MAX_PAYLOAD_BYTES) {
       return fail(EXIT_USAGE, [
-        `${PAYLOAD_PATH}: ${raw.byteLength} bytes on stdin, over the ${MAX_PAYLOAD_BYTES}-byte limit`,
+        `${PAYLOAD_PATH}: ${raw.byteLength} bytes ${source === "stdin" ? "on" : "in"} ${source}, ` +
+          `over the ${MAX_PAYLOAD_BYTES}-byte limit`,
       ]);
     }
 

@@ -65,6 +65,7 @@ function stubSource(overrides: Partial<LedgerSource> = {}): AppSource {
     backfill: (input) => fixture.backfill(input),
     cancelJob: (id) => fixture.cancelJob(id),
     retryJob: (id) => fixture.retryJob(id),
+    jobLog: (id) => fixture.jobLog(id),
     excerpt: (ulid, cp) => fixture.excerpt(ulid, cp),
     subscribe: () => () => {},
     ...overrides,

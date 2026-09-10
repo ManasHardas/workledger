@@ -346,6 +346,7 @@ class FixtureSource implements LedgerSource, MachineSource, OnboardingSource {
   backfill = readOnly<{ jobs: Job[]; estimate: BackfillEstimate }>;
   cancelJob = readOnly<Job>;
   retryJob = readOnly<Job>;
+  jobLog = readOnly<string>;
   excerpt = readOnly<Excerpt>;
 
   subscribe(): () => void {

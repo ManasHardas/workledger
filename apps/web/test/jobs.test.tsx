@@ -85,6 +85,10 @@ function stubSource(overrides: Partial<LedgerSource> = {}, initial: Job[] = []):
       calls.push(`retry:${id}`);
       return Promise.resolve(job({ id, status: "queued", attempts: 2 }));
     },
+    jobLog(id: string) {
+      calls.push(`log:${id}`);
+      return Promise.resolve(`resumed session output for ${id}\nlast line`);
+    },
     subscribe(handler: (event: LedgerEvent) => void) {
       handlers.add(handler);
       return () => handlers.delete(handler);
@@ -233,6 +237,24 @@ describe("jobs view", () => {
     expect(within(failedRow).getByRole("button", { name: "Cancel" })).toHaveProperty("disabled", true);
     fireEvent.click(within(failedRow).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(calls).toContain("retry:01JOB000000000000000000002"));
+  });
+
+  it("shows a collapsible Log on a job that has one, read only when opened (#97)", async () => {
+    const { source, calls } = stubSource({}, [
+      job({ id: "01JOB000000000000000000001", status: "failed", log_path: "/home/.workledger/logs/01JOB000000000000000000001.log" }),
+      job({ id: "01JOB000000000000000000002", status: "failed", created_at: "2026-09-09T08:00:00.000Z" }),
+    ]);
+    renderJobs(source);
+
+    const rows = await screen.findAllByRole("listitem");
+    const withLog = rows[0]!;
+    const withoutLog = rows[1]!;
+    expect(within(withoutLog).queryByText("Log")).toBeNull();
+    expect(calls.filter((call) => call.startsWith("log:"))).toEqual([]);
+
+    fireEvent.click(within(withLog).getByText("Log"));
+    expect(await within(withLog).findByText(/resumed session output for 01JOB000000000000000000001/)).toBeDefined();
+    expect(calls).toContain("log:01JOB000000000000000000001");
   });
 
   it("reports a refused write against its own row without dropping the list", async () => {

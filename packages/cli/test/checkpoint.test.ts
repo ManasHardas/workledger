@@ -11,7 +11,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createItem, createSessionText } from "@workledger/core";
+import { MAX_PAYLOAD_BYTES, createItem, createSessionText } from "@workledger/core";
 import type { SessionFrontmatter } from "@workledger/core";
 
 import { redactLine, runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
@@ -355,14 +355,14 @@ describe("workledger checkpoint", () => {
     expect(err).toContain("goal: required at checkpoint 1");
   });
 
-  it("a 4,097-byte payload is rejected before parsing", async () => {
+  it("a payload one byte over the cap is rejected before parsing", async () => {
     const fixture = setup();
     // Deliberately not valid JSON: the cap must fire before the parser ever sees it.
-    const oversize = `{"goal":"${"a".repeat(4_097)}"`;
+    const oversize = `{"goal":"${"a".repeat(MAX_PAYLOAD_BYTES + 1)}"`;
     const { code, err } = await run(fixture, oversize);
 
     expect(code).toBe(EXIT_USAGE);
-    expect(err[0]).toMatch(/^\(payload\): \d+ bytes on stdin, over the 4096-byte limit$/);
+    expect(err[0]).toMatch(/^\(payload\): \d+ bytes on stdin, over the 16384-byte limit$/);
   });
 
   it("a raw token on stdin never reaches stderr or the index", async () => {
@@ -601,7 +601,7 @@ describe("workledger checkpoint", () => {
         verified: "tests-passed" as const,
       })),
     };
-    expect(Buffer.byteLength(JSON.stringify(payload), "utf8")).toBeLessThanOrEqual(4096);
+    expect(Buffer.byteLength(JSON.stringify(payload), "utf8")).toBeLessThanOrEqual(MAX_PAYLOAD_BYTES);
     expect(Buffer.byteLength(JSON.stringify(payload), "utf8")).toBeGreaterThan(2048);
 
     const started = performance.now();
@@ -637,5 +637,94 @@ describe("ledger-fs", () => {
 
   it("returns undefined for a file that is not there", () => {
     expect(readTextFile(path.join(tempDir("workledger-missing-"), "nope.md"))).toBeUndefined();
+  });
+});
+
+describe("--payload and --payload-file (issue #97)", () => {
+  /** An io whose stdin must never be read: the argv forms replace it. */
+  function argvIo(fixture: Fixture): Capture {
+    const capture = makeIo(fixture, "");
+    capture.io.readStdin = () => Promise.reject(new Error("stdin was read"));
+    return capture;
+  }
+
+  it("records a checkpoint from --payload without touching stdin", async () => {
+    const fixture = setup();
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint({ payload: JSON.stringify(MINIMAL) }, capture.io);
+
+    expect(code).toBe(EXIT_OK);
+    expect(capture.out[0]).toMatch(/^checkpoint 1 recorded: 1 done, 1 remaining/);
+    expect(readFileSync(fixture.sessionPath(ULID_A), "utf8")).toContain("Ship the validated write path.");
+  });
+
+  it("records a checkpoint from --payload-file, resolved against the cwd", async () => {
+    const fixture = setup();
+    writeFileSync(path.join(fixture.root, "cp.json"), JSON.stringify(MINIMAL), "utf8");
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint({ payloadFile: "cp.json" }, capture.io);
+
+    expect(code).toBe(EXIT_OK);
+    expect(capture.out[0]).toMatch(/^checkpoint 1 recorded/);
+  });
+
+  it("refuses two sources and records the attempt", async () => {
+    const fixture = setup();
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint({ payload: "{}", payloadFile: "cp.json" }, capture.io);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(capture.err).toEqual(["(payload): pass exactly one of --payload, --payload-file, or stdin"]);
+    const db = openIndex({ home: fixture.home });
+    try {
+      expect(db.getSessionByUlid(ULID_A)?.last_attempt_exit).toBe(EXIT_USAGE);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reports an unreadable --payload-file as a usage error without quoting its content", async () => {
+    const fixture = setup();
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint({ payloadFile: "missing.json" }, capture.io);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(capture.err).toEqual(["(payload): --payload-file could not be read"]);
+  });
+
+  it("applies the byte cap to --payload and names the source", async () => {
+    const fixture = setup();
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint(
+      { payload: `{"goal":"${"a".repeat(MAX_PAYLOAD_BYTES + 1)}"` },
+      capture.io,
+    );
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(capture.err[0]).toMatch(/^\(payload\): \d+ bytes in --payload, over the 16384-byte limit$/);
+  });
+
+  it("applies the byte cap to --payload-file", async () => {
+    const fixture = setup();
+    writeFileSync(path.join(fixture.root, "big.json"), `{"goal":"${"a".repeat(MAX_PAYLOAD_BYTES + 1)}"`, "utf8");
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint({ payloadFile: "big.json" }, capture.io);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(capture.err[0]).toMatch(/^\(payload\): \d+ bytes in --payload-file, over the 16384-byte limit$/);
+  });
+
+  it("secret-scans a --payload exactly like stdin", async () => {
+    const fixture = setup();
+    const token = ["ghp", "_", "R7q2W8e4T6y0U3i5O1p9A2s4D6"].join("");
+    const capture = argvIo(fixture);
+    const code = await runCheckpoint(
+      { payload: JSON.stringify({ ...MINIMAL, goal: `Rotate ${token} now.` }) },
+      capture.io,
+    );
+
+    expect(code).toBe(EXIT_SECRET);
+    expect(`${capture.out.join("\n")}\n${capture.err.join("\n")}`).not.toContain(token);
+    expect(readFileSync(fixture.sessionPath(ULID_A), "utf8")).not.toContain("Rotate");
   });
 });

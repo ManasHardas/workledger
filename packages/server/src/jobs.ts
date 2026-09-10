@@ -115,6 +115,12 @@ export interface JobOps {
    */
   excerptSpan(repoRoot: string, ulid: string, cp: number): Promise<ExcerptSpan | undefined>;
   /**
+   * The text of the job's `log_path` — the resumed session's output the runner kept under
+   * `~/.workledger/logs/` (p8 amendment 5, #97) — or `undefined` when the job is not this repo's,
+   * has no log, or the file is gone.
+   */
+  jobLog(repoRoot: string, id: string): Promise<string | undefined>;
+  /**
    * The extraction estimate a refused consent has to report (api.md: "extract without consent →
    * 409 `{ code: "consent-required", estimate }`"). Optional until #54 lands.
    */

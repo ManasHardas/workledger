@@ -323,6 +323,11 @@ export interface LedgerSource {
   backfill(input: BackfillRequest): Promise<{ jobs: Job[]; estimate: BackfillEstimate }>;
   cancelJob(id: string): Promise<Job>;
   retryJob(id: string): Promise<Job>;
+  /**
+   * `GET /api/jobs/:id/log` (p8 amendment 5): the resumed session's output the runner kept, as
+   * text. Rejects with `code: "not_found"` when the job has no log.
+   */
+  jobLog(id: string): Promise<string>;
   /** Rejects with `code: "transcript_missing"` when the transcript is gone from this machine. */
   excerpt(ulid: string, cp: number): Promise<Excerpt>;
   // live: no-op unsubscribe when capabilities.live is false

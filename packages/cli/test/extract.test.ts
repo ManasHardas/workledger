@@ -235,9 +235,9 @@ describe("the estimate", () => {
     });
 
     expect(estimate.inputTokens).toBe(100_000);
-    expect(estimate.outputTokens).toBe(4096);
-    expect(estimate.usd).toBeCloseTo(100_000 / 1e6 + (4096 * 5) / 1e6, 6);
-    expect(formatUsd(estimate.usd)).toBe("$0.12");
+    expect(estimate.outputTokens).toBe(16384);
+    expect(estimate.usd).toBeCloseTo(100_000 / 1e6 + (16384 * 5) / 1e6, 6);
+    expect(formatUsd(estimate.usd)).toBe("$0.18");
     expect(estimateLines(estimate).join("\n")).toContain("claude-haiku-4-5");
   });
 
@@ -294,7 +294,7 @@ describe("runRepair --extract", () => {
     expect(request.url).toBe("https://api.anthropic.com/v1/messages");
     expect(request.headers["anthropic-version"]).toBe("2023-06-01");
     expect(request.headers["x-api-key"]).toBe(API_KEY);
-    expect(JSON.parse(request.body)).toMatchObject({ model: "claude-haiku-4-5", max_tokens: 4096 });
+    expect(JSON.parse(request.body)).toMatchObject({ model: "claude-haiku-4-5", max_tokens: 16384 });
     expect(request.body).toContain("I will edit");
 
     const job = listJobs(db, repo)[0];

@@ -72,6 +72,18 @@ reuses the existing session record when the `session_id` is known, otherwise cre
 - **Loop guard**: docs define `stop_hook_active` as "Boolean indicating whether a Stop hook has
   already blocked this attempt to stop." When it is `true`, the hook always allows (exit 0). This
   is in addition to the index-based never-twice guard.
+- **Instruction v3** (amendment 2026-09-10, #97; `packages/cli/src/instruction.ts`, also the
+  preamble-wrapped repair instruction of `docs/contracts/p3/cli.md`): the text prescribes
+  `workledger checkpoint --session <ulid> --payload '<json>'` — one single-quoted argument — and
+  states that heredocs, pipes and stdin are not permitted in headless sessions, because the
+  headless permission matcher denies a heredoc ("brace with quote character"), a heredoc-fed pipe
+  ("cannot be statically analyzed") and a backslash before whitespace even under
+  `Bash(workledger checkpoint*)`, while a single-quoted argument with brackets and nested double
+  quotes runs with no denial (probed 2026-09-10). String rule: no single quote and no backslash
+  anywhere in the JSON; an apostrophe is written as ’ (U+2019), a double quote inside a string as
+  ” (U+201D), a backslash as ⧵ (U+29F5), and every string stays on one line. The cap is 16,384
+  bytes, `decision` notes require `reason` (and `by`), and the open-ids line and the
+  previous-errors block are unchanged from v2.
 
 ### SessionEnd
 

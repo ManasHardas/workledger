@@ -154,6 +154,8 @@ export class FakeJobOps implements JobOps {
   backfill: JobOps["backfill"];
   /** What `excerptSpan` answers; `undefined` is "no such session or checkpoint". */
   span: ExcerptSpan | undefined;
+  /** What `jobLog` answers; `undefined` is "no log for that job". */
+  log: string | undefined;
 
   #record<T>(op: string, args: unknown[], value: T): T {
     this.calls.push({ op, args });
@@ -177,6 +179,8 @@ export class FakeJobOps implements JobOps {
     this.#record("retryJob", [repoRoot, id], fakeJob({ id, status: "queued" }));
   excerptSpan = async (repoRoot: string, ulid: string, cp: number): Promise<ExcerptSpan | undefined> =>
     this.#record("excerptSpan", [repoRoot, ulid, cp], this.span);
+  jobLog = async (repoRoot: string, id: string): Promise<string | undefined> =>
+    this.#record("jobLog", [repoRoot, id], this.log);
 }
 
 /** One `jobs` row with every column filled, so a test only names what it cares about. */

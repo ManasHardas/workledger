@@ -21,9 +21,10 @@ export type SchemaVersion = z.infer<typeof schemaVersionSchema>;
 
 /**
  * The CLI rejects a checkpoint payload larger than this before parsing it (design spec §4.4).
- * Bytes, not characters — measure with {@link payloadByteLength}.
+ * Bytes, not characters — measure with {@link payloadByteLength}. Raised from 4096 by the P1
+ * contract amendment of 2026-09-10 (#97): a 100-turn session's digest did not fit.
  */
-export const MAX_PAYLOAD_BYTES = 4096;
+export const MAX_PAYLOAD_BYTES = 16384;
 
 /** Item cap per `done` / `remaining` / `notes` section of a checkpoint payload (design spec §4.4). */
 export const MAX_SECTION_ITEMS = 12;

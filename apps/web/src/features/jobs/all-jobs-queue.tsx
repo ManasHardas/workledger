@@ -75,6 +75,7 @@ export function AllJobsQueue() {
               error={jobs.errors[job.id]}
               onCancel={() => jobs.act(job.id, () => machine.forRepo(job.repo.id).cancelJob(job.id))}
               onRetry={() => jobs.act(job.id, () => machine.forRepo(job.repo.id).retryJob(job.id))}
+              readLog={() => machine.forRepo(job.repo.id).jobLog(job.id)}
             />
           ))}
         </ul>

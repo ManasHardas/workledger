@@ -346,6 +346,10 @@ export class LocalServerSource implements LedgerSource, MachineSource, Onboardin
     return this.#write("retryJob", () => this.#post<Job>(`/api/jobs/${encodeURIComponent(id)}/retry`));
   }
 
+  jobLog(id: string): Promise<string> {
+    return this.#getText(`/api/jobs/${encodeURIComponent(id)}/log`);
+  }
+
   excerpt(ulid: string, cp: number): Promise<Excerpt> {
     return this.#get<Excerpt>(`/api/sessions/${encodeURIComponent(ulid)}/excerpt${queryString({ cp })}`);
   }

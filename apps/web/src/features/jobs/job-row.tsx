@@ -1,6 +1,10 @@
+import { useCallback, useState } from "react";
+import type { SyntheticEvent } from "react";
+
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardHeader } from "../../components/ui/card.js";
+import { messageOf } from "../../lib/errors.js";
 import { repoHref } from "../../lib/router.js";
 import { detailHref } from "../ledger/detail-route.js";
 import { canCancel, canRetry, elapsed, formatWhen, shortId, statusVariant } from "./format.js";
@@ -17,6 +21,11 @@ import type { Job, Repo } from "../../lib/ledger-source.js";
  * The session is a link into the Ledger rather than 26 characters of ULID as text: the job is only
  * interesting next to the session it is repairing. `repoId` is the repo that link lives under;
  * `repo`, when given, is the machine-wide tab's repo column (P8) and links to that repo's queue.
+ *
+ * A job with a `log_path` gets a collapsed "Log" section (#97): the resumed session's own output,
+ * read through `readLog` only when opened — it is the one record of why a resume that exited 0
+ * recorded nothing, and the parent supplies the read so the machine-wide tab can scope it to the
+ * row's repo.
  */
 export function JobRow({
   job,
@@ -27,6 +36,7 @@ export function JobRow({
   error,
   onCancel,
   onRetry,
+  readLog,
   canWrite,
 }: {
   job: Job;
@@ -37,6 +47,7 @@ export function JobRow({
   error: string | undefined;
   onCancel: () => void;
   onRetry: () => void;
+  readLog: () => Promise<string>;
   canWrite: boolean;
 }) {
   return (
@@ -87,6 +98,8 @@ export function JobRow({
             </p>
           )}
 
+          {job.log_path === null ? null : <JobLog readLog={readLog} />}
+
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
@@ -117,5 +130,43 @@ function Field({ label, value }: { label: string; value: string }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="m-0 font-mono">{value}</dd>
     </div>
+  );
+}
+
+/** The collapsed log, read on the first open and re-read on every open after. */
+function JobLog({ readLog }: { readLog: () => Promise<string> }) {
+  const [result, setResult] = useState<
+    { state: "idle" } | { state: "loading" } | { state: "error"; message: string } | { state: "ready"; text: string }
+  >({ state: "idle" });
+
+  const onToggle = useCallback(
+    (event: SyntheticEvent<HTMLDetailsElement>) => {
+      if (!event.currentTarget.open) return;
+      setResult({ state: "loading" });
+      readLog().then(
+        (text) => setResult({ state: "ready", text }),
+        (error: unknown) => setResult({ state: "error", message: messageOf(error) }),
+      );
+    },
+    [readLog],
+  );
+
+  return (
+    <details className="text-xs" onToggle={onToggle}>
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Log</summary>
+      {result.state === "loading" ? (
+        <p role="status" className="mt-1 text-muted-foreground">
+          Loading…
+        </p>
+      ) : result.state === "error" ? (
+        <p role="alert" className="mt-1 text-destructive">
+          Could not read the log: {result.message}
+        </p>
+      ) : result.state === "ready" ? (
+        <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono">
+          {result.text === "" ? "(empty)" : result.text}
+        </pre>
+      ) : null}
+    </details>
   );
 }

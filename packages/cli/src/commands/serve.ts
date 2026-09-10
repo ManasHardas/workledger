@@ -27,8 +27,8 @@ import { fileURLToPath } from "node:url";
 import { BacklogOpError } from "../backlog-ops.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { resolveHome } from "../index/db.js";
-import { cancelJob, enqueueJob, listJobs, retryJob } from "../jobs/queue.js";
-import { findRepoRoot, isEnabled } from "../ledger-fs.js";
+import { cancelJob, enqueueJob, getJob, listJobs, retryJob } from "../jobs/queue.js";
+import { findRepoRoot, isEnabled, readTextFile } from "../ledger-fs.js";
 import { removeServeState, writeServeState } from "../serve-state.js";
 import type { IndexDb } from "../index/db.js";
 import type {
@@ -255,7 +255,18 @@ export function jobOps(
       withDb((db) => {
         const result = retryJob(db, id);
         if ("message" in result) throw asJobOpError(result.message, id);
+        // Re-queued is not re-run: nothing else in `serve` drains the queue, so a retry from the
+        // Jobs view that only flipped the row would sit `queued` until a CLI command happened to
+        // claim it (#97). The resume path is handed off the way `repair` hands it off.
+        if (result.kind === "repair") startRepair(result.session_ulid);
         return result as Job;
+      }),
+
+    jobLog: (repoRoot, id) =>
+      withDb((db) => {
+        const job = getJob(db, id);
+        if (job === undefined || job.repo_path !== repoRoot || job.log_path === null) return undefined;
+        return readTextFile(job.log_path);
       }),
 
     estimateExtract: (repoRoot, ulid) =>

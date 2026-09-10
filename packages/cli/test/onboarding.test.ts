@@ -385,7 +385,7 @@ describe("backfillPlan", () => {
     expect(await backfillPlan({ repos: [repoB], since: "90d", method: "extract" }, io)).not.toHaveProperty("unsupported");
     expect(without.estimate).toMatchObject({ needsApiKey: true });
     const estimate = without.estimate as { tokens: number; usd: number };
-    expect(estimate.tokens).toBeGreaterThan(3 * 4096);
+    expect(estimate.tokens).toBeGreaterThan(3 * 16384);
     expect(estimate.usd).toBeGreaterThan(0);
 
     const keyed = await backfillPlan(
@@ -408,7 +408,7 @@ describe("backfillPlan", () => {
 /** Input tokens of `n` hs-gamma-sized transcripts plus the fixed output allowance each. */
 function estimateTokens(n: number): number {
   const bytes = Buffer.byteLength(readFileSync(path.join(FIXTURES, "hs-gamma.jsonl"), "utf8").replaceAll("__CWD__", repoA));
-  return n * (Math.ceil(bytes / 4) + 4096);
+  return n * (Math.ceil(bytes / 4) + 16384);
 }
 
 describe("queueOnboardingBackfill and onboardingStatus", () => {

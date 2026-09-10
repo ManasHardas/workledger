@@ -45,7 +45,7 @@ const OPTIONS: Record<string, string[]> = {
   // wire format (docs/contracts/p4/hooks-codex.md, hooks-cursor.md).
   init: ["--repo", "--yes", "--no-backfill", "--teammate", "--harness"],
   hook: ["--harness"],
-  checkpoint: ["--session", "--dry-run"],
+  checkpoint: ["--session", "--payload", "--payload-file", "--dry-run"],
   brief: ["--repo", "--max-tokens"],
   doctor: ["--json"],
   // `--no-open` is one option in commander's model: it defines `open`, defaulted to true.

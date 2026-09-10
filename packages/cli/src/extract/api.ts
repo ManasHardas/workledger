@@ -27,11 +27,11 @@ export const API_KEY_ENV = "ANTHROPIC_API_KEY";
 /**
  * Output ceiling for one extraction call.
  *
- * A `CheckpointPayload` is capped at 4096 bytes by the P1 contract (`MAX_PAYLOAD_BYTES`), so a
- * response that needs more than this is already over the limit `checkpoint` would reject; 4096
+ * A `CheckpointPayload` is capped at 16384 bytes by the P1 contract (`MAX_PAYLOAD_BYTES`), so a
+ * response that needs more than this is already over the limit `checkpoint` would reject; 16384
  * output tokens is comfortably above the cap and is the figure the cost estimate prices in.
  */
-export const MAX_OUTPUT_TOKENS = 4096;
+export const MAX_OUTPUT_TOKENS = 16384;
 
 /**
  * The system prompt. Fixed, and versioned in the same spirit as `src/instruction.ts`: it is the
@@ -58,7 +58,7 @@ export const EXTRACT_SYSTEM_PROMPT = [
   'notes[]: {"type": "discovery" | "decision" | "blocker" | "question", "text": <=500 chars}.',
   '         A "decision" note also needs "by": "human" | "agent" and "reason": <=300 chars.',
   "",
-  "At most 20 items per section, and the whole object must be under 4096 bytes.",
+  "At most 20 items per section, and the whole object must be under 16384 bytes.",
   "Describe only what the transcript shows. Never include credentials, tokens, API keys or",
   "passwords in any field, even if they appear in the transcript.",
 ].join("\n");

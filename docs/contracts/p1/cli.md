@@ -38,10 +38,18 @@ Stdin: the Claude Code hook JSON. Behavior per `docs/contracts/p1/hooks-claude-c
 exits non-zero except the deliberate `2` on Stop-block. Any internal error: one line on stderr
 prefixed `workledger:`, exit 0.
 
-## `workledger checkpoint [--session <ulid>] [--dry-run]`
+## `workledger checkpoint [--session <ulid>] [--payload <json> | --payload-file <path>] [--dry-run]`
 
-Stdin: a `CheckpointPayload` (`docs/contracts/p1/checkpoint-payload.schema.json`), at most 4,096
-bytes.
+Input: a `CheckpointPayload` (`docs/contracts/p1/checkpoint-payload.schema.json`), at most 16,384
+bytes, from exactly one source: the `--payload <json>` argument, the file named by
+`--payload-file <path>` (resolved against the cwd), or stdin. Two sources is a usage error (exit
+`1`); the cap, the validation and the secret scan are the same whichever source is used.
+
+*Amendment (2026-09-10, #97).* The argv forms were added and the cap raised from 4,096 bytes:
+Claude Code's headless permission matcher denies a heredoc and a heredoc-fed pipe even under
+`Bash(workledger checkpoint*)`, so a resumed session could not feed stdin at all, and a 100-turn
+session's digest did not fit in 4 KB. Instruction v3 prescribes `--payload '<json>'`
+(`docs/contracts/p1/hooks-claude-code.md` §Stop).
 
 Steps, in order, each failing fast:
 

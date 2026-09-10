@@ -23,7 +23,7 @@ import { CURSOR_NO_RESUME } from "../src/adapters/cursor.js";
 import { openIndex } from "../src/index/db.js";
 import { getJob, listJobs } from "../src/jobs/queue.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
-import { runRepair } from "../src/commands/repair.js";
+import { DEFAULT_TIMEOUT_S, runRepair } from "../src/commands/repair.js";
 import { sessionFile, writeFileAtomic } from "../src/ledger-fs.js";
 import type { HarnessAdapter, ResumeOptions, ResumeResult } from "../src/adapters/types.js";
 import type { IndexDb } from "../src/index/db.js";
@@ -134,6 +134,7 @@ function repairIo(adapter: HarnessAdapter) {
     stderr: (line: string) => err.push(line),
     now: () => new Date("2026-09-09T13:00:00.000Z"),
     newId,
+    home,
   };
 }
 
@@ -180,6 +181,42 @@ describe("runRepair — resume path", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ kind: "repair", status: "done", attempts: 1 });
     expect(out).toContain(`repair: session ${ULID} repaired`);
+  });
+
+  it("defaults the resume timeout to 600 s (#97)", async () => {
+    expect(DEFAULT_TIMEOUT_S).toBe(600);
+    crashedSession();
+    const adapter = checkpointingAdapter();
+    await runRepair(ULID, {}, repairIo(adapter));
+    expect((adapter.seen[0] as ResumeOptions).timeoutMs).toBe(600_000);
+  });
+
+  it("writes the resumed session's output to <home>/logs/<job>.log and sets log_path, on success and on failure (#97)", async () => {
+    crashedSession();
+    const adapter = checkpointingAdapter();
+    adapter.resumeHeadless = async (sessionId: string, options: ResumeOptions): Promise<ResumeResult> => {
+      const result = await checkpointingAdapter().resumeHeadless!(sessionId, options);
+      return { ...result, output: "harness said: recorded\n" };
+    };
+    await runRepair(ULID, {}, repairIo(adapter));
+    const done = listJobs(db, repo)[0]!;
+    expect(done.status).toBe("done");
+    expect(done.log_path).toBe(path.join(home, "logs", `${done.id}.log`));
+    expect(readFileSync(done.log_path!, "utf8")).toBe("harness said: recorded\n");
+  });
+
+  it("keeps the log of a resume that failed, which is the only record of why (#97)", async () => {
+    const failing: HarnessAdapter = {
+      ...claudeCodeAdapter,
+      async resumeHeadless(): Promise<ResumeResult> {
+        return { exitCode: null, timedOut: true, output: "tail of a killed session" };
+      },
+    };
+    crashedSession();
+    await runRepair(ULID, { timeout: 3 }, repairIo(failing));
+    const failed = listJobs(db, repo).find((job) => job.status === "failed")!;
+    expect(failed.log_path).toBe(path.join(home, "logs", `${failed.id}.log`));
+    expect(readFileSync(failed.log_path!, "utf8")).toBe("tail of a killed session");
   });
 
   it("pins the resumed session to the repo, the checkpoint command, and the timeout", async () => {
