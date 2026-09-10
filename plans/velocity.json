@@ -692,6 +692,74 @@
       "tokens_reviewers": 0,
       "review_iterations": 0,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "P3-1",
+      "kind": "pr_merge",
+      "pr": 61,
+      "issue": 53,
+      "agent_role": "backend",
+      "class": "service-module first-of-class (lean, CR+security)",
+      "tokens_implementer": 471508,
+      "tokens_reviewers": 107184,
+      "review_iterations": 1,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "real crash->scan->repair e2e"
+    },
+    {
+      "session": 2,
+      "wave": "P3-1",
+      "kind": "pr_merge",
+      "pr": 65,
+      "issue": 55,
+      "agent_role": "backend",
+      "class": "server (lean, orchestrator smoke-test)",
+      "tokens_implementer": 230709,
+      "tokens_reviewers": 0,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "excerpt route 404 found by smoke test -> fixed in #56"
+    },
+    {
+      "session": 2,
+      "wave": "P3-1",
+      "kind": "pr_merge",
+      "pr": 66,
+      "issue": 54,
+      "agent_role": "backend",
+      "class": "credential surface (lean, security only)",
+      "tokens_implementer": 596027,
+      "tokens_reviewers": 114518,
+      "review_iterations": 1,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "P3-2",
+      "kind": "pr_merge",
+      "pr": 68,
+      "issue": 57,
+      "agent_role": "qa",
+      "class": "e2e (lean, no review)",
+      "tokens_implementer": 115797,
+      "tokens_reviewers": 0,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV"
+    },
+    {
+      "session": 2,
+      "wave": "P4-1",
+      "kind": "pr_merge",
+      "pr": 67,
+      "issue": 59,
+      "agent_role": "backend",
+      "class": "adapters first-of-class (lean, CR+security)",
+      "tokens_implementer": 570613,
+      "tokens_reviewers": 121651,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "rebase conflict after #66; orchestrator mis-reported merge once"
     }
   ]
 }

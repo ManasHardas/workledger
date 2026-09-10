@@ -6,11 +6,11 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S2, P1 and P2 shipped)
+## Current state — 2026-09-09 (post-S2, P1, P2, P4 shipped; P3 one PR from done)
 
-**Phase:** P3 — Recovery and backfill (`plans/feature-p3-recovery.md`). P1 shipped at `p1-shipped`; P2 shipped at `p2-shipped` (11 PRs, #42–#51, #60). Specs for P4–P7 are on main.
+**Phase:** P3 finishing (#56 Jobs UI in flight; #53 #54 #55 #57 merged) and P5 starting (#63 in flight). Tags: `p1-shipped`, `p2-shipped`, `p4-shipped` (PR #67). P6 deferred by the operator; P7 blocked on Figma inputs.
 
-**Wave:** P3 Wave 1 in progress (#53 building); P3 issues #53–#57 filed; P4 issue #59 filed and waits on #53.
+**Wave:** P3 Wave 1 last slot (#56); P5 Wave 1 first slot (#63). Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
 
 **Last session:** S2 (same conversation as S1, continued under Clause #12 lean mode): merged #26 #27 #28 #29 #30, amendment 3, dogfood on this repo (three live sessions), CHANGELOG, tag.
 
