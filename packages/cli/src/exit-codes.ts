@@ -18,3 +18,7 @@ export const EXIT_WARNINGS = 2;
 export const EXIT_SECRET = 3;
 /** Not an enabled repo. */
 export const EXIT_NOT_ENABLED = 4;
+/** `repair` and `backfill` only: the job did not succeed (docs/contracts/p3/cli.md). */
+export const EXIT_JOB_FAILED = 5;
+/** `repair --extract` only: consent for the extraction spend was refused. */
+export const EXIT_CONSENT_REFUSED = 6;

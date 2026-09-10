@@ -25,6 +25,13 @@ export interface InstructionInput {
    * `checkpoint` command scans it on the way into the index.
    */
   previousErrors?: string | undefined;
+  /**
+   * How many checkpoints the session already has, so the instruction can name the span rather
+   * than say "the last checkpoint" — the repair path's wording (docs/contracts/p3/cli.md
+   * §`workledger repair`: "the checkpoint instruction with 'since checkpoint n'"). Omitted on
+   * the P1 block path, where the text stays byte-identical to instruction v2.
+   */
+  sinceCheckpoint?: number | undefined;
 }
 
 /** How many characters of a cached failure are quoted back before it is truncated. */
@@ -42,7 +49,10 @@ export function checkpointInstruction(input: InstructionInput): string {
     `workledger: record a checkpoint before you stop (instruction v${INSTRUCTION_VERSION}).`,
     "",
     `Run: workledger checkpoint --session ${input.sessionId}`,
-    "and pipe a CheckpointPayload JSON on stdin describing the work since the last checkpoint:",
+    input.sinceCheckpoint !== undefined && input.sinceCheckpoint > 0
+      ? "and pipe a CheckpointPayload JSON on stdin describing the work since checkpoint " +
+        `${input.sinceCheckpoint}:`
+      : "and pipe a CheckpointPayload JSON on stdin describing the work since the last checkpoint:",
     "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 4096 bytes.",
     "Shapes: done {text, files[], commit?, verified: tests-passed|tests-failed|not-verified};",
     "remaining {text, why, new: true | ref: WL-…, rel: updates|closes, blocked_by?[]};",
@@ -63,4 +73,29 @@ export function checkpointInstruction(input: InstructionInput): string {
   }
 
   return lines.join("\n");
+}
+
+/** What {@link repairInstruction} interpolates on top of {@link InstructionInput}. */
+export interface RepairInstructionInput extends InstructionInput {
+  /** Why the session is being repaired, as one clause: `crashed`, `ended without a digest`. */
+  reason: string;
+}
+
+/**
+ * The prompt `workledger repair` hands a resumed session (docs/contracts/p3/cli.md
+ * §`workledger repair` step 2).
+ *
+ * It is the checkpoint instruction with a preamble, because the resumed agent's situation is not
+ * the blocked agent's: nothing stopped it, it is being woken up long after the fact and its only
+ * job is the digest. The preamble says so, and says it may not do anything else — which is the
+ * prompt-side half of the `--allowedTools` pin the adapter applies.
+ */
+export function repairInstruction(input: RepairInstructionInput): string {
+  return [
+    `workledger: this session ${input.reason} without recording its work.`,
+    "Record one checkpoint describing what this session did, then stop. Do not edit files, run",
+    "builds, or start new work — the only command you may run is the one below.",
+    "",
+    checkpointInstruction(input),
+  ].join("\n");
 }

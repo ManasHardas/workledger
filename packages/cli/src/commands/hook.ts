@@ -197,14 +197,52 @@ async function sessionStart(ctx: Context): Promise<number> {
     ulid = await createSession(ctx, size);
   }
 
-  if (ctx.private || !ctx.config.brief.inject) return EXIT_OK;
+  if (ctx.private) return EXIT_OK;
 
-  const brief = await buildSessionBrief(ctx, ulid);
-  if (brief !== undefined) {
-    const payload = io.adapter.injectContext(brief);
-    if (payload !== undefined) io.stdout(payload);
+  if (ctx.config.brief.inject) {
+    const brief = await buildSessionBrief(ctx, ulid);
+    if (brief !== undefined) {
+      const payload = io.adapter.injectContext(brief);
+      if (payload !== undefined) io.stdout(payload);
+    }
   }
+
+  await opportunisticScan(ctx);
   return EXIT_OK;
+}
+
+/** At most this many open sessions are examined by the `SessionStart` sweep (cli.md §scan). */
+export const OPPORTUNISTIC_SCAN_LIMIT = 20;
+/** And it gives up after this long, whether or not it got through them. */
+export const OPPORTUNISTIC_SCAN_MS = 200;
+
+/**
+ * The orphan sweep, run off the back of a `SessionStart` — cli.md §`workledger scan`: "Also runs
+ * opportunistically inside `hook SessionStart` (bounded to 200 ms, at most 20 sessions)".
+ *
+ * A crash leaves no event behind, so without this a repo would only ever notice its orphans when
+ * someone typed `workledger scan`. Starting a new session is the moment the previous one's death
+ * became certain, which is what makes this the right hook to hang it on.
+ *
+ * Three things keep it off the hook's critical path: the caps, the fact that it runs *after* the
+ * brief has already been written to stdout, and this catch. A hook that failed here would wedge
+ * a session over bookkeeping for sessions that are already over.
+ */
+async function opportunisticScan(ctx: Context): Promise<void> {
+  try {
+    const { newSessionId } = await import("@workledger/core/ids");
+    const { runScan } = await import("./scan.js");
+    await runScan({
+      db: ctx.db,
+      root: ctx.root,
+      now: ctx.io.now,
+      newId: newSessionId,
+      limit: OPPORTUNISTIC_SCAN_LIMIT,
+      budgetMs: OPPORTUNISTIC_SCAN_MS,
+    });
+  } catch (error) {
+    ctx.io.stderr(`workledger: hook SessionStart: scan skipped (${describe(error)})`);
+  }
 }
 
 /** Mint the ulid, write the session file, and open the index row. */

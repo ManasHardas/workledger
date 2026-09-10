@@ -42,6 +42,36 @@ export interface HookInputError {
   message: string;
 }
 
+/** What {@link HarnessAdapter.resumeHeadless} is asked to do. */
+export interface ResumeOptions {
+  /** Working directory the resumed session is pinned to — the enabled repo root. */
+  cwd: string;
+  /** The prompt handed to the resumed agent (`src/instruction.ts`). */
+  instruction: string;
+  /**
+   * The only tools the resumed session may use. `repair` passes
+   * `["Bash(workledger checkpoint*)"]`: the point of the resume is one checkpoint, and a
+   * repair that could edit files would be a second session's worth of work nobody asked for.
+   */
+  allowedTools: readonly string[];
+  /** Kill the child after this long and report `timedOut`. */
+  timeoutMs: number;
+  /** Extra environment for the child, merged over the parent's. */
+  env?: Record<string, string | undefined>;
+}
+
+/** What one headless resume did. */
+export interface ResumeResult {
+  /** The child's exit code, or `null` when it was killed. */
+  exitCode: number | null;
+  /** `true` when {@link ResumeOptions.timeoutMs} elapsed and the child was killed. */
+  timedOut: boolean;
+  /** stdout and stderr, interleaved, capped. Never written to the repo. */
+  output: string;
+  /** Present when the harness could not be spawned at all. */
+  spawnError?: string;
+}
+
 /** What one harness's hook protocol looks like on the wire. */
 export interface HarnessAdapter {
   /** The `harness` value written to the ledger and to the index. */
@@ -70,6 +100,18 @@ export interface HarnessAdapter {
 
   /** Byte size of a transcript, or `undefined` when it cannot be measured. */
   transcriptSize(transcriptPath: string | undefined): number | undefined;
+
+  /**
+   * Resume one of this harness's sessions headlessly and run `instruction` in it.
+   *
+   * The repair path of docs/contracts/p3/cli.md: the resumed agent already holds the transcript,
+   * so workledger never parses one (plans/feature-p3-data-flow.md §Repair by resume). Optional
+   * because a harness with no headless resume is a legitimate adapter — `repair` reports exit 5
+   * and names the extraction fallback rather than assuming the method exists.
+   *
+   * Never throws: a harness that is not installed comes back as `spawnError`.
+   */
+  resumeHeadless?(sessionId: string, options: ResumeOptions): Promise<ResumeResult>;
 }
 
 /**

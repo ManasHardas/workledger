@@ -9,6 +9,9 @@ import type { CheckpointOptions } from "./commands/checkpoint.js";
 import type { DoctorOptions } from "./commands/doctor.js";
 import type { HookEvent } from "./commands/hook-events.js";
 import type { InitOptions } from "./commands/init.js";
+import type { JobsOptions } from "./commands/jobs.js";
+import type { RepairOptions } from "./commands/repair.js";
+import type { ScanOptions } from "./commands/scan.js";
 import type { ServeOptions } from "./commands/serve.js";
 
 // Resolved relative to this module, so it points at packages/cli/package.json both from
@@ -35,7 +38,7 @@ export interface ExitCell {
   code: number;
 }
 
-/** Parse a `--max-tokens` value, rejecting anything that is not a positive integer. */
+/** Parse a numeric option value, rejecting anything that is not a positive integer. */
 function positiveInteger(value: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -134,6 +137,43 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .action(async (options: ServeOptions) => {
       const { serveCommand } = await import("./commands/serve.js");
       exit.code = await serveCommand(options);
+    });
+
+  // P3 (docs/contracts/p3/cli.md). Same shape as every command above: the body is reached with
+  // `await import()` so `hook Stop`'s allow path never pays for it.
+  program
+    .command("scan")
+    .description("mark orphaned sessions crashed and queue their repairs")
+    .option("--repo <path>", "repo to sweep (default: the repo root above cwd)")
+    .option("--json", "emit the result as JSON")
+    .action(async (options: ScanOptions) => {
+      const { scanCommand } = await import("./commands/scan.js");
+      exit.code = await scanCommand(options);
+    });
+
+  program
+    .command("repair")
+    .description("record the missing digest for a crashed session by resuming it")
+    .addArgument(new Argument("<ulid>", "the session to repair"))
+    .option("--extract", "reconstruct from the transcript instead of resuming (arrives with #54)")
+    .option("--yes", "skip the extraction spend prompt")
+    .option("--timeout <s>", "seconds before the resumed session is killed", positiveInteger)
+    .option("--force", "repair a session that is still open, or ended without needs_repair")
+    .action(async (ulid: string, options: RepairOptions) => {
+      const { repairCommand } = await import("./commands/repair.js");
+      exit.code = await repairCommand(ulid, options);
+    });
+
+  program
+    .command("jobs")
+    .description("list, cancel and retry the repair queue")
+    .option("--repo <path>", "repo to read (default: the repo root above cwd)")
+    .option("--json", "emit the listing as JSON")
+    .option("--cancel <job-id>", "cancel a queued or running job")
+    .option("--retry <job-id>", "re-queue a failed or cancelled job")
+    .action(async (options: JobsOptions) => {
+      const { jobsCommand } = await import("./commands/jobs.js");
+      exit.code = await jobsCommand(options);
     });
 
   // `backlog` and `note` are pass-throughs: the sub-command tables, their flags and their help

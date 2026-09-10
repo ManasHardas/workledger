@@ -226,14 +226,23 @@ export function validationLine(issue: ValidationError, parsed: unknown): string 
 }
 
 /**
- * The stamp's `trigger`: the block that asked for this checkpoint, else `manual`
- * (data-flow §2, `checkpoint (agent-invoked)`).
+ * The stamp's `trigger`: the pending trigger a runner set, else the block that asked for this
+ * checkpoint, else `manual` (data-flow §2, `checkpoint (agent-invoked)`).
+ *
+ * `pending_trigger` wins because it describes *why this process exists*: `workledger repair`
+ * writes it on the session row before it resumes the harness, and the resumed agent runs the
+ * same `workledger checkpoint --session <ulid>` a live session runs — no flag on its command
+ * line says the checkpoint is a repair, so the row is the only place that can
+ * (plans/feature-p3-data-flow.md §Repair by resume). It is cleared by `resetAfterCheckpoint`,
+ * so it stamps exactly one checkpoint.
  *
  * A trigger the index cannot vouch for — no pending block, a null column, or a value this build
  * does not know — degrades to `manual` rather than failing the checkpoint: the trigger is
  * provenance, and losing it is not worth refusing a valid digest over.
  */
 export function stampTrigger(session: SessionRow): Trigger {
+  const pending = session.pending_trigger;
+  if (pending !== null && TRIGGER_VALUES.has(pending)) return pending as Trigger;
   if (session.blocks_since_checkpoint <= 0) return "manual";
   const recorded = session.last_block_trigger;
   if (recorded !== null && TRIGGER_VALUES.has(recorded)) return recorded as Trigger;
