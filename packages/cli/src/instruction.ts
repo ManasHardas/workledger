@@ -67,6 +67,8 @@ export function checkpointInstruction(input: InstructionInput): string {
     "remaining {text, why, new: true | ref: WL-…, rel: updates|closes, blocked_by?[]};",
     "notes {type: discovery|decision|blocker|question, text, by?: human|agent, reason?};",
     "decision notes require reason and by.",
+    "Caps: goal ≤ 400 chars; text, why and reason ≤ 300 chars (notes text ≤ 500); files ≤ 20",
+    "per done item; blocked_by ≤ 10; ≤ 12 items per section; ≤ 16384 bytes total.",
     "Strings: no single quote (') and no backslash (\\) anywhere in the JSON — write an",
     "apostrophe as \u2019 (U+2019), a double quote inside a string as \u201d (U+201D), a backslash",
     "as \u29f5 (U+29F5), and keep every string on one line (the JSON itself may span lines).",

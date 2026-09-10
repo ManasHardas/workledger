@@ -83,7 +83,11 @@ reuses the existing session record when the `session_id` is known, otherwise cre
   anywhere in the JSON; an apostrophe is written as ’ (U+2019), a double quote inside a string as
   ” (U+201D), a backslash as ⧵ (U+29F5), and every string stays on one line. The cap is 16,384
   bytes, `decision` notes require `reason` (and `by`), and the open-ids line and the
-  previous-errors block are unchanged from v2.
+  previous-errors block are unchanged from v2. Wording amendment (2026-09-10, #101, still v3):
+  a `Caps:` line after the shapes states every per-field cap the schema enforces —
+  "goal ≤ 400 chars; text, why and reason ≤ 300 chars (notes text ≤ 500); files ≤ 20 per done
+  item; blocked_by ≤ 10; ≤ 12 items per section; ≤ 16384 bytes total" — because the first
+  headless replay lost a turn to the unstated 300-character `done[].text` cap.
 
 ### SessionEnd
 
