@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 
 import { AppShell } from "./components/app-shell.js";
 import { useLiveRepos } from "./features/home/live.js";
+import { BackfillBanner, EmptyMachineRedirect } from "./features/onboarding/index.js";
 import type { AppSource, Repo } from "./lib/ledger-source.js";
 import { HOME_HREF, legacyTarget, replaceHash, useRoute, type Route, type ViewId } from "./lib/router.js";
 import { MachineProvider, RepoIdProvider, SourceProvider } from "./lib/source-context.js";
@@ -47,7 +48,15 @@ export function App({ source }: { source: AppSource }) {
 function Screen({ route, source, repos }: { route: Route; source: AppSource; repos: Async<Repo[]> }) {
   switch (route.kind) {
     case "home":
-      return <HomeView repos={repos} />;
+      // A daemon with nothing enabled sends Home to the wizard; a finished backfill is announced
+      // above the cards (both features/onboarding, issue #79).
+      return (
+        <>
+          <EmptyMachineRedirect repos={repos} />
+          <BackfillBanner />
+          <HomeView repos={repos} />
+        </>
+      );
     case "onboarding":
       return <OnboardingView />;
     case "machine":

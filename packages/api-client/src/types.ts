@@ -326,3 +326,163 @@ export interface LedgerSource {
   // live: no-op unsubscribe when capabilities.live is false
   subscribe(handler: (event: LedgerEvent) => void): () => void;
 }
+
+// --- Onboarding (P8) --------------------------------------------------------------------------
+//
+// docs/contracts/p8/daemon-and-api.md §Onboarding endpoints. Machine-wide by nature: the wizard
+// runs before any repo is enabled, so none of these calls carries `?repo=`. The shapes mirror
+// `packages/server/src/onboarding.ts` field for field; they are restated here for the same reason
+// every other wire type is — the UI never imports the server.
+
+/** The backfill windows the wizard offers; `none` is "no backfill". */
+export type OnboardingWindow = "7d" | "30d" | "90d" | "none";
+
+/** How the backfill digests each session; `none` is "no backfill". */
+export type OnboardingMethod = "resume" | "extract" | "none";
+
+/** One repo the wizard can offer. */
+export interface RepoCandidate {
+  /** Absolute repo root. */
+  path: string;
+  /** `basename(path)`. */
+  name: string;
+  hasGit: boolean;
+  /** `.workledger/config.yaml` exists — `init` has already run here. */
+  enabled: boolean;
+  /**
+   * Amendment 2: `hasGit`, not under the OS temp dir, and not an ancestor of another candidate.
+   * The wizard pre-checks a known repo only when this is true. Optional until the backend that
+   * sends it lands; a client reads it through {@link isSuggested}, which falls back to `hasGit`.
+   */
+  suggested?: boolean;
+  /** Sessions per harness store that name this repo as their working directory. */
+  harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
+  /** ISO 8601 of the newest such session, or `null` for a repo with none. */
+  lastSessionAt: string | null;
+}
+
+/** `candidate.suggested`, or `hasGit` for a server from before amendment 2. */
+export function isSuggested(candidate: RepoCandidate): boolean {
+  return candidate.suggested ?? candidate.hasGit;
+}
+
+/** `GET /api/onboarding/discover`. `found` never repeats a path already in `known`. */
+export interface DiscoverResult {
+  /** Repos the harness stores have sessions for. */
+  known: RepoCandidate[];
+  /** `.git` directories under `roots` the stores do not mention. */
+  found: RepoCandidate[];
+  /** The roots that were walked, absolute. */
+  roots: string[];
+}
+
+/** One backfill window's size. */
+export interface HistoryWindow {
+  sessions: number;
+  /** Total transcript bytes of those sessions. */
+  bytes: number;
+}
+
+/** `GET /api/onboarding/history`. */
+export interface HistoryResult {
+  windows: { "7d": HistoryWindow; "30d": HistoryWindow; "90d": HistoryWindow };
+}
+
+/** `POST /api/onboarding/init` body. */
+export interface InitInput {
+  repos: string[];
+  /** Harnesses to enable regardless of detection — `init --harness`. */
+  harnesses?: string[];
+}
+
+/** What `init` did in one repo. */
+export interface InitRepoResult {
+  path: string;
+  ok: boolean;
+  /** Hook files written, relative to the repo root; empty for a repo that was already enabled. */
+  hooksWritten: string[];
+  /** Manual steps left to the operator — Codex's one-time hook trust. */
+  trustSteps: string[];
+  error?: string;
+}
+
+/** `POST /api/onboarding/init` response. */
+export interface InitResult {
+  results: InitRepoResult[];
+}
+
+/** `POST /api/onboarding/plan` body. */
+export interface PlanInput {
+  repos: string[];
+  since: OnboardingWindow;
+  method: OnboardingMethod;
+}
+
+/** Wall time the resume-based backfill is expected to take. */
+export interface ResumeEstimate {
+  seconds: number;
+}
+
+/** What the extraction would cost, and whether the key it needs is present on the server. */
+export interface ExtractionEstimate {
+  tokens: number;
+  usd: number;
+  /** `ANTHROPIC_API_KEY` is absent from the server's environment. */
+  needsApiKey: boolean;
+}
+
+/** `POST /api/onboarding/plan` response. `estimate` is `null` for method or window `none`. */
+export interface PlanResult {
+  /** Sessions in the window the index has never seen, across `repos`. */
+  sessions: number;
+  estimate: ResumeEstimate | ExtractionEstimate | null;
+  /**
+   * Amendment 3: under method `extract`, the Codex sessions left out of `sessions` and the
+   * estimate — the extractor parses Claude Code transcripts only, so they are skipped rather
+   * than queued. Resume covers them.
+   */
+  unsupported?: { codex: number };
+}
+
+/** `POST /api/onboarding/run` body. The server refuses anything but `consent: true` (409). */
+export interface RunInput extends PlanInput {
+  consent: true;
+}
+
+/** `POST /api/onboarding/run` response (202). */
+export interface RunResult {
+  jobs: Job[];
+}
+
+/**
+ * `GET /api/onboarding/status` — the wizard's jobs by lifecycle state. `running` counts `queued`
+ * too, `failed` counts `cancelled`, so `total = done + failed + running` and `complete` is
+ * "nothing is still ahead".
+ */
+export interface OnboardingStatus {
+  total: number;
+  done: number;
+  failed: number;
+  running: number;
+  complete: boolean;
+}
+
+/**
+ * The wizard's half of a P8 daemon — one method per `/api/onboarding/*` route. Not part of
+ * `LedgerSource`: onboarding is about the machine, not a ledger, and a source that is not the
+ * local server (a card, a replay) has no business offering it.
+ */
+export interface OnboardingSource {
+  /** `GET /api/onboarding/discover?roots=`; no roots → the server's default (`~/Projects`). */
+  discover(roots?: string[]): Promise<DiscoverResult>;
+  /** `GET /api/onboarding/history?repos=`. */
+  history(repos: string[]): Promise<HistoryResult>;
+  /** `POST /api/onboarding/init`. */
+  initRepos(input: InitInput): Promise<InitResult>;
+  /** `POST /api/onboarding/plan`. */
+  plan(input: PlanInput): Promise<PlanResult>;
+  /** `POST /api/onboarding/run`. 409 `api-key-required` for `extract` without a key. */
+  run(input: RunInput): Promise<RunResult>;
+  /** `GET /api/onboarding/status`. */
+  status(): Promise<OnboardingStatus>;
+}

@@ -49,8 +49,11 @@ export function repoHref(repo: string, view: ViewId, ...rest: string[]): string 
 
 /** Reads a hash into a {@link Route}; an empty or unknown one is Home. */
 export function parseRoute(hash: string): Route {
+  // Everything after `?` is a route's own state — the wizard keeps its step and selections there
+  // (`features/onboarding/state.ts`) — and never part of which route it is.
   const segments = hash
     .replace(/^#\/?/, "")
+    .split("?")[0]!
     .split("/")
     .filter((s) => s.length > 0)
     .map((s) => {

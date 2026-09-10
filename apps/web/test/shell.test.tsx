@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { App } from "../src/app.js";
+import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { detailUlidFromHash } from "../src/features/ledger/detail-route.js";
 import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { createSource, type AppSource, type Repo } from "../src/lib/ledger-source.js";
@@ -92,10 +93,11 @@ describe("legacy redirects", () => {
     expect(window.location.hash).toBe("#/jobs");
   });
 
-  it("sends a legacy route Home when no repo is enabled", async () => {
+  it("sends a legacy route Home, and an empty Home on to the wizard, when no repo is enabled", async () => {
+    resetEmptyMachineRedirect();
     renderAt("#/ledger", withRepos([]));
-    await waitFor(() => expect(window.location.hash).toBe("#/"));
-    expect(await screen.findByText(/No projects are tracked yet/)).toBeDefined();
+    await waitFor(() => expect(window.location.hash).toBe("#/onboarding"));
+    expect(await screen.findByRole("heading", { name: "Choose the repos to track" })).toBeDefined();
   });
 
   it("does not leave the legacy route behind the back button", async () => {
@@ -165,9 +167,9 @@ describe("app shell", () => {
     expect(home.getAttribute("href")).toBe("#/");
   });
 
-  it("renders the onboarding placeholder", async () => {
+  it("renders the onboarding wizard", async () => {
     renderAt("#/onboarding");
-    expect(await screen.findByText("Onboarding coming in #79.")).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Choose the repos to track" })).toBeDefined();
   });
 });
 

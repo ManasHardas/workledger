@@ -16,21 +16,31 @@ import { createSource as createApiSource } from "@workledger/api-client";
 import {
   FIXTURE_BACKLOG,
   FIXTURE_BRIEF,
+  FIXTURE_DISCOVER,
   FIXTURE_HEALTH,
+  FIXTURE_HISTORY,
   FIXTURE_JOBS_ALL,
   FIXTURE_NOTES,
   FIXTURE_NOTES_ALL,
+  FIXTURE_ONBOARDING_STATUS,
+  FIXTURE_PLAN_EXTRACT,
+  FIXTURE_PLAN_RESUME,
   FIXTURE_REPOS,
   FIXTURE_SESSIONS,
+  fixtureInitResult,
 } from "./fixtures.js";
 
 import type {
   BackfillEstimate,
   BacklogStatus,
   BacklogView,
+  DiscoverResult,
   Excerpt,
   Health,
+  HistoryResult,
   Identity,
+  InitInput,
+  InitResult,
   Job,
   JobAcrossRepos,
   LedgerEvent,
@@ -39,24 +49,37 @@ import type {
   NoteAcrossRepos,
   NoteRef,
   NoteType,
+  OnboardingSource,
+  OnboardingStatus,
   ParsedSession,
+  PlanInput,
+  PlanResult,
   Repo,
+  RunResult,
   ScanSummary,
   SessionQuery,
 } from "@workledger/api-client";
 
+export { isSuggested } from "@workledger/api-client";
 export type {
   Actor,
   BackfillEstimate,
   BackfillRequest,
   BacklogStatus,
   BacklogView,
+  DiscoverResult,
   DoctorEntry,
   EditPatch,
   Excerpt,
   ExtractEstimate,
+  ExtractionEstimate,
   Health,
+  HistoryResult,
+  HistoryWindow,
   Identity,
+  InitInput,
+  InitRepoResult,
+  InitResult,
   Job,
   JobAcrossRepos,
   LedgerEvent,
@@ -65,8 +88,18 @@ export type {
   NoteAcrossRepos,
   NoteRef,
   NoteType,
+  OnboardingMethod,
+  OnboardingSource,
+  OnboardingStatus,
+  OnboardingWindow,
   ParsedSession,
+  PlanInput,
+  PlanResult,
   Repo,
+  RepoCandidate,
+  ResumeEstimate,
+  RunInput,
+  RunResult,
   ScanSummary,
   SessionQuery,
   Turn,
@@ -74,15 +107,16 @@ export type {
 
 /**
  * What the app is handed: one ledger's reads (the server's implicit repo, or nothing useful on a
- * machine daemon until `forRepo`) plus the machine-wide half of P8. `main.tsx` builds one; the
- * `#/r/<id>/…` routes hand their views `forRepo(id)`.
+ * machine daemon until `forRepo`) plus the machine-wide half of P8 and the wizard's six calls
+ * (`OnboardingSource`, machine-wide by nature). `main.tsx` builds one; the `#/r/<id>/…` routes
+ * hand their views `forRepo(id)`; `#/onboarding` reads it whole through `useMachine()`.
  */
-export type AppSource = LedgerSource & MachineSource;
+export type AppSource = LedgerSource & MachineSource & OnboardingSource;
 
 /** The rejection every write takes on a source whose `capabilities.write` is false. */
 const readOnly = <T>(): Promise<T> => Promise.reject({ code: "read-only" });
 
-/** The in-memory fixture ledger: read-only, not live, two repos over the same data. */
+/** The in-memory fixture ledger: read-only, not live, two repos over the same data; the wizard's calls answer canned data. */
 export function createSource(kind: "fixture"): AppSource;
 /**
  * `workledger serve` over HTTP + SSE. With `repo` the source is scoped to that repo (P8's
@@ -165,8 +199,42 @@ function delegate<T extends object>(target: T, overrides: Partial<T>): T {
  * cards and the machine-wide tabs have a repo per row to show while a per-repo view stays the
  * one P2 shipped.
  */
-class FixtureSource implements LedgerSource, MachineSource {
+class FixtureSource implements LedgerSource, MachineSource, OnboardingSource {
   readonly capabilities = { write: false, live: false, provenance: false };
+
+  /**
+   * P8's wizard, answered from `./fixtures.ts`.
+   *
+   * These are not writes on the ledger — `initRepos` scaffolds hook files and `run` queues jobs,
+   * neither of which a fixture has — so they *pretend*, with the shapes the daemon sends, rather
+   * than rejecting `read-only` the way the backlog writes do. A wizard that could not be walked
+   * against the fixture could not be tested step by step, and `pnpm dev` would open on a wall.
+   * `status` reports nothing queued, which the contract defines as complete.
+   */
+  async discover(roots?: string[]): Promise<DiscoverResult> {
+    return { ...FIXTURE_DISCOVER, roots: roots ?? FIXTURE_DISCOVER.roots };
+  }
+
+  async history(): Promise<HistoryResult> {
+    return FIXTURE_HISTORY;
+  }
+
+  async initRepos(input: InitInput): Promise<InitResult> {
+    return { results: input.repos.map(fixtureInitResult) };
+  }
+
+  async plan(input: PlanInput): Promise<PlanResult> {
+    if (input.since === "none" || input.method === "none") return { sessions: 0, estimate: null };
+    return input.method === "extract" ? FIXTURE_PLAN_EXTRACT : FIXTURE_PLAN_RESUME;
+  }
+
+  async run(): Promise<RunResult> {
+    return { jobs: [] };
+  }
+
+  async status(): Promise<OnboardingStatus> {
+    return FIXTURE_ONBOARDING_STATUS;
+  }
 
   async listRepos(): Promise<Repo[]> {
     return FIXTURE_REPOS;

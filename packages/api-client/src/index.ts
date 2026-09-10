@@ -29,6 +29,7 @@ export { globalFetch, normalizeBaseUrl, queryString, toApiError } from "./http.j
 export type { FetchLike, HttpRequestInit, HttpResponse } from "./http.js";
 export { LocalServerSource } from "./local-server-source.js";
 export type { LocalServerSourceOptions } from "./local-server-source.js";
+export { isSuggested } from "./types.js";
 export type {
   Actor,
   BackfillEstimate,
@@ -36,13 +37,20 @@ export type {
   BacklogItem,
   BacklogStatus,
   BacklogView,
+  DiscoverResult,
   DoctorEntry,
   EditPatch,
   Excerpt,
   ExtractEstimate,
+  ExtractionEstimate,
   Harness,
   Health,
+  HistoryResult,
+  HistoryWindow,
   Identity,
+  InitInput,
+  InitRepoResult,
+  InitResult,
   Job,
   JobAcrossRepos,
   LedgerEvent,
@@ -54,10 +62,20 @@ export type {
   NoteLine,
   NoteRef,
   NoteType,
+  OnboardingMethod,
+  OnboardingSource,
+  OnboardingStatus,
+  OnboardingWindow,
   ParsedSession,
+  PlanInput,
+  PlanResult,
   Priority,
   RemainingLine,
   Repo,
+  RepoCandidate,
+  ResumeEstimate,
+  RunInput,
+  RunResult,
   ScanSummary,
   SessionFrontmatter,
   SessionQuery,
@@ -67,7 +85,7 @@ export type {
   Verified,
 } from "./types.js";
 
-import type { LedgerSource, MachineSource } from "./types.js";
+import type { LedgerSource, MachineSource, OnboardingSource } from "./types.js";
 import type { LocalServerSourceOptions } from "./local-server-source.js";
 
 import { ApiClientError } from "./errors.js";
@@ -78,11 +96,14 @@ import { LocalServerSource } from "./local-server-source.js";
  * card in for the local server later is a one-word change in the app and no change at all in a
  * view (ledger-source.md).
  *
- * The result is both a `LedgerSource` (over `opts.repo`, or the server's one repo) and a
- * `MachineSource` (P8: `listRepos`, the aggregates, `forRepo`), so a Home view and a per-repo
- * view are built from the same call.
+ * The result is a `LedgerSource` (over `opts.repo`, or the server's one repo), a
+ * `MachineSource` (P8: `listRepos`, the aggregates, `forRepo`) and an `OnboardingSource` (the
+ * wizard's six calls), so a Home view, a per-repo view and the wizard are built from one call.
  */
-export function createSource(kind: "local", opts: LocalServerSourceOptions): LedgerSource & MachineSource {
+export function createSource(
+  kind: "local",
+  opts: LocalServerSourceOptions,
+): LedgerSource & MachineSource & OnboardingSource {
   if (kind !== "local") {
     throw new ApiClientError("unknown-source", `unknown LedgerSource kind: ${String(kind)}`);
   }
