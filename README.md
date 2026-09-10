@@ -14,18 +14,31 @@ Status: P1 (CLI core) is functionally complete and dogfooding on this repo: `ini
 
 ## Install
 
-Requires **Node ≥ 22**. Nothing else — the published package is a single bundled file with no
-runtime dependencies.
+Requires **Node ≥ 22**. The published package is a single bundled file whose only runtime
+dependency is `better-sqlite3`. The npm package is named `workledger` and installs one binary,
+`workledger`.
 
 ```bash
-# run it without installing
-npx workledger --version
+# npm
+npm install -g workledger
 
-# or install it on your PATH (once published to npm)
-pnpm add -g workledger
+# Homebrew (installs the GitHub release tarball under Homebrew's own node)
+brew tap ManasHardas/workledger && brew install workledger
+
+# or run it without installing
+npx workledger --version
 ```
 
-The npm package is named `workledger` and installs one binary, `workledger`.
+Then run `workledger` to open the home page.
+
+Both this repo and the tap ([ManasHardas/homebrew-workledger](https://github.com/ManasHardas/homebrew-workledger))
+are public, so no token is needed; if either is ever made private, set `HOMEBREW_GITHUB_API_TOKEN`
+to a GitHub token that can read the release asset before `brew install`.
+
+Releases: pushing a `v*` tag runs `.github/workflows/release.yml` — build, test, pack, `npm publish`
+(skipped with a message when the `NPM_TOKEN` secret is absent), a GitHub release with the tarball
+attached, and an update of the tap formula (skipped with the manual command printed when the
+`TAP_TOKEN` secret is absent).
 
 ## Quick start
 

@@ -1,0 +1,144 @@
+name: Release
+
+# Runs on every `v*` tag: build, test, pack `workledger`, publish the tarball to npm (skipped with
+# a printed message when `NPM_TOKEN` is absent), attach it to a GitHub release, and point the
+# Homebrew tap at it (skipped with the manual command printed when `TAP_TOKEN` is absent).
+# Contract: docs/contracts/p8/daemon-and-api.md §Release and install.
+#
+# Clause #9 rule 1 (`paths-ignore`) does not apply: GitHub does not evaluate path filters for tag
+# pushes, and this workflow has no `pull_request` or `branches` trigger. Rule 3 (draft gate) has
+# no PR to gate on. Rule 4 is satisfied by construction — nothing here runs on a main push.
+on:
+  push:
+    tags: ['v*']
+
+# Clause #9 rule 2 — one run per tag; a re-pushed tag makes the previous run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # `gh release create` writes the release and uploads the asset.
+  contents: write
+
+env:
+  # Mirrors ci.yml. No Docker anywhere in this project (CLAUDE.md).
+  NODE_VERSION: '22'
+  TAP_REPO: ManasHardas/homebrew-workledger
+
+jobs:
+  release:
+    name: build · test · pack · publish · release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` input — the action reads `packageManager` from package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          # Writes an .npmrc that reads the token from NODE_AUTH_TOKEN, which the publish step
+          # sets from `secrets.NPM_TOKEN`.
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Same root script as ci.yml: builds apps/web first, then the CLI bundle copies its dist.
+      - run: pnpm build
+
+      - run: pnpm test
+
+      # `workledger --version` reads packages/cli/package.json, so a tag that does not match it
+      # would publish one number and print another. Fail before anything is uploaded.
+      - name: Tag matches packages/cli version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/cli/package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match packages/cli/package.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A prerelease tag (v0.4.0-rc.1) gets `npm publish --tag next` and a GitHub prerelease.
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # `prepack` swaps the development manifest for the published one (scripts/bundle-cli.mjs), so
+      # the tarball's package.json declares `better-sqlite3` and nothing else.
+      - name: Pack workledger
+        id: pack
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/pack"
+          mkdir -p "$dest"
+          pnpm -F workledger pack --pack-destination "$dest"
+          tarball="$(ls "$dest"/workledger-*.tgz)"
+          sha256="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          echo "$sha256  $(basename "$tarball")" > "$tarball.sha256"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "packed $(basename "$tarball") sha256=$sha256"
+          tar -tzf "$tarball"
+
+      # `npm publish <tarball>` ships the file as packed — no second `prepack`, no manifest edit.
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice::NPM_TOKEN absent, publish skipped. Publish by hand with: npm publish $(basename "$TARBALL") --access public"
+            exit 0
+          fi
+          tag_arg=()
+          if [ "$PRERELEASE" = "true" ]; then tag_arg=(--tag next); fi
+          npm publish "$TARBALL" --access public "${tag_arg[@]}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$GITHUB_REF_NAME" --generate-notes --verify-tag)
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "$TARBALL" "$TARBALL.sha256" "${flags[@]}"
+
+      # Points Formula/workledger.rb in the tap at this release's tarball. `TAP_TOKEN` is a token
+      # with write access to the tap repo; until the operator adds it, the step prints the sha256
+      # and the exact manual command instead of failing the release.
+      - name: Update the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.pack.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/workledger-${VERSION}.tgz"
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::notice::TAP_TOKEN absent, Homebrew tap not updated."
+            echo "sha256: $SHA256"
+            echo "Manual update — run in a clone of https://github.com/$TAP_REPO:"
+            echo "  sed -i.bak -e 's|^  url \".*\"|  url \"$url\"|' -e 's|^  sha256 \".*\"|  sha256 \"$SHA256\"|' Formula/workledger.rb && rm Formula/workledger.rb.bak"
+            echo "  git commit -am 'workledger $VERSION' && git push"
+            exit 0
+          fi
+          tap="$RUNNER_TEMP/tap"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "$tap"
+          cd "$tap"
+          sed -i -e "s|^  url \".*\"|  url \"$url\"|" -e "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" Formula/workledger.rb
+          grep -q "$SHA256" Formula/workledger.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "workledger $VERSION"
+          git push
