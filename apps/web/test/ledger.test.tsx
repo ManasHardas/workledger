@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { TRANSCRIPT_NOTICE } from "../src/features/ledger/provenance-panel.js";
@@ -240,7 +240,7 @@ describe("session detail", () => {
     for (const line of ENDED_SESSION.done) {
       expect(screen.getByText(line.text)).toBeDefined();
     }
-    for (const line of ENDED_SESSION.notes) {
+    for (const line of ENDED_SESSION.notes.filter((note) => note.type !== "discovery")) {
       expect(screen.getByText(line.text)).toBeDefined();
     }
     expect(screen.getAllByText("[cp 1]").length).toBeGreaterThan(0);
@@ -286,5 +286,108 @@ describe("session detail", () => {
     });
     renderLedger(withUnparsed);
     expect(await screen.findByText(/notes: - hand-typed line/)).toBeDefined();
+  });
+});
+
+/**
+ * Amendment 11 (docs/contracts/p8/daemon-and-api.md): the page shows the human gist of each Done
+ * item and nothing else inline; the specifics live in a side drawer; discovery notes are for
+ * agents and sit behind a disclosure; memory entries get a section of their own.
+ */
+describe("session detail — gists, drawer, notes split, memory", () => {
+  const DONE = ENDED_SESSION.done[0]!;
+  const DISCOVERY = ENDED_SESSION.notes.find((note) => note.type === "discovery")!;
+
+  /** The ended session with `getSession` rewritten, so a test can hand the view any shape. */
+  function sessionSource(patch: (session: (typeof FIXTURE_SESSIONS)[number]) => object) {
+    const base = createSource("fixture");
+    return Object.assign(Object.create(base) as LedgerSource, {
+      async getSession(ulid: string) {
+        const session = await base.getSession(ulid);
+        return { ...session, ...patch(session) };
+      },
+    });
+  }
+
+  beforeEach(() => {
+    window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
+  });
+
+  it("shows only the gist per Done item; detail, commit and files stay out of the page", async () => {
+    renderLedger();
+    expect(await screen.findByRole("button", { name: new RegExp(DONE.text) })).toBeDefined();
+    expect(screen.queryByText(DONE.detail!)).toBeNull();
+    expect(screen.queryByText(DONE.commit!)).toBeNull();
+    for (const file of DONE.files!) expect(screen.queryByText(file)).toBeNull();
+    expect(screen.queryByText(DONE.verified!)).toBeNull();
+  });
+
+  it("opens a drawer with detail, commit, files, verified and the checkpoint stamp on click", async () => {
+    renderLedger();
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(DONE.text) }));
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText(DONE.detail!)).toBeDefined();
+    expect(within(drawer).getByText(DONE.commit!)).toBeDefined();
+    for (const file of DONE.files!) expect(within(drawer).getByText(file)).toBeDefined();
+    expect(within(drawer).getByText(DONE.verified!)).toBeDefined();
+    expect(within(drawer).getByText("[cp 1]")).toBeDefined();
+    expect(within(drawer).getByText("2026-09-08 09:41 UTC")).toBeDefined();
+
+    // Escape closes it too, but the button is the only exit a thumb can see at 375 px.
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("renders a pre-amendment checkpoint's text as the gist and says the drawer has no detail", async () => {
+    renderLedger(
+      sessionSource((session) => ({
+        done: session.done.map((line) => ({ ...line, detail: undefined })),
+      })),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(DONE.text) }));
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByRole("heading", { name: DONE.text })).toBeDefined();
+    expect(within(drawer).getByText("No detail recorded.")).toBeDefined();
+    expect(within(drawer).getByText(DONE.commit!)).toBeDefined();
+  });
+
+  it("shows blocker, question and decision notes; discovery waits behind For agents (n)", async () => {
+    renderLedger();
+    for (const note of ENDED_SESSION.notes.filter((line) => line.type !== "discovery")) {
+      expect(await screen.findByText(note.text)).toBeDefined();
+    }
+    expect(screen.queryByText(DISCOVERY.text)).toBeNull();
+
+    const disclosure = screen.getByRole("button", { name: "For agents (1)" });
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(DISCOVERY.text)).toBeDefined();
+  });
+
+  it("omits the For agents disclosure when no note is a discovery", async () => {
+    renderLedger(sessionSource((session) => ({ notes: session.notes.filter((n) => n.type !== "discovery") })));
+    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /For agents/ })).toBeNull();
+  });
+
+  it("shows a Memory section with each entry and its file badge", async () => {
+    renderLedger();
+    expect(await screen.findByRole("heading", { name: "Memory", level: 3 })).toBeDefined();
+    for (const entry of ENDED_SESSION.memory!) {
+      expect(screen.getByText(entry.text)).toBeDefined();
+      if (entry.file) expect(screen.getByText(entry.file)).toBeDefined();
+    }
+  });
+
+  it("hides Memory when the session has no entries or predates the field", async () => {
+    renderLedger(sessionSource(() => ({ memory: [] })));
+    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
+    cleanup();
+
+    renderLedger(sessionSource(() => ({ memory: undefined })));
+    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
   });
 });

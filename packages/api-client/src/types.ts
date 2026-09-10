@@ -36,13 +36,20 @@ import type {
   Verified,
 } from "@workledger/core";
 
-/** A `## Done` line on the wire. */
+/** A `## Done` line on the wire. `text` is the human gist; `detail` the specifics for agents (amendment 11). */
 export interface Line {
   cp: number;
   text: string;
+  detail?: string;
   files?: string[];
   commit?: string;
   verified?: Verified;
+}
+
+/** A fact the session committed to a memory file (p8 daemon-and-api.md amendment 11). */
+export interface MemoryEntry {
+  text: string;
+  file?: string;
 }
 
 /** A `## Remaining` line on the wire — core's `blockedBy` renamed to the contract's snake case. */
@@ -77,6 +84,8 @@ export interface ParsedSession {
   done: Line[];
   remaining: RemainingLine[];
   notes: NoteLine[];
+  /** Absent on ledgers written before amendment 11; the UI treats absent and empty alike. */
+  memory?: MemoryEntry[];
   unparsed: UnparsedLine[];
   /** Where the harness session was started (P8 amendment 10); `null` when not recorded. */
   startedIn: string | null;
