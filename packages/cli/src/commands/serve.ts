@@ -15,6 +15,7 @@
  */
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -24,7 +25,15 @@ import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { cancelJob, enqueueJob, listJobs, retryJob } from "../jobs/queue.js";
 import { findRepoRoot, isEnabled } from "../ledger-fs.js";
 import type { IndexDb } from "../index/db.js";
-import type { ExcerptSpan, Job, JobOps, ScanSummary } from "@workledger/server";
+import type {
+  BackfillEstimate,
+  BackfillInput,
+  ExcerptSpan,
+  ExtractEstimate,
+  Job,
+  JobOps,
+  ScanSummary,
+} from "@workledger/server";
 
 /**
  * How often `serve` runs the orphan sweep — docs/contracts/p3/cli.md §scan: "and every 5 minutes
@@ -151,16 +160,26 @@ export function openBrowser(url: string, io: ServeIo, platform: string = process
  * and `backfill` write the same file from other processes; the connection-per-call keeps the
  * `BEGIN IMMEDIATE` windows short and lets `openIndex` re-run migrations another process applied.
  *
- * `backfill` and `estimateExtract` are absent: they belong to the CLI modules of #56 and #54, and
- * the server answers 501 for a route whose op it was not given rather than inventing an answer.
+ * `backfill` and `estimateExtract` are the same functions the CLI commands run, for the same
+ * reason `ops` is: `POST /api/jobs/backfill` and `workledger backfill` must not be two
+ * implementations that agree today. Both are wired here rather than reimplemented — the dry
+ * estimate is `planBackfill` over `enumerateStore`, and the wet call creates the ledger sessions
+ * and enqueues their repairs exactly as `runBackfill` does before it drains the queue.
  *
  * @param startRepair what a queued resume repair hands off to. Injectable because the default
  * spawns the harness, which a test must be able to decline without also declining the queueing
  * this function is responsible for.
+ * @param startDrain what a consented backfill hands its queue off to, injectable for the same
+ * reason: draining it resumes every backfilled session in a child process.
  */
 export function jobOps(
   io: ServeIo,
   startRepair: (ulid: string) => void = (ulid) => void runQueuedRepair(ulid, io),
+  startDrain: (input: BackfillInput, concurrency: number, repoRoot: string) => void = (
+    input,
+    concurrency,
+    repoRoot,
+  ) => startBackfill(input, concurrency, repoRoot, io),
 ): JobOps {
   const home = io.env["WORKLEDGER_HOME"]?.trim();
 
@@ -230,6 +249,97 @@ export function jobOps(
         return result as Job;
       }),
 
+    estimateExtract: (repoRoot, ulid) =>
+      withDb(async (db): Promise<ExtractEstimate> => {
+        const session = db.getSessionByUlid(ulid);
+        if (session === undefined || session.repo_path !== repoRoot) {
+          throw new BacklogOpError(`no session ${ulid} in this repo`, "not-found");
+        }
+        const { estimateFor } = await import("../extract/run.js");
+        const estimate = estimateFor(session, repoRoot);
+        // A session that cannot be extracted from is not a consent question, so the reason is
+        // raised rather than priced: a dialog offering to spend money on a transcript that is not
+        // on this machine is worse than the error that says so.
+        if ("error" in estimate) throw new BacklogOpError(estimate.error, "conflict");
+        // `ExtractEstimate` here is the wire's three fields; the CLI's carries `from`,
+        // `inputTokens` and `outputTokens` too, and api.md forwards them unchanged.
+        return estimate;
+      }),
+
+    /**
+     * `POST /api/jobs/backfill`, dry and wet.
+     *
+     * Dry (`consent: false`) is `--dry-run`: it plans and prices and writes nothing at all, which
+     * is what makes the estimate safe to fetch every time the UI's lookback selector moves.
+     *
+     * Wet returns *before* the work happens, because the contract's 202 says "queued", not
+     * "done": a backfill of thirty sessions takes minutes and no HTTP request should be held open
+     * for it. So the sessions and their job rows are created synchronously — they are what the
+     * 202 carries — and the queue is drained afterwards by a `runBackfill` this function does not
+     * await. That second pass re-plans and finds nothing fresh (the rows now exist), sees the
+     * outstanding jobs and runs them; every outcome lands on a job row, which is the channel
+     * `job.changed` is already watching.
+     */
+    backfill: (repoRoot, input) =>
+      withDb(async (db): Promise<{ jobs: Job[]; estimate: BackfillEstimate }> => {
+        const [{ createBackfilledSession, enumerateStore, planBackfill }, { SINCE_WINDOWS, loadConfig }, { claudeCodeAdapter }, { newSessionId }] =
+          await Promise.all([
+            import("./backfill.js"),
+            import("../config.js"),
+            import("../adapters/claude-code.js"),
+            import("@workledger/core/ids"),
+          ]);
+        if (!(SINCE_WINDOWS as readonly string[]).includes(input.since)) {
+          throw new BacklogOpError(
+            `since must be one of ${SINCE_WINDOWS.join(", ")}; got ${input.since}`,
+            "usage",
+          );
+        }
+        const config = loadConfig(repoRoot);
+        const concurrency = input.concurrency ?? config.backfill.concurrency;
+        const homeDir = harnessStoreHome(io);
+        const plan = planBackfill(enumerateStore(homeDir, repoRoot), {
+          db,
+          harness: claudeCodeAdapter.harness,
+          since: input.since,
+          now: new Date(),
+          concurrency,
+          secondsPerSession: config.backfill.seconds_per_session,
+        });
+        const estimate: BackfillEstimate = {
+          count: plan.fresh.length,
+          bytes: plan.totalBytes,
+          oldest: plan.oldest,
+          seconds: plan.estimateSeconds,
+        };
+        if (!input.consent) return { jobs: [], estimate };
+
+        const created: Job[] = [];
+        for (const found of plan.fresh) {
+          const ulid = await createBackfilledSession(found, {
+            db,
+            root: repoRoot,
+            adapter: claudeCodeAdapter,
+            homeDir,
+            stdout: io.stderr,
+            stderr: io.stderr,
+            now: () => new Date(),
+            newId: newSessionId,
+            ...(home === undefined ? {} : { home }),
+          });
+          const { job } = enqueueJob(db, {
+            kind: "repair",
+            sessionUlid: ulid,
+            repoPath: repoRoot,
+            newId: newSessionId,
+            now: new Date(),
+          });
+          created.push(job as Job);
+        }
+        startDrain(input, concurrency, repoRoot);
+        return { jobs: created, estimate };
+      }),
+
     excerptSpan: (repoRoot, ulid, cp) =>
       withDb((db): ExcerptSpan | undefined => {
         const session = db.getSessionByUlid(ulid);
@@ -258,6 +368,75 @@ export function jobOps(
  */
 function asJobOpError(message: string, id: string): BacklogOpError {
   return new BacklogOpError(message, message === `no job ${id}` ? "not-found" : "conflict");
+}
+
+/**
+ * Where the harness keeps its transcripts — `~/.claude/projects` and its siblings.
+ *
+ * Read from the injected environment first and only then from `os.homedir()`, so a test can point
+ * the store enumeration at a fixture directory the way every other injected dependency in this
+ * file can be pointed somewhere else. In a real process the two are the same value.
+ */
+function harnessStoreHome(io: ServeIo): string {
+  return io.env["HOME"]?.trim() || os.homedir();
+}
+
+/**
+ * Drain the backfill jobs the route just created, in the background.
+ *
+ * `runBackfill` is re-entered rather than reimplemented: its plan finds nothing fresh (the route
+ * has already created those rows), its outstanding-jobs check finds the queue the route filled,
+ * and from there it is the same code `workledger backfill --yes` runs — including the extraction
+ * fallback, which is why `extractFallback` is forwarded rather than dropped. Nothing is thrown out
+ * of here: an unhandled rejection would take the whole `serve` process down over one backfill, and
+ * every failure is already recorded on the job row the UI is watching.
+ */
+function startBackfill(
+  input: BackfillInput,
+  concurrency: number,
+  repoRoot: string,
+  io: ServeIo,
+): void {
+  void (async () => {
+    try {
+      const [{ runBackfill }, { claudeCodeAdapter }, ids, { openIndex }] = await Promise.all([
+        import("./backfill.js"),
+        import("../adapters/claude-code.js"),
+        import("@workledger/core/ids"),
+        import("../index/db.js"),
+      ]);
+      const home = io.env["WORKLEDGER_HOME"]?.trim();
+      const db = openIndex(home ? { home } : {});
+      try {
+        await runBackfill(
+          {
+            repo: repoRoot,
+            since: input.since,
+            concurrency,
+            yes: true,
+            ...(input.extractFallback === true ? { extractFallback: true } : {}),
+          },
+          {
+            db,
+            root: repoRoot,
+            adapter: claudeCodeAdapter,
+            homeDir: harnessStoreHome(io),
+            stdout: io.stderr,
+            stderr: io.stderr,
+            now: () => new Date(),
+            newId: ids.newSessionId,
+            newBacklogId: ids.newBacklogId,
+            apiKey: () => io.env["ANTHROPIC_API_KEY"],
+            ...(home === undefined ? {} : { home }),
+          },
+        );
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      io.stderr(`serve: backfill failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
 }
 
 /**
