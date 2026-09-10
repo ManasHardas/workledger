@@ -18,6 +18,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,8 +30,8 @@ import { appendCheckpoint, createSessionText } from "@workledger/core/render/ses
 import * as ops from "../src/backlog-ops.js";
 import { backlogCommand } from "../src/commands/backlog.js";
 import { noteCommand } from "../src/commands/note.js";
-import { hasWebBuild, placeholderHtml, serveCommand, webDir } from "../src/commands/serve.js";
-import { EXIT_NOT_ENABLED, EXIT_OK } from "../src/exit-codes.js";
+import { hasWebBuild, openBrowser, placeholderHtml, serveCommand, webDir } from "../src/commands/serve.js";
+import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
 import { backlogFile, sessionFile } from "../src/ledger-fs.js";
 
 import type { ServerApp } from "@workledger/server";
@@ -426,13 +427,40 @@ describe("workledger serve", () => {
   it("binds the port it is given and opens the browser by default", async () => {
     const root = repo();
     const io = serveIo(root);
+    // A port nobody is on; `--port` is the only way the caller learns it in advance.
+    const port = 34567 + (process.pid % 1000);
 
-    const running = serveCommand({}, io);
+    const running = serveCommand({ port }, io);
     await vi.waitFor(() => expect(io.opened.length).toBe(1), { timeout: 5000 });
 
+    expect(io.out[0]).toBe(`http://127.0.0.1:${port}`);
     expect(io.opened[0]).toBe(io.out[0]);
     io.stop.abort();
     expect(await running).toBe(EXIT_OK);
+  });
+
+  it("exits 1 rather than throwing when the port is already taken", async () => {
+    const root = repo();
+    const held = serveIo(root);
+    const port = 35567 + (process.pid % 1000);
+    const first = serveCommand({ port, open: false }, held);
+    await vi.waitFor(() => expect(held.out[0]).toMatch(/^http:/), { timeout: 5000 });
+
+    const second = serveIo(root);
+    expect(await serveCommand({ port, open: false }, second)).toBe(EXIT_USAGE);
+    expect(second.err.join(" ")).toContain("EADDRINUSE");
+
+    held.stop.abort();
+    expect(await first).toBe(EXIT_OK);
+  });
+
+  it("falls back to printing the URL when the browser cannot be opened", () => {
+    const out: string[] = [];
+    const io = { ...serveIo("/"), stdout: (text: string) => void out.push(text) };
+
+    // A platform with no opener at all.
+    openBrowser("http://127.0.0.1:1", io, "aix");
+    expect(out).toEqual(["open http://127.0.0.1:1 in your browser"]);
   });
 
   it("resolves the repo from --repo rather than from cwd", async () => {
