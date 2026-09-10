@@ -19,7 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CODEX_BIN_ENV, CODEX_SANDBOX, codexAdapter } from "../src/adapters/codex.js";
 import { CURSOR_NO_RESUME, cursorAdapter } from "../src/adapters/cursor.js";
@@ -27,7 +27,7 @@ import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
 import { DEFAULT_HARNESS, HARNESS_NAMES, adapterFor } from "../src/adapters/registry.js";
 import { EXIT_BLOCK, EXIT_OK } from "../src/exit-codes.js";
 import { openIndex } from "../src/index/db.js";
-import { runHook } from "../src/commands/hook.js";
+import { hookCommand, runHook } from "../src/commands/hook.js";
 import { sessionFile } from "../src/ledger-fs.js";
 import type { HarnessAdapter, HookInput } from "../src/adapters/types.js";
 import type { HookEvent } from "../src/commands/hook-events.js";
@@ -185,6 +185,25 @@ describe("the harness registry", () => {
 
   it("every adapter reports the harness name it is registered under", () => {
     for (const name of HARNESS_NAMES) expect(adapterFor(name)?.harness).toBe(name);
+  });
+
+  it("an unknown --harness is one stderr line and exit 0, never a usage error", async () => {
+    // A hook file outlives the CLI that wrote it. A downgraded binary that failed loudly here
+    // would wedge every session in the repo, so the flag fails open like everything else in
+    // `hook` (docs/contracts/p1/cli.md §`workledger hook`).
+    const written: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      });
+    try {
+      expect(await hookCommand("Stop", { harness: "opencode" })).toBe(EXIT_OK);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written.join("")).toContain("unknown harness opencode");
   });
 });
 
