@@ -165,11 +165,13 @@ export async function serveCommand(
 
   const dir = webDir();
   const built = hasWebBuild(dir);
+  const home = io.env["WORKLEDGER_HOME"];
   const app = createApp({
     repoRoot: root,
     ops,
     cliVersion: VERSION,
     env: io.env,
+    ...(home ? { home } : {}),
     ...(built ? { staticDir: dir } : {}),
     staticHtml: placeholderHtml(root),
   });
