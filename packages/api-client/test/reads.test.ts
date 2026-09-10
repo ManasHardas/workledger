@@ -25,7 +25,9 @@ afterAll(async () => {
 
 describe("capabilities", () => {
   it("is the local server's triple from ledger-source.md", () => {
-    expect(source.capabilities).toEqual({ write: true, live: true, provenance: false });
+    // `provenance` became true in P3: `GET /api/sessions/:ulid/excerpt` is the affordance the
+    // flag gates, and a local server can reach the machine the transcript is on.
+    expect(source.capabilities).toEqual({ write: true, live: true, provenance: true });
   });
 });
 

@@ -20,11 +20,10 @@
  */
 import { Hono } from "hono";
 
-import { ApiError, badRequest, notFound } from "../errors.js";
-import { isOpError, opErrorDetails } from "../ops.js";
+import { ApiError, badRequest, notFound, toApiError } from "../errors.js";
+import { readBody, readInteger, readString } from "./body.js";
 import type { BacklogOps, EditPatch, ItemResult, OpContext } from "../ops.js";
 import type { BacklogView, SessionView } from "../views.js";
-import type { Context } from "hono";
 import type { KeyedMutex } from "../mutex.js";
 import type { ReadModel } from "../read-model.js";
 import type { Actor, Priority } from "@workledger/core/schema";
@@ -41,27 +40,6 @@ export interface WriteRouteDeps {
 
 /** The literals `priority` accepts on the wire; `null` clears it (backlog-cli.md). */
 const PRIORITIES: readonly string[] = ["p1", "p2", "p3"];
-
-/** A JSON object body, or `{}` when the request carried no body at all. */
-async function readBody(c: Context): Promise<Record<string, unknown>> {
-  let raw: string;
-  try {
-    raw = await c.req.text();
-  } catch (error) {
-    throw badRequest(`unreadable request body: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (raw.trim() === "") return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw badRequest(`body is not JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw badRequest("body must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
-}
 
 /** `{ name, email, dome_user? }` — the one owner shape `assign` takes. */
 function readActor(value: unknown): Actor {
@@ -109,47 +87,6 @@ function readEditPatch(body: Record<string, unknown>): EditPatch {
     patch.area = area as string[];
   }
   return patch;
-}
-
-/** An integer field of the body, rejecting the string form an HTML form would send. */
-function readInteger(body: Record<string, unknown>, field: string, min?: number): number {
-  const value = body[field];
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw badRequest(`${field} must be an integer`);
-  }
-  if (min !== undefined && value < min) throw badRequest(`${field} must be >= ${min}`);
-  return value;
-}
-
-/** A non-empty string field of the body. */
-function readString(body: Record<string, unknown>, field: string): string {
-  const value = body[field];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw badRequest(`${field} must be a non-empty string`);
-  }
-  return value;
-}
-
-/**
- * Turn an op's refusal into the contract's status.
- *
- * `not-enabled` joins 404: `workledger serve` refuses a repo with no ledger with exit 4 before it
- * binds, so a running server sees this only when `.workledger/` was deleted underneath it, and
- * "the thing you named is not there" is the honest answer either way.
- */
-function toApiError(error: unknown): unknown {
-  if (!isOpError(error)) return error;
-  const details = opErrorDetails(error);
-  const message = details.length === 0 ? error.message : `${error.message} (${details.join("; ")})`;
-  switch (error.code) {
-    case "not-found":
-    case "not-enabled":
-      return new ApiError(404, "not_found", message);
-    case "conflict":
-      return new ApiError(409, "conflict", message);
-    default:
-      return new ApiError(400, "bad_request", message);
-  }
 }
 
 /** `/api/backlog/:id/*` and `/api/notes/resolve`. */

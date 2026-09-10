@@ -1,14 +1,16 @@
 /**
- * The SSE event bus (api.md §SSE). Four event names, each with the payload the contract names,
+ * The SSE event bus (api.md §SSE). Five event names, each with the payload the contract names,
  * fanned out to every open `/api/events` stream.
  */
 
-/** The four events `/api/events` emits, plus the keep-alive. */
+/** The events `/api/events` emits, plus the keep-alive. */
 export type LedgerEvent =
   | { event: "session.changed"; data: { ulid: string } }
   | { event: "backlog.changed"; data: { id: string } }
   | { event: "notes.changed"; data: Record<string, never> }
-  | { event: "health.changed"; data: Record<string, never> };
+  | { event: "health.changed"; data: Record<string, never> }
+  /** docs/contracts/p3/api.md: "SSE `job.changed { id, status }` added to `/api/events`". */
+  | { event: "job.changed"; data: { id: string; status: string } };
 
 /** A subscriber. Returning is enough; the bus never awaits a listener. */
 export type Listener = (event: LedgerEvent) => void;
