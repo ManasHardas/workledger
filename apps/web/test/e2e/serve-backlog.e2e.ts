@@ -269,12 +269,12 @@ test.describe("workledger serve, end to end", () => {
     expect(errors, "no console errors on Home").toEqual([]);
   });
 
-  test("Ledger lists every session with its goal", async ({ page }) => {
+  test("Ledger lists every session with its goal, in one list with no tabs", async ({ page }) => {
     const errors = watchConsole(page);
     await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
 
-    // "Open" is the default tab and every copied session has ended, so the scope has to be All.
-    await page.getByRole("tab", { name: "All" }).click();
+    // Amendment 11: no Open/All tabs, so every copied session is listed straight away.
+    await expect(page.getByRole("tab")).toHaveCount(0);
 
     // The dogfood ledger grows a session every time this repo records one, so both counts come
     // from the files on disk rather than numbers frozen when the test was written. A card per
@@ -285,8 +285,9 @@ test.describe("workledger serve, end to end", () => {
     expect(files.length, "at least one session file").toBeGreaterThan(0);
     expect(goals.length, "at least one goal").toBeGreaterThan(0);
 
-    const cards = page.getByRole("list", { name: "Sessions, newest first" }).getByRole("listitem");
+    const cards = page.getByRole("list", { name: "Sessions, open first then newest first" }).getByRole("listitem");
     await expect(cards).toHaveCount(files.length);
+
     for (const goal of goals) {
       await expect(page.getByRole("heading", { name: goal, exact: true })).toBeVisible();
     }

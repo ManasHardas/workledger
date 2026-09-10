@@ -174,7 +174,7 @@ describe("app shell", () => {
 });
 
 describe("routes render fixture data", () => {
-  it("Ledger opens on the open sessions and widens to all", async () => {
+  it("Ledger shows every session in one list, open ones first, with no scope tabs (amendment 11)", async () => {
     renderAt(repoHref(FIRST.id, "ledger"));
     await screen.findByRole("heading", { name: "Ledger", level: 2 });
 
@@ -183,16 +183,14 @@ describe("routes render fixture data", () => {
     expect(open.length).toBeGreaterThan(0);
     expect(ended.length).toBeGreaterThan(0);
 
-    for (const session of open) {
-      expect(await screen.findByText(session.goal!)).toBeDefined();
-    }
-    // The default scope is "Open", so an ended session is filtered out until the tab changes.
-    expect(screen.queryByText(ended[0]!.goal!)).toBeNull();
-
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "All" }));
+    // No tab hides anything any more: every session is on screen from the first render.
     for (const session of FIXTURE_SESSIONS) {
       expect(await screen.findByText(session.goal!)).toBeDefined();
     }
+    expect(screen.queryAllByRole("tab")).toEqual([]);
+
+    const cards = within(screen.getByRole("list", { name: /Sessions, open first/ })).getAllByRole("listitem");
+    expect(cards[0]!.textContent).toContain(open[0]!.goal!);
   });
 
   it("Next lists the fixture backlog grouped by status", async () => {

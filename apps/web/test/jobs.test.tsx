@@ -492,8 +492,7 @@ describe("repair and the extraction consent", () => {
 
     window.location.hash = `#/r/${REPO}/ledger`;
     render(<App source={source} />);
-    fireEvent.mouseDown(await screen.findByRole("tab", { name: "All" }));
-
+    // Amendment 11: one list, no scope tabs — the crashed session is listed straight away.
     const rows = await screen.findAllByRole("listitem");
     expect(within(rows[0]!).getByRole("button", { name: "Repair session…" })).toBeDefined();
     expect(within(rows[1]!).queryByRole("button", { name: "Repair session…" })).toBeNull();

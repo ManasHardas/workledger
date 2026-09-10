@@ -399,6 +399,29 @@ export interface WorkspaceCandidate {
   hooksInstalled: boolean;
 }
 
+/**
+ * `GET /api/workspaces` (amendment 12): a folder that is **not** a git repo but that agent
+ * sessions were started in — a workspace `init --workspace` registered, or a start directory a
+ * harness store holds transcripts for. Home's second group: transcripts in a folder do not make
+ * it a project, so these are listed apart from `GET /api/repos`.
+ */
+export interface Workspace {
+  /** Absolute, symlinks resolved. */
+  path: string;
+  /** `basename(path)`. */
+  name: string;
+  /** Enabled repos under it, absolute — what hooks installed here record into. */
+  repos: string[];
+  /** The folder's hook files carry the workledger hook. */
+  hooksInstalled: boolean;
+  /** `init --workspace` recorded the folder in the index. */
+  registered: boolean;
+  /** Transcripts started in it, across the harness stores. */
+  sessions: number;
+  /** ISO 8601 of the newest of those, or `null` when it has none. */
+  lastSessionAt: string | null;
+}
+
 /** `candidate.suggested`, or `hasGit` for a server from before amendment 2. */
 export function isSuggested(candidate: RepoCandidate): boolean {
   return candidate.suggested ?? candidate.hasGit;
@@ -535,4 +558,6 @@ export interface OnboardingSource {
   run(input: RunInput): Promise<RunResult>;
   /** `GET /api/onboarding/status`. */
   status(): Promise<OnboardingStatus>;
+  /** `GET /api/workspaces` (amendment 12): the non-repo folders sessions were started in. */
+  workspaces(): Promise<Workspace[]>;
 }

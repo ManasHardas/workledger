@@ -20,6 +20,7 @@ import type {
   PlanResult,
   Repo,
   RepoCandidate,
+  Workspace,
   WorkspaceCandidate,
 } from "./ledger-source.js";
 
@@ -388,6 +389,42 @@ export const FIXTURE_DISCOVER: DiscoverResult = {
     },
   ],
 };
+
+/**
+ * `GET /api/workspaces` (amendment 12): Home's second group. The first folder holds two repos and
+ * has no hooks yet — the "Install hooks" action's subject; the second holds none at all, which is
+ * exactly the case the operator's rule is about (a transcript in a folder does not make it a
+ * project). The third is registered and already hooked.
+ */
+export const FIXTURE_WORKSPACES: Workspace[] = [
+  {
+    path: `${PROJECTS}/dome_workspace`,
+    name: "dome_workspace",
+    repos: [`${PROJECTS}/dome_workspace/card-shopify_store`, `${PROJECTS}/dome_workspace/card-bart_schedules`],
+    hooksInstalled: false,
+    registered: false,
+    sessions: 6,
+    lastSessionAt: "2026-09-09T07:30:00Z",
+  },
+  {
+    path: `${PROJECTS}/notes`,
+    name: "notes",
+    repos: [],
+    hooksInstalled: false,
+    registered: false,
+    sessions: 2,
+    lastSessionAt: "2026-09-06T14:05:00Z",
+  },
+  {
+    path: `${PROJECTS}/hard_talks`,
+    name: "hard_talks",
+    repos: [`${PROJECTS}/hard_talks/site`],
+    hooksInstalled: true,
+    registered: true,
+    sessions: 1,
+    lastSessionAt: null,
+  },
+];
 
 /** The workspace folder above, for the tests. */
 export const FIXTURE_WORKSPACE: WorkspaceCandidate = FIXTURE_DISCOVER.workspaces![0]!;

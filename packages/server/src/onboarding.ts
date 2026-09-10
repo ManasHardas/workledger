@@ -121,6 +121,28 @@ export interface InitResult {
   workspaces?: InitRepoResult[];
 }
 
+/**
+ * `GET /api/workspaces` element (amendment 12): a folder that is not a git repo but that agent
+ * sessions were started in — a registered workspace (`init --workspace`), or a start directory
+ * a harness store holds transcripts for. Home's second group.
+ */
+export interface Workspace {
+  /** Absolute, symlinks resolved. */
+  path: string;
+  /** `basename(path)`. */
+  name: string;
+  /** Enabled repos under it (three levels down, absolute) — what hooks installed here record into. */
+  repos: string[];
+  /** The folder's Claude Code hook file carries the workledger hook. */
+  hooksInstalled: boolean;
+  /** `init --workspace` recorded the folder in the index. */
+  registered: boolean;
+  /** Transcripts started in it across the harness stores. */
+  sessions: number;
+  /** ISO 8601 of the newest of those, or `null` for a registered folder with none. */
+  lastSessionAt: string | null;
+}
+
 /** `POST /api/onboarding/plan` body. */
 export interface PlanInput {
   repos: string[];
@@ -280,4 +302,6 @@ export interface OnboardingOps {
   /** Queues the backfill and starts draining it; returns as soon as the rows exist. */
   run(input: RunInput): Promise<RunResult>;
   status(): Promise<OnboardingStatus>;
+  /** `GET /api/workspaces` (amendment 12): registered workspaces plus non-repo start folders with transcripts. */
+  workspaces(): Promise<Workspace[]>;
 }

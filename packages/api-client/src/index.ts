@@ -84,6 +84,7 @@ export type {
   Turn,
   UnparsedLine,
   Verified,
+  Workspace,
 } from "./types.js";
 
 import type { LedgerSource, MachineSource, OnboardingSource } from "./types.js";

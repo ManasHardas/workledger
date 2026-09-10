@@ -24,10 +24,12 @@ import { runInitReport } from "../src/commands/init.js";
 import { trackedReposUnder, workspaceProblem } from "../src/commands/init-workspace.js";
 import { runOnboard } from "../src/commands/onboard.js";
 import { EXIT_BLOCK, EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
+import { findRepoRoot } from "../src/ledger-fs.js";
 import { openIndex } from "../src/index/db.js";
 import { workspaceCheckpointInstruction } from "../src/instruction.js";
 import { discoverRepos } from "../src/onboarding/discover.js";
 import { initRepos } from "../src/onboarding/init.js";
+import { listWorkspaces } from "../src/onboarding/workspaces.js";
 import { MIN_REFERENCES, rankContext, startedInRepo } from "../src/onboarding/touched.js";
 import type { TouchTally } from "../src/onboarding/touched.js";
 import { SETTINGS_PATH, hookCommandString } from "../src/settings-merge.js";
@@ -448,6 +450,59 @@ describe("discover, init and doctor with workspaces", () => {
     expect(startedInRepo(outer, [a])).toBe(true);
     expect(startedInRepo(path.join(a, "src"), [a])).toBe(true);
     expect(startedInRepo(path.join(home, "scratch"), [a])).toBe(false);
+  });
+
+  it("GET /api/workspaces lists every non-repo start folder, repos or not, newest session first (amendment 12)", async () => {
+    // Three start folders: the workspace with two repos under it, a plain folder with none, and
+    // a subdirectory of a repo — which belongs to the repo and must never be listed.
+    const lone = path.join(home, "Projects", "notes");
+    mkdirSync(lone);
+    recordSessionIn(workspace);
+    recordSessionIn(lone);
+    recordSessionIn(path.join(repoA, "src"));
+    recordSessionIn(repoA);
+
+    const before = await listWorkspaces(onboardingIo());
+    expect(before.map((w) => w.path)).toEqual([workspace, lone]);
+    expect(before[0]).toMatchObject({ name: "dome_workspace", repos: [repoB, repoA], hooksInstalled: false, registered: false, sessions: 1 });
+    // A transcript in a folder does not make it a project: `notes` is listed with no repo at all.
+    expect(before[1]).toMatchObject({ name: "notes", repos: [], hooksInstalled: false, sessions: 1 });
+    expect(before.every((w) => w.lastSessionAt !== null)).toBe(true);
+
+    // Home's "Install hooks": init with the folder and no repo flips `hooksInstalled`, and
+    // `init --workspace` is what makes it `registered`.
+    await initRepos({ repos: [], workspaces: [workspace] }, onboardingIo());
+    const after = await listWorkspaces(onboardingIo());
+    expect(after[0]).toMatchObject({ path: workspace, hooksInstalled: true, registered: true });
+    expect(after[1]).toMatchObject({ path: lone, hooksInstalled: false, registered: false });
+  });
+
+  it("keeps listing folders under a HOME that holds the daemon's own ~/.workledger (#119 review)", async () => {
+    // The daemon's index home defaults to `~/.workledger`. It is a directory, not a ledger: it
+    // holds `index.sqlite` and `serve.json`, never a `config.yaml`. A repo-root test that
+    // accepted the bare directory made `$HOME` itself a repo, and every folder under it — the
+    // very folders amendment 12 exists to list — resolved to `$HOME` and vanished.
+    mkdirSync(path.join(home, ".workledger"), { recursive: true });
+    writeFileSync(path.join(home, ".workledger", "index.sqlite"), "", "utf8");
+    writeFileSync(path.join(home, ".workledger", "serve.json"), "{}", "utf8");
+    expect(findRepoRoot(home)).toBeUndefined();
+
+    const scratch = path.join(home, "scratchpad");
+    mkdirSync(scratch);
+    recordSessionIn(scratch);
+
+    const folders = await listWorkspaces(onboardingIo());
+    expect(folders.map((w) => w.path)).toEqual([scratch]);
+    expect(folders[0]).toMatchObject({ name: "scratchpad", repos: [], sessions: 1 });
+
+    // A `.workledger/` with a `config.yaml` in it *is* a repo root, git or no git: that is the
+    // marker `init` writes, and a folder inside such a repo is the repo's, never a workspace.
+    const enabled = path.join(home, "plain");
+    mkdirSync(path.join(enabled, ".workledger"), { recursive: true });
+    expect(findRepoRoot(enabled)).toBeUndefined();
+    writeFileSync(path.join(enabled, ".workledger", "config.yaml"), "schema_version: 1\n", "utf8");
+    expect(findRepoRoot(enabled)).toBe(enabled);
+    expect(findRepoRoot(path.join(enabled, "src"))).toBe(enabled);
   });
 
   it("doctor lists each workspace with its hook status", async () => {

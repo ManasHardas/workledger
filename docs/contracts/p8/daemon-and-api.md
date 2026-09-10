@@ -188,3 +188,34 @@ verified, and the checkpoint stamp; Remaining shows text and why; Notes shows bl
 question and decision by default with discovery notes behind a "For agents (n)" disclosure;
 a **Memory** section appears when the session has memory entries. Existing checkpoints render
 unchanged (their `text` is shown as the gist).
+
+## Amendment 12 (2026-09-10) — `GET /api/workspaces` (Home's second group, #119)
+
+Amendment 11's Home needs the non-repo folders on their own, not folded into a wizard result, so
+the daemon gains one machine-wide read. `GET /api/workspaces` → `Workspace[]`, loopback-only like
+every route, no `?repo=`:
+
+```ts
+interface Workspace {
+  path: string;            // absolute, symlinks resolved
+  name: string;            // basename(path)
+  repos: string[];         // enabled repos under it (≤ 3 levels), absolute
+  hooksInstalled: boolean; // the folder's hook files carry the workledger hook
+  registered: boolean;     // `init --workspace` recorded it in the index
+  sessions: number;        // transcripts started in it, across the harness stores
+  lastSessionAt: string | null;
+}
+```
+
+A folder qualifies when it is a registered workspace, or when a harness store holds transcripts
+started in it and it is not a git repo: no `.git` of its own, and either outside any repo or
+holding repos itself (amendment 8's workspace rule). A session started in `<repo>/sub` counts for
+the repo, never for the subdirectory; one under the OS temp dir counts for nothing. Unlike
+`discover`'s `workspaces`, a folder with transcripts and no repo under it is still listed — the
+operator's rule is that transcripts in a folder do not make it a project. Sorted newest session
+first, then by path. Only metadata is read, never a transcript body: this runs on every Home
+render.
+
+`POST /api/onboarding/init` accepts `repos: []` when `workspaces` is non-empty — Home's "Install
+hooks" enables a folder whose repos are already tracked. An empty `repos` with no workspace named
+is still a 400.

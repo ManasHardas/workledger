@@ -30,6 +30,7 @@ import type {
   PlanResult,
   RunInput,
   RunResult,
+  Workspace,
 } from "../src/onboarding.js";
 import type { OpCall, TempRepo } from "./helpers.js";
 
@@ -73,6 +74,11 @@ class FakeOnboardingOps implements OnboardingOps {
     this.#record("run", [input], { jobs: [fakeJob({ kind: input.method === "extract" ? "extract" : "repair" })] });
   status = async (): Promise<OnboardingStatus> =>
     this.#record("status", [], { total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false });
+  workspaces = async (): Promise<Workspace[]> =>
+    this.#record("workspaces", [], [
+      { path: "/r/ws", name: "ws", repos: ["/r/ws/a"], hooksInstalled: false, registered: false, sessions: 2, lastSessionAt: "2026-09-09T08:02:00.000Z" },
+      { path: "/r/notes", name: "notes", repos: [], hooksInstalled: false, registered: false, sessions: 1, lastSessionAt: null },
+    ]);
 }
 
 let repo: TempRepo;
@@ -168,7 +174,40 @@ describe("GET /api/onboarding/history", () => {
   });
 });
 
+describe("GET /api/workspaces (amendment 12)", () => {
+  it("answers the op's list verbatim, machine-wide, with no repo parameter", async () => {
+    const { status, body } = await get("/api/workspaces");
+    expect(status).toBe(200);
+    expect(body).toEqual(await ops.workspaces());
+    expect(ops.calls[0]).toEqual({ op: "workspaces", args: [] });
+  });
+
+  it("turns an op failure into the contract's error shape", async () => {
+    ops.next = new Error("index is locked");
+    const { status, body } = await get("/api/workspaces");
+    expect(status).toBe(500);
+    expect((body as { error: { message: string } }).error.message).toContain("index is locked");
+  });
+});
+
 describe("POST /api/onboarding/init", () => {
+  it("accepts an empty repos list when workspaces are named — Home's Install hooks action", async () => {
+    const ws = path.join(dir, "ws");
+    mkdirSync(ws);
+    const { status, body } = await post("/api/onboarding/init", { repos: [], workspaces: [ws] });
+    expect(status).toBe(200);
+    expect((body as InitResult).workspaces?.map((r) => [r.path, r.ok])).toEqual([[ws, true]]);
+    expect(ops.calls).toEqual([{ op: "init", args: [{ repos: [], workspaces: [ws] }] }]);
+  });
+
+  it("still refuses an empty repos list when no workspace is named", async () => {
+    for (const request of [{ repos: [] }, { repos: [], workspaces: [] }]) {
+      const { status, body } = await post("/api/onboarding/init", request);
+      expect([status, code(body)]).toEqual([400, "bad_request"]);
+    }
+    expect(ops.calls).toEqual([]);
+  });
+
   it("initialises the listed repos and forwards harnesses", async () => {
     const { status, body } = await post("/api/onboarding/init", { repos: [repoA, repoBad], harnesses: ["codex"] });
     expect(status).toBe(200);

@@ -40,6 +40,9 @@ const PROJECTS = "/Users/op/Projects";
 const ALPHA = `${PROJECTS}/alpha`;
 const BETA = `${PROJECTS}/beta`;
 const GAMMA = `${PROJECTS}/gamma`;
+/** Amendment 12: two folders sessions were started in that are not git repos — Home's second group. */
+const DOME = `${PROJECTS}/dome_workspace`;
+const NOTES = `${PROJECTS}/notes`;
 
 interface FixtureJob {
   id: string;
@@ -86,6 +89,8 @@ async function startDaemon(): Promise<Daemon> {
   const requests: string[] = [];
   const initBodies: Record<string, unknown>[] = [];
   const enabled = new Set<string>();
+  /** Which of the two non-repo folders have had the workledger hooks written into them. */
+  const hooked = new Set<string>();
   const jobs: FixtureJob[] = [];
   const streams = new Set<ServerResponse>();
   let timer: NodeJS.Timeout | undefined;
@@ -111,6 +116,11 @@ async function startDaemon(): Promise<Daemon> {
     lastHookAt: null,
     health: "ok",
   });
+  /** `GET /api/workspaces` rows: `dome_workspace` holds two repos, `notes` holds none at all. */
+  const workspaces = () => [
+    { path: DOME, name: "dome_workspace", repos: [ALPHA, BETA], hooksInstalled: hooked.has(DOME), registered: false, sessions: 6, lastSessionAt: "2026-09-09T07:30:00.000Z" },
+    { path: NOTES, name: "notes", repos: [], hooksInstalled: hooked.has(NOTES), registered: false, sessions: 2, lastSessionAt: "2026-09-06T14:05:00.000Z" },
+  ];
   const candidate = (root: string, sessions: Record<string, number>, suggested = true) => ({
     path: root,
     name: root.split("/").pop(),
@@ -158,6 +168,7 @@ async function startDaemon(): Promise<Daemon> {
             const repos = body["repos"] as string[];
             const workspaces = body["workspaces"] as string[] | undefined;
             for (const root of repos) enabled.add(root);
+            for (const root of workspaces ?? []) hooked.add(root);
             return json(res, 200, {
               results: repos.map((root) => ({ path: root, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: root === BETA ? ["Open Codex in this repo once and accept its hooks prompt"] : [] })),
               ...(workspaces === undefined ? {} : { workspaces: workspaces.map((root) => ({ path: root, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] })) }),
@@ -186,6 +197,8 @@ async function startDaemon(): Promise<Daemon> {
           }
           case "GET /api/onboarding/status":
             return json(res, 200, status());
+          case "GET /api/workspaces":
+            return json(res, 200, workspaces());
           default:
             return json(res, 404, { error: { code: "not-found", message: url.pathname } });
         }
@@ -356,6 +369,56 @@ test.describe("onboarding wizard", () => {
     await expect(page.getByRole("heading", { name: "How much history to backfill" })).toBeVisible();
     await expect(page).toHaveURL(/step=history/);
     expect(daemon.requests.some((r) => r.startsWith("GET /api/onboarding/history?") && r.includes(encodeURIComponent(ALPHA)))).toBe(true);
+  });
+
+  test("Home lists the projects first and the non-repo folders second, and installs hooks into one (amendment 11)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // Two repos tracked, so Home is not bounced to the wizard.
+    await page.request.post(`${daemon.url}/api/onboarding/init`, { data: { repos: [ALPHA, BETA] } });
+    daemon.initBodies.length = 0;
+    await page.goto(`${daemon.url}/#/`);
+
+    // The order is the operator's rule: git repos are projects, folders with transcripts are not.
+    const headings = page.getByRole("heading", { level: 2 });
+    await expect(headings).toHaveText(["Projects", "Folders with sessions"]);
+    await expect(page.getByRole("list", { name: "Projects" }).getByRole("link")).toHaveCount(2);
+
+    const folders = page.getByRole("list", { name: "Folders with sessions" });
+    await expect(folders.getByRole("listitem")).toHaveCount(2);
+    // A folder with transcripts and no repo under it is listed here and never among the projects.
+    await expect(folders.getByText(NOTES, { exact: true })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Projects" }).getByText(NOTES)).toHaveCount(0);
+    await expect(folders.getByText("no hooks")).toHaveCount(2);
+    await shot(page, "home-projects-and-folders-1280");
+
+    // "Install hooks" is `POST /api/onboarding/init` with the folder and no repo (amendment 12).
+    await folders.getByRole("listitem").first().getByRole("button", { name: "Install hooks" }).click();
+    await expect(folders.getByText("hooks installed")).toHaveCount(1);
+    expect(daemon.initBodies).toEqual([{ repos: [], workspaces: [DOME] }]);
+    await expect(folders.getByRole("button", { name: "Install hooks" })).toHaveCount(1);
+  });
+
+  test("Home fits 375 px with both groups and no sideways scroll", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 740 });
+    await page.request.post(`${daemon.url}/api/onboarding/init`, { data: { repos: [ALPHA, BETA] } });
+    await page.goto(`${daemon.url}/#/`);
+    await expect(page.getByRole("heading", { name: "Folders with sessions" })).toBeVisible();
+    await noSidewaysScroll(page);
+    await shot(page, "home-projects-and-folders-375");
+  });
+
+  test("the Ledger has no Open/All tabs (amendment 11)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.request.post(`${daemon.url}/api/onboarding/init`, { data: { repos: [ALPHA] } });
+    await page.goto(`${daemon.url}/#/`);
+    await page.getByRole("list", { name: "Projects" }).getByRole("link", { name: "alpha" }).click();
+    await expect(page).toHaveURL(/#\/r\/[^/]+\/ledger$/);
+    await expect(page.getByRole("heading", { name: "Ledger", level: 2 })).toBeVisible();
+    await expect(page.getByRole("tab")).toHaveCount(0);
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+    // The status filter is the operator's again, not pinned by a scope.
+    await expect(page.getByLabel("Status")).toBeEnabled();
+    await expect(page.getByLabel("Status")).toHaveValue("");
   });
 
   test("fits 375 px without sideways scroll on the projects and method steps", async ({ page }) => {

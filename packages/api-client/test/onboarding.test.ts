@@ -70,6 +70,12 @@ const ops: OnboardingOps = {
     calls.push({ op: "status", args: [] });
     return { total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false };
   },
+  workspaces: async () => {
+    calls.push({ op: "workspaces", args: [] });
+    return [
+      { path: "/r/ws", name: "ws", repos: ["/r/a"], hooksInstalled: false, registered: false, sessions: 4, lastSessionAt: "2026-09-09T08:02:00.000Z" },
+    ];
+  },
 };
 
 let dir: string;
@@ -162,6 +168,25 @@ describe("OnboardingSource over the real routes", () => {
 
     const bad = await source.history(["relative/path"]).catch((e: unknown) => e);
     expect(bad).toMatchObject({ code: "invalid-repo", status: 400 });
+  });
+
+  it("reads the non-repo folders off GET /api/workspaces, machine-wide, with no ?repo= (amendment 12)", async () => {
+    const urls: string[] = [];
+    const recording: FetchLike = async (url, init) => {
+      urls.push(url);
+      return fetch(url, init);
+    };
+    const folders = await createSource("local", { baseUrl, fetch: recording, repo: "0123456789ab" }).workspaces();
+    expect(urls).toEqual([`${baseUrl}/api/workspaces`]);
+    expect(folders).toEqual(await ops.workspaces());
+    expect(folders[0]).toMatchObject({ path: "/r/ws", hooksInstalled: false, sessions: 4 });
+  });
+
+  it("installs hooks into a folder with POST /api/onboarding/init and no repo (amendment 12)", async () => {
+    calls.length = 0;
+    const result = await createSource("local", { baseUrl }).initRepos({ repos: [], workspaces: [repo] });
+    expect(calls).toEqual([{ op: "init", args: [{ repos: [], workspaces: [repo] }] }]);
+    expect(result.results).toEqual([]);
   });
 
   it("reads suggested off the wire and falls back to hasGit for a server from before amendment 2", () => {

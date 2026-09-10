@@ -38,6 +38,7 @@ function stubSource(overrides: Partial<LedgerSource> = {}): AppSource {
     history: (repos) => fixture.history(repos),
     initRepos: (input) => fixture.initRepos(input),
     plan: (input) => fixture.plan(input),
+    workspaces: () => fixture.workspaces(),
     run: (input) => fixture.run(input),
     status: () => fixture.status(),
     listSessions: (q) => fixture.listSessions(q),

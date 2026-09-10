@@ -6,12 +6,16 @@
  * half-rendered one (plans/feature-p1-data-flow.md §3). `packages/core` renders the text; this
  * module is the only place that puts it on disk.
  */
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 /** The ledger directory inside an enabled repo. */
 export const LEDGER_DIR = ".workledger";
+
+/** The file `init` writes into `.workledger/` — the marker that the directory is a repo's ledger. */
+export const LEDGER_CONFIG = "config.yaml";
 
 /** Backlog statuses that make an item a legal target for `ref` + `rel` (spec §4.2). */
 const OPEN_BACKLOG_STATUS = new Set(["proposed", "accepted", "in_progress"]);
@@ -38,11 +42,40 @@ function isDirectory(dir: string): boolean {
 }
 
 /**
- * Walk up from `start` to the nearest directory containing `.workledger/` or `.git/`
+ * `WORKLEDGER_HOME`, else `~/.workledger` — the daemon's index home, which is *not* a ledger.
+ *
+ * `packages/cli/src/index/db.ts` owns the same resolution for the database it opens; this is a
+ * deliberate two-line copy rather than an import, because `ledger-fs.ts` is loaded by every hook
+ * on every turn and `db.ts` pulls in `better-sqlite3` (hook-timing.test.ts holds the budget).
+ */
+function workledgerHome(): string {
+  const fromEnv = process.env["WORKLEDGER_HOME"]?.trim();
+  return fromEnv ? path.resolve(fromEnv) : path.join(os.homedir(), ".workledger");
+}
+
+/**
+ * True when `dir` is a repo root: it has `.git/`, or a `.workledger/config.yaml` of its own
  * (docs/contracts/p1/cli.md preamble).
  *
- * A `.workledger/` directory wins over a `.git/` in the same directory only in the sense that
- * either one stops the walk: the caller decides whether the repo is *enabled*, which is a
+ * The marker is the **config file**, never the bare `.workledger/` directory. The daemon's index
+ * home defaults to `~/.workledger`, so a directory test made `$HOME` itself read as a repo root:
+ * every folder under `~` then resolved to `~`, and amendment 12's `GET /api/workspaces` dropped
+ * exactly the folders it exists to list — a start folder with transcripts and no repo under it
+ * (#119 review). `~/.workledger` holds `index.sqlite` and `serve.json`, never a `config.yaml`, so
+ * the file test tells a ledger from the index. The resolved home is refused outright as well, in
+ * case an operator ever points `WORKLEDGER_HOME` at a directory that does hold one.
+ */
+function isRepoRoot(dir: string): boolean {
+  if (isDirectory(path.join(dir, ".git"))) return true;
+  const ledger = path.join(dir, LEDGER_DIR);
+  return ledger !== workledgerHome() && existsSync(path.join(ledger, LEDGER_CONFIG));
+}
+
+/**
+ * Walk up from `start` to the nearest repo root — a directory with `.git/` or its own
+ * `.workledger/config.yaml` ({@link isRepoRoot}).
+ *
+ * Either marker stops the walk: the caller decides whether the repo is *enabled*, which is a
  * different question and a different exit code (`4`).
  *
  * @param start defaults to `CLAUDE_PROJECT_DIR`, else the process working directory.
@@ -57,7 +90,7 @@ export function findRepoRoot(start?: string): string | undefined {
   // would fork one repo into two index keys.
   let dir = path.resolve(from);
   for (;;) {
-    if (isDirectory(path.join(dir, LEDGER_DIR)) || isDirectory(path.join(dir, ".git"))) return dir;
+    if (isRepoRoot(dir)) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
@@ -75,7 +108,13 @@ export function ledgerPaths(root: string): LedgerPaths {
   };
 }
 
-/** `true` when the repo has a `.workledger/` directory — the enabled-repo marker (exit `4`). */
+/**
+ * `true` when the repo has a `.workledger/` directory — the enabled-repo marker (exit `4`).
+ *
+ * Still the directory, unlike {@link findRepoRoot}: this is only ever asked of a path already
+ * known to be a repo root, and a half-scaffolded ledger must read as enabled so `init` reports
+ * "already enabled" rather than rewriting it.
+ */
 export function isEnabled(root: string): boolean {
   return isDirectory(path.join(root, LEDGER_DIR));
 }
