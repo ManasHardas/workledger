@@ -82,6 +82,50 @@ export interface UnparsedLine {
   line: string;
 }
 
+/**
+ * The repo's web base, resolved from its `origin` remote — P8 amendment 13. The two URLs are
+ * templates, not functions, because they cross the wire: `{sha}` in `commitUrl`, `{ref}` and
+ * `{path}` in `fileUrl`. Substitute them with {@link commitHref} and {@link fileHref} rather
+ * than by hand, so a view never has to know a host's URL shape.
+ */
+export interface RepoRemote {
+  host: "github" | "gitlab" | "bitbucket" | "other";
+  webBase: string;
+  commitUrl: string;
+  fileUrl: string;
+}
+
+/** `editor:` from the repo config: which editor an open-in-editor control targets (amendment 13). */
+export type EditorScheme = "vscode" | "cursor" | "none";
+
+/**
+ * The ref a file link uses when the ledger line records no commit — all three hosts resolve
+ * `HEAD` to the default branch, which is what keeps this a string operation with no lookup.
+ */
+export const DEFAULT_REF = "HEAD";
+
+/** `remote.commitUrl` with the commit id in it. */
+export function commitHref(remote: RepoRemote, sha: string): string {
+  return remote.commitUrl.replace("{sha}", encodeURIComponent(sha));
+}
+
+/** `remote.fileUrl` at `sha`, or at the default branch when the line records no commit. */
+export function fileHref(remote: RepoRemote, file: string, sha?: string | undefined): string {
+  return remote.fileUrl
+    .replace("{ref}", encodeURIComponent(sha === undefined || sha === "" ? DEFAULT_REF : sha))
+    .replace("{path}", file.split("/").map(encodeURIComponent).join("/"));
+}
+
+/**
+ * The `vscode://` / `cursor://` URL that opens one file, or `null` when the repo says `none` or
+ * the daemon predates the field. `absolutePath` is exactly that: `repoPath` joined to the
+ * ledger's repo-relative file path, which is why the session view carries the repo root.
+ */
+export function editorHref(editor: EditorScheme | undefined, absolutePath: string): string | null {
+  if (editor === undefined || editor === "none") return null;
+  return `${editor}://file${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 /** `GET /api/sessions` element — api.md's `ParsedSession`, not core's. */
 export interface ParsedSession {
   frontmatter: SessionFrontmatter;
@@ -96,6 +140,16 @@ export interface ParsedSession {
   startedIn: string | null;
   /** The repos the session is about, best first (P8 amendment 10); empty when never inferred. */
   about: string[];
+  /**
+   * Amendment 13, on `GET /api/sessions/:ulid` only: the repo's resolved web base, `null` when
+   * it has no remote or one on a host the daemon does not know. Absent — not `null` — on a
+   * daemon from before the amendment and on the list route, where a view shows no link at all.
+   */
+  remote?: RepoRemote | null;
+  /** Amendment 13: which editor the open-in-editor control targets, or `none`. */
+  editor?: EditorScheme;
+  /** Amendment 13: the repo root, absolute — `files` are relative to it. */
+  repoPath?: string;
 }
 
 /** `GET /api/backlog` element. */
@@ -152,6 +206,10 @@ export interface Repo {
   openNotes: number;
   lastHookAt: string | null;
   health: "ok" | "warn" | "broken";
+  /** Amendment 13: the repo's web base, or `null`; absent on a daemon from before it. */
+  remote?: RepoRemote | null;
+  /** Amendment 13: `editor:` from the repo config. */
+  editor?: EditorScheme;
 }
 
 /**

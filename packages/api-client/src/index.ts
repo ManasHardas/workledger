@@ -29,7 +29,7 @@ export { globalFetch, normalizeBaseUrl, queryString, toApiError } from "./http.j
 export type { FetchLike, HttpRequestInit, HttpResponse } from "./http.js";
 export { LocalServerSource } from "./local-server-source.js";
 export type { LocalServerSourceOptions } from "./local-server-source.js";
-export { isSuggested } from "./types.js";
+export { DEFAULT_REF, commitHref, editorHref, fileHref, isSuggested } from "./types.js";
 export type {
   Actor,
   BackfillEstimate,
@@ -40,6 +40,7 @@ export type {
   DiscoverResult,
   DoctorEntry,
   EditPatch,
+  EditorScheme,
   Excerpt,
   ExtractEstimate,
   ExtractionEstimate,
@@ -74,6 +75,7 @@ export type {
   RemainingLine,
   Repo,
   RepoCandidate,
+  RepoRemote,
   WorkspaceCandidate,
   ResumeEstimate,
   RunInput,

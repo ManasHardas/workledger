@@ -19,14 +19,17 @@ import path from "node:path";
 import { ApiError } from "./errors.js";
 import { KeyedMutex } from "./mutex.js";
 import { ReadModel } from "./read-model.js";
-import { checkConfig, configHarnesses, lastHookAt } from "./health.js";
+import { checkConfig, configEditor, configHarnesses, lastHookAt } from "./health.js";
+import { repoRemote } from "./remote.js";
 import { LEDGER_DIR, ledgerId, ledgerPaths } from "./paths.js";
 import { startJobWatcher } from "./job-watcher.js";
 import { startWatcher } from "./watcher.js";
 import type { EventBus } from "./events.js";
 import type { JobOps } from "./jobs.js";
 import type { JobWatcher } from "./job-watcher.js";
+import type { Editor } from "@workledger/core/schema";
 import type { LedgerPaths } from "./paths.js";
+import type { RepoRemote } from "./remote.js";
 import type { Watcher } from "./watcher.js";
 
 /** How the server addresses repos: one implicit repo, or every repo by id. */
@@ -60,6 +63,14 @@ export interface Repo {
   openNotes: number;
   lastHookAt: string | null;
   health: "ok" | "warn" | "broken";
+  /**
+   * The repo's web base, from its `origin` remote (amendment 13); `null` for a repo with no
+   * remote or one on a host this build does not know, where the UI shows a copy control instead
+   * of a link. Resolved from the URL on disk — nothing here contacts the host.
+   */
+  remote: RepoRemote | null;
+  /** `editor:` from the repo config: which editor the UI offers a file to, or `none`. */
+  editor: Editor;
 }
 
 /** One served repo: its ledger, its read model and the per-repo machinery around it. */
@@ -252,6 +263,8 @@ export class RepoRegistry {
       openNotes: model.listNotes({ open: "true", limit: UNLIMITED }).length,
       lastHookAt: lastHookAt(paths),
       health,
+      remote: repoRemote(context.root),
+      editor: configEditor(paths),
     };
   }
 

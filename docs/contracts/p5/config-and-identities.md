@@ -14,6 +14,18 @@ identities_file: identities.yaml   # optional, relative to .workledger/
 stderr line prefixed `workledger:`, when the tree has a merge, rebase, or cherry-pick in progress,
 when `.workledger/` has no changes, or when git is missing. Failures never change the hook's exit code.
 
+## `editor` (P8 amendment 13)
+
+```yaml
+editor: vscode                # vscode | cursor | none; default vscode
+```
+
+Read by the UI, never acted on by the CLI: it decides which scheme an open-in-editor control uses
+next to a file path in the session panel (`vscode://file<abs path>`, `cursor://file<abs path>`),
+and `none` removes the control. `GET /api/repos` and `GET /api/sessions/:ulid` carry the resolved
+value alongside the repo's absolute path; an absent, unreadable or unrecognised value is `vscode`,
+like every other key the fast loader cannot make sense of.
+
 `private_paths`: matched with picomatch semantics against the session's `cwd` relative to the repo
 root; a match sets `private: true` at `SessionStart` (boundary record only, no brief, never a block).
 

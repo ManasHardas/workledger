@@ -8,8 +8,9 @@
  * frontmatter and the split fields, so this module drops the write-side machinery and renames
  * `blockedBy` to the contract's `blocked_by`.
  */
-import type { BacklogItem, NoteType, SessionFrontmatter, Verified } from "@workledger/core/schema";
+import type { BacklogItem, Editor, NoteType, SessionFrontmatter, Verified } from "@workledger/core/schema";
 import type { ParsedItem } from "@workledger/core/render/backlog";
+import type { RepoRemote } from "./remote.js";
 import type { ParsedSession as CoreParsedSession } from "@workledger/core/render/session";
 
 /**
@@ -75,6 +76,21 @@ export interface SessionView {
   startedIn: string | null;
   /** The repos the session is about, best first — the frontmatter's `about`; empty when never inferred. */
   about: string[];
+}
+
+/**
+ * `GET /api/sessions/:ulid` — the session plus what its Done items' links are built from (P8
+ * amendment 13). The three fields belong to the repo, not to the session, so they are added at
+ * the route rather than cached per file in the read model, and the *list* stays `SessionView`:
+ * a link is a detail-view concern and 100 rows have no use for 100 copies of the same base.
+ */
+export interface SessionDetailView extends SessionView {
+  /** The repo's resolved web base, or `null` — no remote, or a host this build does not know. */
+  remote: RepoRemote | null;
+  /** Which editor an open-in-editor control targets; `none` for no such control. */
+  editor: Editor;
+  /** The repo root, absolute — what an editor URL is built from, since `files` are relative. */
+  repoPath: string;
 }
 
 /** `GET /api/backlog` element. */

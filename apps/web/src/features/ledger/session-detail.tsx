@@ -14,7 +14,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../../components/ui/sheet.js";
-import type { Line as DoneLine, NoteLine, ParsedSession, Verified } from "../../lib/ledger-source.js";
+import { commitHref, editorHref, fileHref } from "../../lib/ledger-source.js";
+import type {
+  EditorScheme,
+  Line as DoneLine,
+  NoteLine,
+  ParsedSession,
+  RepoRemote,
+  Verified,
+} from "../../lib/ledger-source.js";
 import { ledgerListHref } from "./detail-route.js";
 import { cpMarker, formatInstant } from "./format.js";
 import { useLiveSession } from "./live.js";
@@ -217,6 +225,9 @@ function SessionBody({ session }: { session: ParsedSession }) {
       <DoneDrawer
         line={opened}
         checkpointAt={opened ? frontmatter.checkpoints.find((c) => c.n === opened.cp)?.at : undefined}
+        remote={session.remote ?? null}
+        editor={session.editor}
+        repoPath={session.repoPath}
         onClose={() => setOpenDone(null)}
       />
     </div>
@@ -233,10 +244,19 @@ function SessionBody({ session }: { session: ParsedSession }) {
 function DoneDrawer({
   line,
   checkpointAt,
+  remote,
+  editor,
+  repoPath,
   onClose,
 }: {
   line: DoneLine | null;
   checkpointAt: string | undefined;
+  /** The repo's web base (amendment 13), or `null` — no remote, or a host the daemon skipped. */
+  remote: RepoRemote | null;
+  /** `editor:` from the repo config; `undefined` on a daemon from before the amendment. */
+  editor: EditorScheme | undefined;
+  /** The repo root, absolute — `line.files` are relative to it. */
+  repoPath: string | undefined;
   onClose: () => void;
 }) {
   return (
@@ -261,7 +281,10 @@ function DoneDrawer({
               </Field>
               <Field label="Commit">
                 {line.commit ? (
-                  <span className="font-mono">{line.commit}</span>
+                  <Identifier
+                    value={line.commit}
+                    href={remote === null ? null : commitHref(remote, line.commit)}
+                  />
                 ) : (
                   <span className="text-muted-foreground">None</span>
                 )}
@@ -270,8 +293,17 @@ function DoneDrawer({
                 {line.files?.length ? (
                   <ul className="flex flex-col gap-1">
                     {line.files.map((file) => (
-                      <li key={file} className="break-all font-mono text-xs">
-                        {file}
+                      <li key={file} className="flex flex-wrap items-baseline gap-x-2">
+                        {/*
+                          At the item's own commit when it recorded one, else at the default
+                          branch: a path is only meaningful at a revision, and the ledger line
+                          is the revision it was written about.
+                        */}
+                        <Identifier
+                          value={file}
+                          href={remote === null ? null : fileHref(remote, file, line.commit)}
+                        />
+                        <EditorLink file={file} editor={editor} repoPath={repoPath} />
                       </li>
                     ))}
                   </ul>
@@ -300,6 +332,82 @@ function DoneDrawer({
         ) : null}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * A commit id or a file path: a link out to the repo's host when `origin` resolved to one
+ * (amendment 13), and otherwise the identifier itself with a copy control — never a guessed URL,
+ * because a link that 404s is worse than a string a person can paste.
+ *
+ * `rel="noreferrer noopener"` on every one of them: the ledger's contents are the operator's,
+ * and a forge has no business learning which local page they were read from.
+ */
+function Identifier({ value, href }: { value: string; href: string | null }) {
+  if (href === null) {
+    return (
+      <span className="inline-flex flex-wrap items-baseline gap-x-1">
+        <span className="break-all font-mono text-xs">{value}</span>
+        <CopyButton value={value} />
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="break-all font-mono text-xs underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {value}
+    </a>
+  );
+}
+
+/** Puts one identifier on the clipboard. Silent where the API is absent (an insecure origin). */
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${value}`}
+      onClick={() => {
+        navigator.clipboard?.writeText(value).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        );
+      }}
+      className="rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+/**
+ * Opens the file in the operator's editor, from the absolute local path — independent of the
+ * remote, since a repo with no `origin` is exactly the one where the local file is all there is.
+ * Absent when the repo says `editor: none` or the daemon predates the field.
+ */
+function EditorLink({
+  file,
+  editor,
+  repoPath,
+}: {
+  file: string;
+  editor: EditorScheme | undefined;
+  repoPath: string | undefined;
+}) {
+  const href = repoPath === undefined ? null : editorHref(editor, `${repoPath}/${file}`);
+  if (href === null) return null;
+  return (
+    <a
+      href={href}
+      aria-label={`Open ${file} in the editor`}
+      className="rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      Open
+    </a>
   );
 }
 

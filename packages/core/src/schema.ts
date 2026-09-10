@@ -525,6 +525,14 @@ export const BriefConfig = z
 export type BriefConfig = z.infer<typeof BriefConfig>;
 
 /** Unknown keys are preserved and ignored (cli.md §`.workledger/config.yaml`). */
+/**
+ * The editors the UI can hand a file to (P8 amendment 13). `none` is the off position: a repo
+ * that says it gets a link out to the remote host and nothing else.
+ */
+export const EDITORS = ["vscode", "cursor", "none"] as const;
+export const Editor = z.enum(EDITORS);
+export type Editor = z.infer<typeof Editor>;
+
 export const Config = z
   .object({
     schema_version: schemaVersionSchema,
@@ -544,6 +552,12 @@ export const Config = z
       .default(false),
     /** The email → display-name map, relative to `.workledger/`. */
     identities_file: z.string().default("identities.yaml"),
+    /**
+     * P8 amendment 13: which editor the UI's open-in-editor control targets, or `none` for no
+     * such control. Nothing in the CLI acts on it — it only decides the URL scheme a file path
+     * is offered under next to its link out to the remote host.
+     */
+    editor: Editor.default("vscode"),
   })
   .loose();
 export type Config = z.infer<typeof Config>;

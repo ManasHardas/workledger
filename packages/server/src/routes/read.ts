@@ -10,11 +10,14 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 
 import { renderBrief } from "../brief.js";
+import { configEditor } from "../health.js";
 import { listIdentities } from "../identities.js";
+import { repoRemote } from "../remote.js";
 import { badRequest, notFound } from "../errors.js";
 import { parseLimit } from "../read-model.js";
 import type { LedgerPaths } from "../paths.js";
 import type { RepoContext } from "../repos.js";
+import type { SessionDetailView } from "../views.js";
 
 /** What the read routes need from `createApp`. */
 export interface ReadRouteDeps {
@@ -42,11 +45,23 @@ export function readRoutes(deps: ReadRouteDeps): Hono {
     );
   });
 
+  /**
+   * One session, plus the repo facts its Done items' links are built from — P8 amendment 13.
+   * Both are read per request rather than cached: an operator who adds an `origin` or changes
+   * `editor:` while `serve` is running gets the links on the next open, not after a restart.
+   */
   api.get("/sessions/:ulid", (c) => {
     const ulid = c.req.param("ulid");
-    const session = deps.repo(c).model.getSession(ulid);
+    const repo = deps.repo(c);
+    const session = repo.model.getSession(ulid);
     if (session === undefined) throw notFound("session", ulid);
-    return c.json(session);
+    const view: SessionDetailView = {
+      ...session,
+      remote: repoRemote(repo.root),
+      editor: configEditor(repo.paths),
+      repoPath: repo.root,
+    };
+    return c.json(view);
   });
 
   api.get("/backlog", (c) => {
