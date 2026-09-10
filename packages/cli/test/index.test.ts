@@ -175,20 +175,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0002_jobs.sql` is the latest.
-    expect(row?.value).toBe("2");
+    // Bumped by every migration that lands; `0003_repos.sql` is the latest.
+    expect(row?.value).toBe("3");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0004_fourth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0003_third.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0005_fifth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0004_fourth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0003_third.sql", "0004_fourth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(4);
+    expect(migrate(db.connection, dir)).toEqual(["0004_fourth.sql", "0005_fifth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(5);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -211,7 +211,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql"]);
   });
 });
 
@@ -267,6 +267,56 @@ describe("session accessors", () => {
     expect(() =>
       db.updateSession(inserted.ulid, { ulid: "x" } as unknown as { status: string }),
     ).toThrow(TypeError);
+  });
+});
+
+describe("repos (0003_repos.sql)", () => {
+  it("lists a repo `init` recorded before any session ran in it", () => {
+    const db = open();
+    db.upsertRepo("/tmp/fresh");
+    expect(db.listRepos()).toEqual([
+      { repo_path: "/tmp/fresh", enabled: 1, open_sessions: 0, last_hook: null },
+    ]);
+  });
+
+  it("keeps the repos row in step with every session insert, and keeps added_at on re-upsert", () => {
+    const db = open();
+    db.insertSession(session({ updated_at: "2026-09-09T10:00:00.000Z" }));
+    db.upsertRepo(REPO, "2026-09-10T00:00:00.000Z");
+    const rows = db.connection
+      .prepare<[], { path: string; added_at: string; updated_at: string }>("SELECT path, added_at, updated_at FROM repos")
+      .all();
+    expect(rows).toEqual([{ path: REPO, added_at: "2026-09-09T10:00:00.000Z", updated_at: "2026-09-10T00:00:00.000Z" }]);
+    expect(db.listRepos()).toEqual([
+      { repo_path: REPO, enabled: 1, open_sessions: 1, last_hook: "2026-09-09T10:00:00.000Z" },
+    ]);
+  });
+
+  it("is seeded from the sessions an older index already had", () => {
+    const db = open();
+    // Roll the schema back to before the table existed, re-insert the way 0002 left things,
+    // and let `openIndex` apply 0003 over it.
+    db.connection.exec("DROP TABLE repos");
+    db.connection.prepare("UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'").run();
+    db.connection
+      .prepare(
+        "INSERT INTO sessions (ulid, repo_path, harness, harness_session_id, status, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("01JQ8ZK4T0000000000000000A", "/tmp/old", "claude-code", "h1", "ended", "2026-09-01T00:00:00.000Z");
+    db.close();
+    opened.pop();
+
+    const migrated = open();
+    expect(migrated.listRepos()).toEqual([
+      { repo_path: "/tmp/old", enabled: 1, open_sessions: 0, last_hook: "2026-09-01T00:00:00.000Z" },
+    ]);
+  });
+
+  it("survives a rebuild of the repo's sessions", () => {
+    const db = open();
+    db.insertSession(session());
+    db.clearRepo(REPO);
+    expect(db.listRepos().map((repo) => repo.repo_path)).toEqual([REPO]);
   });
 });
 

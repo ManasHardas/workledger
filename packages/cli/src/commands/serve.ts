@@ -1,5 +1,9 @@
 /**
- * `workledger serve [--repo <path>] [--port <n>] [--no-open]` — docs/contracts/p2/api.md.
+ * `workledger serve [--repo <path>] [--port <n>] [--no-open]` — docs/contracts/p2/api.md, and
+ * P8's two modes (docs/contracts/p8/daemon-and-api.md §CLI): without `--repo` it is the
+ * machine's daemon, serving every enabled repo the index knows and announcing itself in
+ * `~/.workledger/serve.json` for `workledger open` and `stop`; with `--repo` it is P2's
+ * single-repo server, kept for debugging.
  *
  * This is the one place the two halves of P2 are joined. `@workledger/server` owns the HTTP
  * surface and the read model but deliberately owns no writer: api.md says every POST calls "the
@@ -22,8 +26,10 @@ import { fileURLToPath } from "node:url";
 
 import { BacklogOpError } from "../backlog-ops.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
+import { resolveHome } from "../index/db.js";
 import { cancelJob, enqueueJob, listJobs, retryJob } from "../jobs/queue.js";
 import { findRepoRoot, isEnabled } from "../ledger-fs.js";
+import { removeServeState, writeServeState } from "../serve-state.js";
 import type { IndexDb } from "../index/db.js";
 import type {
   BackfillEstimate,
@@ -48,7 +54,10 @@ export const SCAN_INTERVAL_MS = 5 * 60_000;
 
 /** Options commander parses for `serve`. */
 export interface ServeOptions {
-  /** Repo to serve; defaults to the repo root found by walking up from `cwd`. */
+  /**
+   * One repo to serve — single-repo mode (P2's shape, now the debug path). Without it the
+   * server is the machine's daemon over every enabled repo in the index.
+   */
   repo?: string;
   /** Port to bind on `127.0.0.1`; defaults to a random high port (api.md preamble). */
   port?: number;
@@ -110,9 +119,9 @@ export function hasWebBuild(dir: string): boolean {
  * A page rather than a 404 because the URL is the first thing this command prints: opening it and
  * getting "not found" reads as a broken server, and the API underneath it is not broken at all.
  */
-export function placeholderHtml(repoRoot: string): string {
-  const repo = repoRoot.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<!doctype html><meta charset="utf-8"><title>workledger</title><body style="font:14px system-ui;margin:2rem"><p>workledger is serving <code>${repo}</code>. The UI is not built yet — the API is at <a href="/api/health">/api/health</a>.</p>`;
+export function placeholderHtml(what: string): string {
+  const escaped = what.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<!doctype html><meta charset="utf-8"><title>workledger</title><body style="font:14px system-ui;margin:2rem"><p>workledger is serving <code>${escaped}</code>. The UI is not built yet — the API is at <a href="/api/health">/api/health</a>.</p>`;
 }
 
 /** The platform's "open this URL" command, or `undefined` where there is not one. */
@@ -502,41 +511,74 @@ function untilStopped(io: ServeIo): Promise<void> {
 }
 
 /**
+ * Every enabled repo the index knows, by root — daemon-and-api.md's "machine mode over every
+ * enabled repo in the index". `isEnabled` is the filter `doctor` and `scan --all` apply: the
+ * index is a cache, and a row whose `.workledger/` is gone names nothing to serve.
+ */
+export async function enabledRepos(io: ServeIo): Promise<string[]> {
+  const { openIndex } = await import("../index/db.js");
+  const home = io.env["WORKLEDGER_HOME"]?.trim();
+  const db = openIndex(home ? { home } : {});
+  try {
+    return db
+      .listRepos()
+      .filter((repo) => repo.enabled !== 0 && isEnabled(repo.repo_path))
+      .map((repo) => repo.repo_path);
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * Start the local server and stay up until `SIGINT`.
  *
- * @returns `0` after a clean shutdown, `4` outside an enabled repo (cli.md's exit-code table),
- * `1` when the port cannot be bound.
+ * @returns `0` after a clean shutdown, `4` when `--repo` names a repo that is not enabled
+ * (cli.md's exit-code table), `1` when the port cannot be bound.
  */
 export async function serveCommand(
   options: ServeOptions = {},
   io: ServeIo = processIo(),
 ): Promise<number> {
-  const start = options.repo ?? io.env["CLAUDE_PROJECT_DIR"]?.trim() ?? io.cwd;
-  const root = findRepoRoot(start);
-  if (root === undefined || !isEnabled(root)) {
-    io.stderr(`workledger serve: ${root ?? start} is not an enabled repo; run \`workledger init\``);
-    return EXIT_NOT_ENABLED;
-  }
-
   const [{ LOOPBACK, createApp }, ops, { VERSION }] = await Promise.all([
     import("@workledger/server"),
     import("../backlog-ops.js"),
     import("../main.js"),
   ]);
 
+  // Which repos. `--repo` is single-repo mode; without it, the machine.
+  let single: string | undefined;
+  let roots: string[];
+  if (options.repo !== undefined) {
+    const root = findRepoRoot(options.repo);
+    if (root === undefined || !isEnabled(root)) {
+      io.stderr(`workledger serve: ${root ?? options.repo} is not an enabled repo; run \`workledger init\``);
+      return EXIT_NOT_ENABLED;
+    }
+    single = root;
+    roots = [root];
+    io.stderr("workledger serve: single-repo mode; run `workledger open` for all projects");
+  } else {
+    try {
+      roots = await enabledRepos(io);
+    } catch (error) {
+      io.stderr(`workledger serve: could not read the index: ${error instanceof Error ? error.message : String(error)}`);
+      return EXIT_USAGE;
+    }
+  }
+
   const dir = webDir();
   const built = hasWebBuild(dir);
   const home = io.env["WORKLEDGER_HOME"];
   const jobs = jobOps(io);
   const app = createApp({
-    repoRoot: root,
+    ...(single === undefined ? { repos: roots } : { repoRoot: single }),
     ops,
     jobs,
     cliVersion: VERSION,
     env: io.env,
     ...(home ? { home } : {}),
     ...(built ? { staticDir: dir } : {}),
-    staticHtml: placeholderHtml(root),
+    staticHtml: placeholderHtml(single ?? `${roots.length} enabled repo(s)`),
   });
 
   let server;
@@ -553,11 +595,23 @@ export async function serveCommand(
   if (!built) io.stdout("workledger serve: no built UI yet — serving a placeholder page");
   if (options.open !== false) (io.openUrl ?? ((target: string) => openBrowser(target, io)))(url);
 
-  // cli.md §scan: "and every 5 minutes inside `serve`". A sweep that throws — a locked index, a
-  // ledger deleted underneath the process — is reported and skipped, never fatal: the server is
-  // serving, and one missed sweep is caught by the next one.
+  // The daemon's calling card, for `open` and `stop` (daemon-and-api.md §CLI). Only the machine
+  // daemon writes it: a `--repo` server is a debugging aid, not the one `open` should find.
+  const stateHome = single === undefined ? resolveHome(io.env["WORKLEDGER_HOME"]) : undefined;
+  if (stateHome !== undefined) {
+    writeServeState(stateHome, { url, pid: process.pid, startedAt: new Date().toISOString(), version: VERSION });
+  }
+
+  // cli.md §scan: "and every 5 minutes inside `serve`", over every served repo. A sweep that
+  // throws — a locked index, a ledger deleted underneath the process — is reported and
+  // skipped, never fatal: the server is serving, and one missed sweep is caught by the next
+  // one. In machine mode the same tick re-reads the index, so a repo enabled by a `workledger
+  // init` in another terminal joins the running daemon without a restart.
   const sweep = setInterval(() => {
-    void jobs.scan(root).catch((error: unknown) => {
+    void (async () => {
+      if (single === undefined) for (const root of await enabledRepos(io)) app.addRepo(root);
+      for (const context of app.repos.list()) await jobs.scan(context.root);
+    })().catch((error: unknown) => {
       io.stderr(`workledger serve: scan failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }, options.scanIntervalMs ?? SCAN_INTERVAL_MS);
@@ -566,6 +620,7 @@ export async function serveCommand(
 
   await untilStopped(io);
   clearInterval(sweep);
+  if (stateHome !== undefined) removeServeState(stateHome, process.pid);
   await server.close();
   app.close();
   return EXIT_OK;

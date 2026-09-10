@@ -389,11 +389,11 @@ describe("workledger serve", () => {
     };
   }
 
-  it("exits 4 outside an enabled repo, without binding a port", async () => {
+  it("exits 4 when --repo names a repo that is not enabled, without binding a port", async () => {
     const root = repo({ enabled: false });
     const io = serveIo(root);
 
-    expect(await serveCommand({ open: false }, io)).toBe(EXIT_NOT_ENABLED);
+    expect(await serveCommand({ repo: root, open: false }, io)).toBe(EXIT_NOT_ENABLED);
 
     expect(io.out).toEqual([]);
     expect(io.err.join(" ")).toContain("is not an enabled repo");
@@ -404,7 +404,8 @@ describe("workledger serve", () => {
     seedItem(root, A);
     const io = serveIo(root);
 
-    const running = serveCommand({ open: false }, io);
+    // `--repo` is single-repo mode (P8); the machine mode without it is covered in open.test.ts.
+    const running = serveCommand({ repo: root, open: false }, io);
     // The URL is the first line, and it is printed before the command starts waiting.
     await vi.waitFor(() => expect(io.out[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/), { timeout: 5000 });
 
@@ -412,6 +413,7 @@ describe("workledger serve", () => {
     const health = await fetch(`${url}/api/health`);
     expect(health.status).toBe(200);
     expect(((await health.json()) as { repo: string }).repo).toBe(root);
+    expect(io.err).toContain("workledger serve: single-repo mode; run `workledger open` for all projects");
 
     // `--no-open` means no browser, and the placeholder page stands in for the unbuilt UI.
     expect(io.opened).toEqual([]);
@@ -430,7 +432,7 @@ describe("workledger serve", () => {
     // A port nobody is on; `--port` is the only way the caller learns it in advance.
     const port = 34567 + (process.pid % 1000);
 
-    const running = serveCommand({ port }, io);
+    const running = serveCommand({ repo: root, port }, io);
     await vi.waitFor(() => expect(io.opened.length).toBe(1), { timeout: 5000 });
 
     expect(io.out[0]).toBe(`http://127.0.0.1:${port}`);
@@ -443,11 +445,11 @@ describe("workledger serve", () => {
     const root = repo();
     const held = serveIo(root);
     const port = 35567 + (process.pid % 1000);
-    const first = serveCommand({ port, open: false }, held);
+    const first = serveCommand({ repo: root, port, open: false }, held);
     await vi.waitFor(() => expect(held.out[0]).toMatch(/^http:/), { timeout: 5000 });
 
     const second = serveIo(root);
-    expect(await serveCommand({ port, open: false }, second)).toBe(EXIT_USAGE);
+    expect(await serveCommand({ repo: root, port, open: false }, second)).toBe(EXIT_USAGE);
     expect(second.err.join(" ")).toContain("EADDRINUSE");
 
     held.stop.abort();
