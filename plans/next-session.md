@@ -15,6 +15,7 @@
 
 - **Shipped:** P1–P5 (tags `p1-shipped` … `p5-shipped`, version 0.3.0). CHANGELOG has the feature list per phase.
 - **Deferred by the operator:** P6 (Dome card). Spec and contracts are on main (`plans/feature-p6-dome-card.md`, `docs/contracts/p6/`); do not dispatch unless the operator un-defers it.
+- **P8 (Onboarding and home) is the operator's priority (2026-09-09) and runs before P7 Wave 1:** spec `plans/feature-p8-onboarding-home.md`, contract `docs/contracts/p8/daemon-and-api.md`, tracking #75, builds #76 (daemon/multi-repo) → #77 (onboarding ops) and #78 (Home) → #79 (wizard) → #81 (QA e2e); #80 (release/brew) independent.
 - **P7 state:** Wave 0 (#73: Figma token sync script, Code Connect skeletons, Lighthouse script) merged or in flight; see `gh pr list`. **Wave 1 is blocked on operator inputs:** the Figma file key, node ids for the ten components listed in `plans/feature-p7-design.md`, and a variables export (or MCP `get_variable_defs` output). Ask for them first; nothing else in P7 can proceed without them.
 - **Operating mode:** ACTIVE, Lean (Clause #12). Clause #13 exists in agentwaves but is NOT in force here (operator decision 2026-09-09).
 - **gh identity:** prefix every gh call with `export GH_TOKEN=$(gh auth token --user ManasHardas)`; never `gh auth switch`.
