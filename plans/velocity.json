@@ -1008,6 +1008,62 @@
       "review_iterations": 0,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "walkthrough defect: operator's Claude usage limit (resets 1am); detection, machine-wide concurrency cap 2, automatic retry after the reset; migration 0005"
+    },
+    {
+      "session": 3,
+      "wave": "P8-4",
+      "kind": "pr_merge",
+      "pr": 106,
+      "issue": 105,
+      "agent_role": "backend",
+      "class": "workspace-root attribution, first-of-class (lean, CR)",
+      "tokens_implementer": 406000,
+      "tokens_reviewers": 135000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "attribution by touched paths: streaming transcript scanner, transcript_touches cache, sessions keyed by (harness, session id, repo), checkpoint --repo, since: all; migration 0006; amendments 8-9; one orchestrator-requested fix before the review round"
+    },
+    {
+      "session": 3,
+      "wave": "P8-4",
+      "kind": "pr_merge",
+      "pr": 107,
+      "issue": 105,
+      "agent_role": "backend+frontend",
+      "class": "workspace hooks and wizard folder section, first-of-class (lean, CR)",
+      "tokens_implementer": 387000,
+      "tokens_reviewers": 175000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "init --workspace, the workspace Stop hook resolving touched repos (one checkpoint --repo per repo), discover.workspaces, wizard folder section and the All history card; migration 0007"
+    },
+    {
+      "session": 3,
+      "wave": "P8-4",
+      "kind": "pr_merge",
+      "pr": 112,
+      "issue": 109,
+      "agent_role": "frontend",
+      "class": "wizard fix (lean, CR)",
+      "tokens_implementer": 128000,
+      "tokens_reviewers": 102000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "already-tracked repos are selectable for backfill; init never receives a tracked repo"
+    },
+    {
+      "session": 3,
+      "wave": "P8-4",
+      "kind": "pr_merge",
+      "pr": 111,
+      "issue": 110,
+      "agent_role": "backend",
+      "class": "attribution rule fix (lean, CR)",
+      "tokens_implementer": 153000,
+      "tokens_reviewers": 137000,
+      "review_iterations": 1,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "a write, or five references with a path-tool input or cd; Bash mentions alone never attribute; cross-repo sessions need a write; workspaces regardless of git ancestors; migration 0008"
     }
   ]
 }

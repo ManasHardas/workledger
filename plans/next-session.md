@@ -1,6 +1,6 @@
 # Session 4 Handoff
 
-**Generated:** 2026-09-09 by the orchestrator (PM inline) at S3 close; amended 2026-09-10 after the operator's walkthrough (S3 addendum).
+**Generated:** 2026-09-09 by the orchestrator (PM inline) at S3 close; amended 2026-09-10 after the operator's walkthrough (S3 addendum) and again after workspace-root sessions shipped (S3 addendum 2).
 **Stale-after:** any user direction change OR any merged PR appearing post-generation.
 
 ---
@@ -13,7 +13,8 @@
 
 ## Session 4 quick-context
 
-- **Phase:** P8 — Onboarding and home. **Built and proven on the operator's machine, not tagged.** All fourteen build PRs are on main (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96, then #98 #102 #103 #104; last SHA at S3 close is the `chore(close): S3 addendum` commit). Spec `plans/feature-p8-onboarding-home.md`, contract `docs/contracts/p8/daemon-and-api.md` (amendments 1–6), tracking #75 (open; acceptance boxes ticked except the install box, which waits for a published release). Version is still 0.3.0; CHANGELOG has an Unreleased section for P8 that already lists the four walkthrough fixes.
+- **Phase:** P8 — Onboarding and home. **Built, backfill proven on the operator's machine, workspace-root attribution shipped, not tagged.** All eighteen build PRs are on main (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96, then #98 #102 #103 #104, then #106 #107 #112 #111; last SHA at S3 close is the `chore(close): S3 addendum 2` commit). Spec `plans/feature-p8-onboarding-home.md`, contract `docs/contracts/p8/daemon-and-api.md` (amendments 1–9), tracking #75 (open; acceptance boxes ticked except the install box, which waits for a published release). Version is still 0.3.0; CHANGELOG has an Unreleased section for P8 that already lists the eight post-walkthrough PRs. Two P8 issues are filed and unbuilt: #108 (migration robustness) and #113 (live-session guard for backfill).
+- **Workspace-root sessions (DL-19, amendments 8–9):** Claude Code stores a transcript under the slug of the directory a session was started in, and the operator works from `~/Projects/dome_workspace` across card repos. Since #106/#107/#111 a transcript counts for every repo it touches: at least one write under the root, or at least five references of which one is a non-Bash path-tool input or a Bash `cd` into the root (Bash text mentions alone never attribute; a session started inside repo X counts for repo Y only with a write). Sessions are keyed by (harness, session id, repo); `run` queues one job per (session, repo); `workledger checkpoint --repo <path>` writes into that ledger from any cwd; `workledger init --workspace <dir>` installs the three hook files into a non-git folder holding tracked repos and its Stop hook blocks with one `checkpoint --repo` per touched repo; the wizard shows the folders under "Sessions were also started from these folders" and a fifth history card, All (`since: all`). Migrations 0006–0008. **Every agent run uses `WORKLEDGER_HOME=$(mktemp -d)/home`** (CLAUDE.md): a worktree build once migrated the real index and main's `serve` failed with "table workspaces already exists" (#108).
 - **Two facts a resume touches:** headless resumes (repair, backfill) hand the checkpoint over as `workledger checkpoint --payload '<json>'` (or `--payload-file`), never a heredoc or pipe on stdin: Claude Code's headless permission matcher denies stdin heredocs and pipes even under `Bash(workledger checkpoint*)` (DL-18; instruction v3; 16 KB cap). At most 2 jobs run machine-wide. A resume refused by the operator's Claude usage limit ("resets 1am") is requeued with `retry_after` and retried automatically after the reset (up to three waits); the Jobs card and wizard show the wait.
 - **The walkthrough gate:** the operator runs onboarding personally before `p8-shipped` (spec §Acceptance, 2026-09-09 direction). The walkthrough ran on 2026-09-10: every backfill failed (permission matcher, payload cap and timeout, then the usage limit), four lean PRs fixed it, and all five real backfill jobs on the operator's machine then succeeded. The verdict is still pending; do not tag first. Fresh-state commands to repeat if asked, after `pnpm install && pnpm -r build` (`workledger` on PATH is a symlink to `packages/cli/bin/workledger`):
   - `workledger` — the machine's real state: daemon starts or is reused, Home lists the repos already enabled by P1–P5.
@@ -42,7 +43,7 @@
 | Infra thin (orchestrator-verified, no review) | 87k | 0 | 0 | ~90k |
 | QA e2e (no review) | 175k (S2: 105–125k) | 0 | 0 | ~175k |
 
-Three fix-cycles across fourteen PRs in S3 (#84, #90, #93; none on the four walkthrough fixes); every fix-cycle roughly doubles the reviewer spend on that slot.
+Four fix-cycles across eighteen PRs in S3 (#84, #90, #93, #111; none on the four walkthrough fixes); every fix-cycle roughly doubles the reviewer spend on that slot. The two workspace-root first-of-class slots (#106, #107) ran 390–410k implementer and 135–175k reviewer, ~10% above the backend first-of-class anchor.
 
 ---
 
@@ -55,7 +56,7 @@ export GH_TOKEN=$(gh auth token --user ManasHardas)
 cd /Users/manashardas/Projects/workledger && git fetch origin && git reset --hard origin/main
 # 1. Version: packages/cli/package.json "version": "0.3.0" -> "0.4.0" (pnpm -r build; node packages/cli/dist/main.js --version prints 0.4.0).
 # 2. CHANGELOG.md: rename "## Unreleased — P8 Onboarding and home" to "## 0.4.0 — P8 Onboarding and home (YYYY-MM-DD)",
-#    drop the "Built on main; …" line (the four walkthrough fixes #98 #102 #103 #104 are already listed; append any later defect PR).
+#    drop the "Built on main; …" line (#98 #102 #103 #104 #106 #107 #112 #111 are already listed; append #108, #113 and any later defect PR).
 # 3. Commit: "P8 shipped: changelog 0.4.0, version bump" with the usual trailers; git push origin main.
 # 4. Tags (annotated, on that commit): git tag -a v0.4.0 -m "workledger 0.4.0 — P8 onboarding and home"
 #    and git tag -a p8-shipped -m "P8 shipped"; git push origin v0.4.0 p8-shipped.
@@ -74,7 +75,8 @@ Estimated cost: ~20–40k orchestrator tokens, no agents.
 
 ## Pre-rendered slot 2-N (compressed)
 
-- **Slot 2 (before slot 1 if the operator reports defects):** file each defect as a five-line issue (`[P8][Backend|Frontend] <title>`; body: symptom, expected, where in the code, acceptance, test) and dispatch one lean PR per issue with the matching `agents/<role>.md` brief: worktree `.worktrees/p8-<slug>` on branch `p8/<slug>`, `Closes #<N>`, host verification stated, single CR review (Security only if init/hook/credential surfaces are touched), one fix-cycle then merge. Anchors: backend fix ~230–310k, frontend fix ~90k (orchestrator-verified narrow) to ~430k (page-level). Repeat the fresh-state run after each merge; the operator gives the final verdict.
+- **Slot 2 (the two filed P8 builds, before slot 1 unless the operator says otherwise):** #108 `[P8][Backend]` index migrations record applied names, detect a divergent schema, and offer a cache rebuild instead of a raw SQLite error; #113 `[P8][Backend]` backfill must not replay a session that is still live in another terminal. One lean PR each from the filed bodies, worktree `.worktrees/p8-<slug>`, `Closes #<N>`, CR review, temp `WORKLEDGER_HOME` for every run; #108 touches the index schema path, so this is ACTIVE mode (contract-adjacent), not DEGRADED. Anchor: backend fix ~230–310k each; #108 may reach the first-of-class anchor (~510–630k) if the migration table changes shape.
+- **Slot 2b (before slot 1 if the operator reports defects):** file each defect as a five-line issue (`[P8][Backend|Frontend] <title>`; body: symptom, expected, where in the code, acceptance, test) and dispatch one lean PR per issue with the matching `agents/<role>.md` brief: worktree `.worktrees/p8-<slug>` on branch `p8/<slug>`, `Closes #<N>`, host verification stated, single CR review (Security only if init/hook/credential surfaces are touched), one fix-cycle then merge. Anchors: backend fix ~230–310k, frontend fix ~90k (orchestrator-verified narrow) to ~430k (page-level). Repeat the fresh-state run after each merge; the operator gives the final verdict.
 - **Slot 3 (only if the Figma inputs exist):** P7 Wave 1, Frontend, worktree `.worktrees/p7-b` on `p7/apply-designs`: run `node packages/tokens/scripts/from-figma.mjs <export>` and commit the regenerated tokens and preset; fill the Code Connect files' file key and node ids and run `npx figma connect publish --dry-run`; apply the designs to Ledger, Next, Needs you, Health, Jobs (and Home, new since P8) per `plans/feature-p7-design.md` §Scope 3–5 with every value through tokens; verify at 375 px and 1280 px in light and dark with screenshot pairs and `pnpm -F web lighthouse` scores in the PR; `Closes #<P7 Wave 1 issue>`. Then tag `p7-shipped` and close #72. Anchor ~450k per PR, up to two PRs.
 - **P6:** only if the operator un-defers it — three PRs per `plans/feature-p6-dome-card.md` (CardFSSource + publish/pull; apps/card + dome theme; mirror script), the middle one with a Security review; the founder creates `DomeHQ/card-workledger` and a card instance first.
 - **Housekeeping candidates, only if asked, one small PR each:** `serve` health lists identities file status; malformed `identities.yaml` prints a `workledger:` stderr line.
@@ -89,7 +91,7 @@ Estimated cost: ~20–40k orchestrator tokens, no agents.
 
 ## Stop conditions
 
-P8 tagged `v0.4.0` and `p8-shipped` with #75 closed (or the walkthrough still pending a verdict after the fresh-state run is prepared), P7 Wave 1 merged and tagged `p7-shipped` or blocked on inputs after asking once; then chore-close: velocity rows, wave-state (post-S4), capacity-log S4, this file regenerated for S5, guardrails script (`--session 4`), commit `chore(close): S4` with operating mode and watchdog status in the body.
+P8 tagged `v0.4.0` and `p8-shipped` with #75 closed (or the walkthrough still pending a verdict after the fresh-state run is prepared), #108 and #113 merged, P7 Wave 1 merged and tagged `p7-shipped` or blocked on inputs after asking once; then chore-close: velocity rows, wave-state (post-S4), capacity-log S4, this file regenerated for S5, guardrails script (`--session 4`), commit `chore(close): S4` with operating mode and watchdog status in the body.
 
 ## Session-close artifacts to update
 
