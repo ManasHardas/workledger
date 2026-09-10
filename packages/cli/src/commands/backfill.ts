@@ -298,6 +298,8 @@ export interface BackfillIo {
   fetchImpl?: typeof globalThis.fetch | undefined;
   /** Overrides `WORKLEDGER_HOME` for the checkpoints written through this run. */
   home?: string | undefined;
+  /** Stops the runner claiming — a daemon shutting down (#99). Absent means "never". */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -465,6 +467,7 @@ export async function drainBackfillJobs(
     progress: io.stderr,
     handler: (job) => runOneJob(job, options, io, outcomes),
     logDir: jobLogDir(io.home),
+    signal: io.signal,
   });
 
   let done = 0;

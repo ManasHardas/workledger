@@ -241,6 +241,11 @@ export function createApp(options: CreateAppOptions): ServerApp {
                 close: () =>
                   new Promise<void>((done, fail) => {
                     server.close((error) => (error ? fail(error) : done()));
+                    // `close()` alone waits for every open connection to end, and an
+                    // `/api/events` stream is a connection that never ends on its own: one
+                    // browser tab held the daemon past SIGTERM (#99). Destroying the sockets
+                    // aborts each SSE writer loop, which is what a shutdown means for them.
+                    server.closeAllConnections();
                   }),
               });
             },

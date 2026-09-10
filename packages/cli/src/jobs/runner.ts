@@ -67,6 +67,13 @@ export interface RunJobsOptions {
   progress?: (line: string) => void;
   /** Where a job's {@link JobResult.output} is written; no log is kept when omitted. */
   logDir?: string | undefined;
+  /**
+   * Stop claiming once aborted. The jobs already in flight run to their outcome — the caller
+   * that aborted also kills their harnesses (`abortResumes`), so that outcome is quick — and
+   * everything still `queued` stays queued for the next process rather than being started by a
+   * daemon that is on its way out (#99).
+   */
+  signal?: AbortSignal | undefined;
 }
 
 /** What one {@link runJobs} pass did. */
@@ -161,6 +168,7 @@ export async function runJobs(db: IndexDb, options: RunJobsOptions): Promise<Run
   const worker = async (): Promise<void> => {
     for (;;) {
       if (limit !== undefined && started >= limit) return;
+      if (options.signal?.aborted) return;
       const job = claimJob(db, {
         repoPath: options.repoPath,
         now: options.now(),

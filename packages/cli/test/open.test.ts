@@ -265,7 +265,25 @@ describe("workledger stop", () => {
     await expect(fetch(`${url}/api/health`)).rejects.toThrow();
   });
 
-  it("exits 1 and keeps the file when the daemon survives SIGTERM", async () => {
+  it("escalates to SIGKILL after the grace period, removes serve.json and exits 0 (#99)", async () => {
+    writeServeState(home, { url: "http://127.0.0.1:1", pid: process.pid, startedAt: "x", version: "0" });
+    const signals: string[] = [];
+    // A daemon that ignores SIGTERM and dies only to SIGKILL — the in-process stand-in for a pid
+    // held up by an SSE client or a running harness.
+    const it_ = io({
+      kill: (_pid, signal) => {
+        signals.push(signal);
+        if (signal === "SIGKILL") rmSync(serveStatePath(home), { force: true });
+      },
+      exitTimeoutMs: 100,
+    });
+    expect(await stopCommand(it_)).toBe(EXIT_OK);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(readServeState(home)).toBeUndefined();
+    expect(it_.err.join(" ")).toContain("SIGKILL");
+  });
+
+  it("exits 1 and keeps the file when the daemon survives SIGKILL too", async () => {
     writeServeState(home, { url: "http://127.0.0.1:1", pid: process.pid, startedAt: "x", version: "0" });
     const it_ = io({ kill: () => {}, exitTimeoutMs: 100 });
     expect(await stopCommand(it_)).toBe(EXIT_USAGE);

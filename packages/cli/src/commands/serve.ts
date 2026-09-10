@@ -24,6 +24,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { abortResumes } from "../adapters/spawn-resume.js";
 import { BacklogOpError } from "../backlog-ops.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { resolveHome } from "../index/db.js";
@@ -51,6 +52,21 @@ import type {
  * `crashed` one with a repair queued, without anybody typing a command.
  */
 export const SCAN_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * How long a daemon takes, at most, to leave after `SIGTERM` (daemon-and-api.md §CLI, amendment
+ * 6). Whatever still holds the event loop when this elapses — a handle this file does not know
+ * about — is not a reason to sit there being "still running" for `workledger stop`; the process
+ * exits regardless. `stop` waits longer than this before it escalates to `SIGKILL`.
+ */
+export const SHUTDOWN_GRACE_MS = 3000;
+
+/**
+ * How long, within that, the in-flight repairs and backfills get to record their outcome after
+ * their harnesses are killed: long enough for a killed child's `exit`, the pipe grace and one
+ * `failJob`, short of the whole budget so the listener and the index still close cleanly.
+ */
+const DRAIN_MS = 1500;
 
 /** Options commander parses for `serve`. */
 export interface ServeOptions {
@@ -416,8 +432,9 @@ function startBackfill(
   concurrency: number,
   repoRoot: string,
   io: ServeIo,
-): void {
-  void (async () => {
+  signal?: AbortSignal,
+): Promise<void> {
+  return (async () => {
     try {
       const [{ runBackfill }, { claudeCodeAdapter }, ids, { openIndex }] = await Promise.all([
         import("./backfill.js"),
@@ -448,6 +465,7 @@ function startBackfill(
             newBacklogId: ids.newBacklogId,
             apiKey: () => io.env["ANTHROPIC_API_KEY"],
             ...(home === undefined ? {} : { home }),
+            signal,
           },
         );
       } finally {
@@ -467,7 +485,7 @@ function startBackfill(
  * already recorded on that row, which is the channel the UI is watching, so nothing is thrown out
  * of here — an unhandled rejection would take the whole `serve` process down over one repair.
  */
-async function runQueuedRepair(ulid: string, io: ServeIo): Promise<void> {
+async function runQueuedRepair(ulid: string, io: ServeIo, signal?: AbortSignal): Promise<void> {
   try {
     const [{ runRepair }, { claudeCodeAdapter }, { newSessionId }, { openIndex }] = await Promise.all([
       import("./repair.js"),
@@ -491,6 +509,7 @@ async function runQueuedRepair(ulid: string, io: ServeIo): Promise<void> {
           stderr: io.stderr,
           now: () => new Date(),
           newId: newSessionId,
+          signal,
         },
       );
     } finally {
@@ -501,24 +520,42 @@ async function runQueuedRepair(ulid: string, io: ServeIo): Promise<void> {
   }
 }
 
-/** Resolve when the process is asked to stop: `SIGINT`, `SIGTERM`, or `io.signal`. */
-function untilStopped(io: ServeIo): Promise<void> {
-  return new Promise<void>((resolve) => {
+/**
+ * Resolve when the process is asked to stop — with `"signal"` for `SIGINT` / `SIGTERM`, and
+ * `"abort"` for `io.signal`, the in-process stand-in a test uses.
+ */
+function untilStopped(io: ServeIo): Promise<"signal" | "abort"> {
+  return new Promise((resolve) => {
     let done = false;
-    const stop = (): void => {
+    const stop = (how: "signal" | "abort"): void => {
       if (done) return;
       done = true;
-      process.off("SIGINT", stop);
-      process.off("SIGTERM", stop);
-      resolve();
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      resolve(how);
     };
-    process.on("SIGINT", stop);
-    process.on("SIGTERM", stop);
+    const onSignal = (): void => stop("signal");
+    const onAbort = (): void => stop("abort");
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
     if (io.signal !== undefined) {
-      if (io.signal.aborted) stop();
-      else io.signal.addEventListener("abort", stop, { once: true });
+      if (io.signal.aborted) onAbort();
+      else io.signal.addEventListener("abort", onAbort, { once: true });
     }
   });
+}
+
+/** Resolve once every promise in `work` has settled, or after `timeoutMs`, whichever is first. */
+async function drain(work: Iterable<Promise<unknown>>, timeoutMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled([...work]), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -581,7 +618,21 @@ export async function serveCommand(
   const dir = webDir();
   const built = hasWebBuild(dir);
   const home = io.env["WORKLEDGER_HOME"];
-  const jobs = jobOps(io);
+
+  // The runners this process starts from a route — a queued repair, a consented backfill — are
+  // tracked so a shutdown can kill their harnesses, let them record the outcome, and stop them
+  // claiming more (#99). `shutdown` is the runner's signal; `background` is what is drained.
+  const shutdown = new AbortController();
+  const background = new Set<Promise<void>>();
+  const track = (work: Promise<void>): void => {
+    background.add(work);
+    void work.finally(() => background.delete(work));
+  };
+  const jobs = jobOps(
+    io,
+    (ulid) => track(runQueuedRepair(ulid, io, shutdown.signal)),
+    (input, concurrency, repoRoot) => track(startBackfill(input, concurrency, repoRoot, io, shutdown.signal)),
+  );
   const app = createApp({
     ...(single === undefined ? { repos: roots } : { repoRoot: single }),
     ops,
@@ -631,8 +682,20 @@ export async function serveCommand(
   // A pending interval must not be what keeps the process alive; the listener already is.
   sweep.unref?.();
 
-  await untilStopped(io);
+  const how = await untilStopped(io);
+  if (how === "signal") {
+    // The hard bound of amendment 6. Unref'd: it must never be what keeps the loop alive, only
+    // what ends it when something else does. Not armed for an in-process stop, whose caller is
+    // a test worker that would be exited along with the daemon.
+    setTimeout(() => process.exit(EXIT_OK), SHUTDOWN_GRACE_MS).unref();
+  }
   clearInterval(sweep);
+  // Order matters. The runners first, so a killed harness's `failed` lands in the index before
+  // the file the next daemon reads is gone; then the calling card; then the listener, which
+  // destroys the SSE connections; then the watchers and pollers.
+  shutdown.abort();
+  abortResumes();
+  await drain(background, DRAIN_MS);
   if (stateHome !== undefined) removeServeState(stateHome, process.pid);
   await server.close();
   app.close();

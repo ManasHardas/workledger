@@ -35,6 +35,26 @@ export const MAX_RESUME_OUTPUT = 16_000;
 export const EXIT_GRACE_MS = 250;
 
 /**
+ * Every harness this process has spawned and not yet settled. A daemon that is told to stop
+ * must take its running resumes with it: the child holds its stdio pipes and a process handle,
+ * either of which keeps the event loop alive for as long as the harness runs, and a detached
+ * process group would outlive the daemon entirely (#99).
+ */
+const active = new Set<ChildProcess>();
+
+/**
+ * SIGKILL the process group of every in-flight resume. Each one then settles through its `exit`
+ * event, with `exitCode: null`, so the runner records the job rather than leaving it `running`.
+ *
+ * @returns how many were signalled.
+ */
+export function abortResumes(): number {
+  const count = active.size;
+  for (const child of active) killTree(child);
+  return count;
+}
+
+/**
  * Spawn `bin argv…` in its own process group, capture both streams, and settle on exit, close,
  * spawn failure or {@link ResumeOptions.timeoutMs} — whichever comes first.
  */
@@ -52,6 +72,7 @@ export async function spawnResume(
       // the harness. See {@link killTree}.
       detached: true,
     });
+    active.add(child);
 
     let output = "";
     let timedOut = false;
@@ -75,6 +96,7 @@ export async function spawnResume(
     const settle = (result: ResumeResult): void => {
       if (settled) return;
       settled = true;
+      active.delete(child);
       clearTimeout(timer);
       // A grandchild that outlived the kill still holds the read ends of these pipes, and an
       // undestroyed stream keeps a handle — and this event loop — alive after the caller has its

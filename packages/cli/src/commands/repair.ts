@@ -76,6 +76,8 @@ export interface RepairIo {
    * which mints its own.
    */
   newBacklogId?: (() => string) | undefined;
+  /** Stops the runner claiming — a daemon shutting down (#99). Absent means "never". */
+  signal?: AbortSignal | undefined;
   /**
    * Ask the operator a yes/no question. Only the `--extract` path asks one — the spend prompt —
    * and `--yes` replaces this with a function that never prompts.
@@ -342,6 +344,7 @@ export async function runRepair(
     handler,
     progress: io.stderr,
     logDir: jobLogDir(io.home),
+    signal: io.signal,
   });
 
   if (summary.done === 1) {
