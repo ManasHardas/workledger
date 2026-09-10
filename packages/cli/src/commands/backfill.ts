@@ -499,6 +499,11 @@ async function runOneJob(
   // "with `--extract-fallback`, a resume failure queues an `extract` job instead of failing"
   // (cli.md step 4). The extract job is queued before this handler returns, so the same runner
   // pass claims it — the session's outcome is decided by that job, not by this one.
+  //
+  // The pessimistic outcome is recorded *before* the enqueue, never after: at a concurrency
+  // above one another worker can claim the extract job the moment it exists, and a `failed`
+  // written afterwards would overwrite the `done` that job had already recorded.
+  outcomes.set(session.ulid, "failed");
   enqueueJob(io.db, {
     kind: "extract",
     sessionUlid: session.ulid,
@@ -507,7 +512,6 @@ async function runOneJob(
     now: io.now(),
   });
   io.stderr(`job ${job.id}: resume failed (${result.error ?? "unknown"}); queued an extract job`);
-  outcomes.set(session.ulid, "failed");
   return { ok: false, error: `${result.error ?? "resume failed"}; queued an extract job` };
 }
 

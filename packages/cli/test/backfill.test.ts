@@ -392,6 +392,37 @@ describe("runBackfill", () => {
     expect(out).toContain(summaryLine(2, 0, 3));
   });
 
+  it("--extract-fallback reconstructs the session a resume could not", async () => {
+    const adapter = checkpointingAdapter({ failFor: new Set(["hs-alpha"]) });
+    const payload = JSON.stringify({
+      goal: "Add a health endpoint to the server",
+      done: [{ text: "Wrote the endpoint", files: ["src/health.ts"], verified: "not-verified" }],
+      remaining: [],
+      notes: [],
+    });
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ content: [{ type: "text", text: payload }] }), {
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+
+    const code = await runBackfill(
+      { since: "all", yes: true, extractFallback: true, concurrency: 1 },
+      backfillIo(adapter, { apiKey: () => "sk-ant-test-key-000000000000", fetchImpl }),
+    );
+
+    expect(code, err.join("\n")).toBe(EXIT_OK);
+    // All three sessions ended up digested; one of them the long way round.
+    expect(out).toContain(summaryLine(3, 0, 0));
+    const stamps = sessions().map((session) => session.frontmatter.checkpoints[0]?.trigger);
+    expect(stamps.filter((trigger) => trigger === "repair")).toHaveLength(2);
+    expect(stamps.filter((trigger) => trigger === "extract")).toHaveLength(1);
+
+    const jobs = listJobs(db, repo);
+    expect(jobs.filter((job) => job.kind === "repair" && job.status === "failed")).toHaveLength(1);
+    expect(jobs.filter((job) => job.kind === "extract" && job.status === "done")).toHaveLength(1);
+    expect(err.join("\n")).toContain("queued an extract job");
+  });
+
   it("counts a session whose resume failed as failed", async () => {
     const adapter = checkpointingAdapter({ failFor: new Set(["hs-alpha"]) });
 
