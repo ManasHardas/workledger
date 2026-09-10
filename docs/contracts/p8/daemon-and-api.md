@@ -39,7 +39,8 @@ SSE events gain `repo: <id>`; a client filters. `GET /api/health` returns machin
 
 ```yaml
 GET  /api/onboarding/discover?roots=<csv>      → { known: RepoCandidate[], found: RepoCandidate[], roots: string[] }
-     RepoCandidate = { path, name, hasGit, enabled, harnessSessions: { claude-code?: n, codex?: n, cursor?: n }, lastSessionAt }
+     RepoCandidate = { path, name, hasGit, enabled, suggested, harnessSessions: { claude-code?: n, codex?: n, cursor?: n }, lastSessionAt }
+     suggested (amendment 2, 2026-09-09) = hasGit && not under the OS temp dir && not an ancestor of another candidate; the wizard pre-checks known candidates only when suggested. The walk always descends into a root even when the root itself has `.git` (a `~/Projects` that is a git repo holding nested repos); nested repos are not entered. Candidates under the OS temp dir (`os.tmpdir()`, `/tmp`, `/private/tmp`) and non-existent paths are dropped from `known`.
      known = repos seen in harness stores (Claude project slugs mapped to cwd, Codex session_meta.cwd); found = .git dirs under roots (depth ≤ 3, default ~/Projects, skipping node_modules and hidden dirs)
 GET  /api/onboarding/history?repos=<csv paths>  → { windows: { "7d": { sessions, bytes }, "30d": {...}, "90d": {...} } }
 POST /api/onboarding/init      body { repos: string[], harnesses?: string[] }
