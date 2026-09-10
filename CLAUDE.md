@@ -35,7 +35,7 @@ reviews under 150 words, builder reports under 100 words, no side quests, no new
 artifacts, merge on green, paperwork batched at session close, direct commits for amendments.
 The operator wants P1 finished in the next 4–5 sessions.
 
-**Clause #13 — Prototype mode is in force from P3b onward** (`.orchestrator/dispatch-templates/clause-13-prototype-mode.md`): one agent per sub-phase end to end, no review round, the orchestrator verifies by running the product on this repo and merges on green; the only reviews left are single Security passes on credential surfaces (extraction API key, Dome card key). **P6 (Dome card) is deferred by the operator (2026-09-09); do not dispatch it.**
+**Clause #13 (prototype mode) is NOT in force here**: the operator chose to keep the agentwaves protocol under Lean mode (Clause #12) for every phase (2026-09-09). Every PR gets its single review round; credential surfaces get Security. **P6 (Dome card) is deferred by the operator (2026-09-09); do not dispatch it.**
 
 
 The framework is vendored at `.orchestrator/`; placeholders are resolved per
