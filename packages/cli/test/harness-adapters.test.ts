@@ -40,6 +40,8 @@ const FIXTURES = fileURLToPath(new URL("../../../test/fixtures/hooks/", import.m
 const CODEX_ID = "0199c3f1-4a2b-7c3d-8e4f-5a6b7c8d9e0f";
 /** The `conversation_id` the Cursor fixtures carry. */
 const CURSOR_ID = "conv_01JQ8ZK4T0000000000000000";
+/** The `user_email` the Cursor fixtures carry, redacted the way a captured one would be. */
+const REDACTED_EMAIL = "<redacted:email>";
 
 /** A temp repo, a temp `WORKLEDGER_HOME` and a transcript the tests can grow. */
 interface Fixture {
@@ -452,7 +454,10 @@ describe("cursorAdapter.parseHookInput", () => {
     expect(input).toMatchObject({
       harnessSessionId: CURSOR_ID,
       cwd: "/home/user/Projects/workledger",
-      userEmail: "ada@example.com",
+      // The fixtures carry the capture script's redaction tag, not a live address:
+      // `scripts/check-fixtures.mjs` fails CI on any email in a committed fixture, and the
+      // adapter's job is to carry whatever string `user_email` holds.
+      userEmail: REDACTED_EMAIL,
       neverBlock: false,
       model: "agent",
     });
@@ -551,7 +556,7 @@ describe("hook <Event> --harness cursor", () => {
     expect(session).toBeDefined();
     const text = readFileSync(sessionFile(fixture.root, session?.ulid as string), "utf8");
     expect(text).toContain("harness: cursor");
-    expect(text).toContain("ada@example.com");
+    expect(text).toContain(REDACTED_EMAIL);
     expect(JSON.parse(fixture.stdout[0] as string)).toHaveProperty("additional_context");
   });
 
