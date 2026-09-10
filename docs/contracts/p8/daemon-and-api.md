@@ -157,3 +157,26 @@ extraction job is this inference; the job records `startDir` and `contextRepos` 
 rows, resumes in `startDir`, and files into each context repo. Session views show "started in"
 and "about". Supersedes the cwd clauses of amendment 8 and the cross-repo write rule of #111
 where they conflict; the write rule stays for roots other than the fallback.
+
+## Amendment 11 (2026-09-10) — human gists versus agent detail (operator UX direction)
+
+Payload (P1 schema, additive): `done[].text` is the **gist** for humans: an outcome in plain
+words, ≤ 140 chars, no file paths, no commit ids, no library names unless the outcome is the
+library; `done[].detail` (optional, ≤ 300 chars) carries the specifics for agents (how, what
+exactly, caveats). `remaining[].text` ≤ 100 chars, one action per item, split rather than
+compound; `remaining[].why` ≤ 100 chars. New optional `memory[]`: `{ text ≤ 200, file? }` — facts
+the session committed to a memory file (Claude Code auto-memory, CLAUDE.md, MEMORY.md, or a
+project memory dir); the Stop hook may also derive entries from Write/Edit tool inputs under
+those paths when the payload omits them. Instruction v4 states all of this with one example
+gist versus detail pair, and asks for 3–8 done items describing outcomes "as you would tell a
+teammate at standup". The brief for agents includes `detail`; the ledger markdown renders
+`text` as the line and `detail`, commit, files, verified as an indented continuation.
+
+UI: **Home** lists git repos first ("Projects") and, in a second group below ("Folders with
+sessions"), non-repo folders that have transcripts (workspaces), each with its hooks state.
+**Ledger** has no Open/All tabs: open sessions first, then the rest, one list. **Session**
+view: Done shows gists only; clicking an item opens a side drawer with detail, commit, files,
+verified, and the checkpoint stamp; Remaining shows text and why; Notes shows blocker,
+question and decision by default with discovery notes behind a "For agents (n)" disclosure;
+a **Memory** section appears when the session has memory entries. Existing checkpoints render
+unchanged (their `text` is shown as the gist).
