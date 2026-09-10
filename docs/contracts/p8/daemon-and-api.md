@@ -121,3 +121,11 @@ from the transcript's touched paths (same rule as above) and, at Stop, instructs
 touched repo with `--repo`. `GET /api/onboarding/discover` gains `workspaces: { path, repos:
 string[], hooksInstalled: boolean }[]` for start directories that contain selected candidates;
 `POST /api/onboarding/init` accepts `workspaces: string[]`.
+
+## Amendment 9 (2026-09-10) — unlimited backfill window
+
+`since` accepts `"all"` everywhere it accepts `"7d" | "30d" | "90d" | "none"`: `GET
+/api/onboarding/history` returns a fourth window `"all": { sessions, bytes }`, `plan` and `run`
+take `since: "all"`, `workledger onboard --since all` and `workledger backfill --since all` select
+every transcript attributed to the repo regardless of age. The wizard's history step shows five
+cards: 7 days, 30 days, 90 days, all, none.
