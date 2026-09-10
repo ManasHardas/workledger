@@ -133,7 +133,7 @@ describe("CheckpointPayload", () => {
     if (!result.ok) return;
     expect(result.value.done[0]!.detail).toMatch(/^Checkout control/);
     expect(result.value.memory).toEqual([
-      { text: "gh needs the ManasHardas token prefix", file: "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+      { text: "gh needs the ManasHardas token prefix", file: ".claude/memory/notes.md" },
       { text: "Push workledger to origin without asking" },
     ]);
     // Old payloads (no `memory`, no `detail`) still parse and default `memory` to [].

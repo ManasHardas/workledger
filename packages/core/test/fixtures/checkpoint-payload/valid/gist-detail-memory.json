@@ -18,7 +18,7 @@
   ],
   "notes": [],
   "memory": [
-    { "text": "gh needs the ManasHardas token prefix", "file": "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+    { "text": "gh needs the ManasHardas token prefix", "file": ".claude/memory/notes.md" },
     { "text": "Push workledger to origin without asking" }
   ]
 }
