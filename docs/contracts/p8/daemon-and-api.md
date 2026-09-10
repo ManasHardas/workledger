@@ -101,3 +101,23 @@ the old routes redirecting to the first repo).
 `NPM_TOKEN` is absent), and a GitHub release with the tarball attached. Homebrew tap
 `manashardas/homebrew-workledger`, formula `workledger.rb`: `depends_on "node"`, installs the
 release tarball with `npm install -g` into the keg (`std_npm_args`), test `workledger --version`.
+
+## Amendment 8 (2026-09-10) — workspace-root sessions (#105)
+
+A session is attributed to every enabled or candidate repo whose root appears in its transcript's
+tool inputs (Read/Edit/Write/Glob/Grep paths, Bash command text, `cd` targets), not only to the
+directory it was started in. `RepoCandidate` gains `startedIn: string[]` (distinct session start
+directories that are not the repo itself) and `touchedSessions: number` (sessions attributed by
+touched paths). A transcript counts for a repo when it references that root at least 5 times or
+has one write under it; a transcript may count for several repos. `history`, `plan` and `run`
+use the same attribution; `run` queues one repair job per (session, repo) pair, and the repair
+instruction names the target root.
+
+`workledger checkpoint --repo <path>` writes the digest into that repo's ledger regardless of the
+process cwd (the index row is keyed by (harness session id, repo)); without `--repo` the cwd's repo
+is used as before. `workledger init --workspace <dir>` writes the three hook files into a non-git
+folder that contains tracked repos; a hook fired from such a session resolves its target repo(s)
+from the transcript's touched paths (same rule as above) and, at Stop, instructs one checkpoint per
+touched repo with `--repo`. `GET /api/onboarding/discover` gains `workspaces: { path, repos:
+string[], hooksInstalled: boolean }[]` for start directories that contain selected candidates;
+`POST /api/onboarding/init` accepts `workspaces: string[]`.
