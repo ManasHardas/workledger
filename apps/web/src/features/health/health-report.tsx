@@ -1,12 +1,8 @@
 import { AsyncPanel } from "../../components/async-panel.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
-import type { Health, LedgerSource } from "../../lib/ledger-source.js";
-import { useSource } from "../../lib/source-context.js";
-import { useLiveRead } from "../live-read.js";
+import { useLiveHealth } from "./live.js";
 import { configStatus, harnessStatus, indexStatus, lastHookStatus, type Status } from "./status.js";
-
-const readHealth = (source: LedgerSource): Promise<Health> => source.health();
 
 /**
  * `workledger doctor` as a page: every harness, the index, the config, and when a hook last fired
@@ -14,8 +10,7 @@ const readHealth = (source: LedgerSource): Promise<Health> => source.health();
  * reading the prose.
  */
 export function HealthReport() {
-  const source = useSource();
-  const { result } = useLiveRead(source, ["health.changed"], readHealth);
+  const result = useLiveHealth();
 
   return (
     <AsyncPanel result={result} empty="No health report available.">

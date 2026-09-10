@@ -196,10 +196,17 @@ export const FIXTURE_BACKLOG: BacklogView[] = [
   ),
 ];
 
+/**
+ * `index` is each note's position among the notes of its own checkpoint in `FIXTURE_SESSIONS`, the
+ * same number `/api/notes` sends (`docs/contracts/p2/api.md`, amended 2026-09-09) and the one half
+ * of a `resolveNote` ref that a list position cannot supply. Both of these are the only note at
+ * their checkpoint, so both are 0.
+ */
 export const FIXTURE_NOTES: NoteRef[] = [
   {
     session: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE",
     cp: 1,
+    index: 0,
     raw: "",
     type: "question",
     by: "agent",
@@ -208,6 +215,7 @@ export const FIXTURE_NOTES: NoteRef[] = [
   {
     session: "01JBPX2M4H6E1TSA7VYJ0G8WQD",
     cp: 1,
+    index: 0,
     raw: "",
     type: "blocker",
     by: "agent",

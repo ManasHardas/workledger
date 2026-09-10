@@ -48,10 +48,9 @@ function renderAt(route: string, source: LedgerSource) {
 }
 
 /**
- * One session whose checkpoint 1 holds two notes, so the `index` the resolve ref carries is 1 and
- * not the 0 that a list position would accidentally produce. `index` is the note's place among the
- * notes of *its checkpoint* (`docs/contracts/p2/backlog-cli.md`), which is exactly what a `NoteRef`
- * from `/api/notes` does not tell the UI.
+ * One open blocker that is the *second* note of its checkpoint, so the `index` the resolve ref
+ * carries is 1 — a number no position in this one-element list could have produced. It is the
+ * `NoteRef` that supplies it (`docs/contracts/p2/api.md`, amended 2026-09-09).
  */
 const BLOCKER = "The watcher drops events when a file is renamed";
 const SESSION: ParsedSession = {
@@ -62,7 +61,15 @@ const SESSION: ParsedSession = {
   ],
 };
 const NOTES: NoteRef[] = [
-  { session: SESSION.frontmatter.id, cp: 1, raw: "", type: "blocker", by: "agent", text: BLOCKER },
+  {
+    session: SESSION.frontmatter.id,
+    cp: 1,
+    index: 1,
+    raw: "",
+    type: "blocker",
+    by: "agent",
+    text: BLOCKER,
+  },
 ];
 
 beforeEach(() => {
@@ -73,19 +80,19 @@ afterEach(cleanup);
 
 describe("Needs you", () => {
   it("renders every open note with its session goal and checkpoint", async () => {
-    renderAt("#/needs-you", stubSource({ listNotes: async () => NOTES, listSessions: async () => [SESSION] }));
+    renderAt("#/needs-you", stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
     expect(await screen.findByText(BLOCKER)).toBeDefined();
-    expect(screen.getByText(SESSION.goal[0]!.text)).toBeDefined();
+    expect(await screen.findByText(SESSION.goal[0]!.text)).toBeDefined();
     expect(screen.getByText("[cp 1]")).toBeDefined();
     expect(screen.getByText("blocker")).toBeDefined();
   });
 
-  it("resolves a note with the checkpoint-local index and the decision text", async () => {
+  it("resolves a note with the ref the NoteRef carries and the decision text", async () => {
     const calls: { ref: { session: string; cp: number; index: number }; decision: string }[] = [];
     const source = stubSource({
       listNotes: async () => NOTES,
-      listSessions: async () => [SESSION],
+      getSession: async () => SESSION,
       resolveNote: async (ref, decision) => {
         calls.push({ ref, decision });
         return SESSION;

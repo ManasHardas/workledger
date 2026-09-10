@@ -1,33 +1,22 @@
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { AsyncPanel } from "../../components/async-panel.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
-import type { LedgerSource } from "../../lib/ledger-source.js";
+import type { NoteRef } from "../../lib/ledger-source.js";
 import { useSource } from "../../lib/source-context.js";
-import { useLiveRead } from "../live-read.js";
-import { joinOpenNotes, type OpenNote } from "./open-notes.js";
+import { useLiveOpenNotes } from "./live.js";
 
 /**
  * Every open `blocker` and `question` across sessions, newest first, each resolvable in place
  * (design spec §8 "Needs you").
  *
- * The sessions are read alongside the notes rather than one per card: a `NoteRef` carries neither
- * the goal the card shows nor the per-checkpoint `index` that `resolveNote` needs, and both come
- * out of the same one session list.
+ * A `NoteRef` carries its own `session`, `cp` and `index`, which is the whole of a `resolveNote`
+ * ref — the panel never reconstructs one from a session listing.
  */
-async function readOpenNotes(source: LedgerSource): Promise<OpenNote[]> {
-  const [notes, sessions] = await Promise.all([
-    source.listNotes({ type: ["blocker", "question"], open: true }),
-    source.listSessions(),
-  ]);
-  return joinOpenNotes(notes, sessions);
-}
-
 export function NeedsPanel() {
-  const source = useSource();
-  const { result, refresh } = useLiveRead(source, ["notes.changed"], readOpenNotes);
+  const { result, refresh } = useLiveOpenNotes();
 
   return (
     <AsyncPanel
@@ -37,9 +26,9 @@ export function NeedsPanel() {
     >
       {(list) => (
         <ul className="flex flex-col gap-3">
-          {list.map((entry) => (
-            <li key={`${entry.note.session}-${entry.note.cp}-${entry.note.text}`}>
-              <NoteCard entry={entry} onResolved={refresh} />
+          {list.map((note) => (
+            <li key={`${note.session}-${note.cp}-${note.index}`}>
+              <NoteCard note={note} onResolved={refresh} />
             </li>
           ))}
         </ul>
@@ -48,28 +37,27 @@ export function NeedsPanel() {
   );
 }
 
-function NoteCard({ entry, onResolved }: { entry: OpenNote; onResolved: () => void }) {
+function NoteCard({ note, onResolved }: { note: NoteRef; onResolved: () => void }) {
   const source = useSource();
-  const { note, goal, index } = entry;
+  const goal = useSessionGoal(note.session);
   const fieldId = useId();
   const [open, setOpen] = useState(false);
   const [decision, setDecision] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A read-only source rejects every write, and a note whose session we could not read has no
-  // `index` to name it by — in both cases the control is disabled rather than hidden, so the
+  // A read-only source rejects every write. The control is disabled rather than hidden, so the
   // reason it cannot be used stays visible.
-  const resolvable = source.capabilities.write && index !== null;
+  const resolvable = source.capabilities.write;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (index === null || decision.trim() === "") return;
+    if (decision.trim() === "") return;
     setBusy(true);
     setError(null);
     try {
       await source.resolveNote(
-        { session: note.session, cp: note.cp, index },
+        { session: note.session, cp: note.cp, index: note.index },
         decision.trim(),
       );
       setDecision("");
@@ -130,20 +118,11 @@ function NoteCard({ entry, onResolved }: { entry: OpenNote; onResolved: () => vo
           </form>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!resolvable}
-              onClick={() => setOpen(true)}
-            >
+            <Button size="sm" variant="outline" disabled={!resolvable} onClick={() => setOpen(true)}>
               Resolve
             </Button>
             {resolvable ? null : (
-              <span className="text-xs text-muted-foreground">
-                {index === null
-                  ? "This note's session is not loaded, so it cannot be resolved here."
-                  : "This source is read-only."}
-              </span>
+              <span className="text-xs text-muted-foreground">This source is read-only.</span>
             )}
           </div>
         )}
@@ -155,6 +134,37 @@ function NoteCard({ entry, onResolved }: { entry: OpenNote; onResolved: () => vo
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * The goal of the session a note came from, read lazily per card.
+ *
+ * It is context, not the note: a card that cannot get it falls back to showing the session ulid,
+ * which still identifies the session and still resolves. Reading it per card rather than joining a
+ * `listSessions()` page is what keeps that page's `limit` out of whether a note is resolvable.
+ */
+function useSessionGoal(ulid: string): string | null {
+  const source = useSource();
+  const [goal, setGoal] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setGoal(null);
+    source.getSession(ulid).then(
+      (session) => {
+        if (live) setGoal(session.goal[0]?.text ?? null);
+      },
+      () => {
+        // Rendered as the ulid fallback above rather than swallowed: the card stays usable.
+        if (live) setGoal(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [source, ulid]);
+
+  return goal;
 }
 
 function messageOf(error: unknown): string {
