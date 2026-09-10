@@ -29,6 +29,22 @@ export const MAX_PAYLOAD_BYTES = 16384;
 /** Item cap per `done` / `remaining` / `notes` section of a checkpoint payload (design spec §4.4). */
 export const MAX_SECTION_ITEMS = 12;
 
+/**
+ * Per-field caps of a checkpoint payload. Exported so the checkpoint instruction's test can
+ * assert the prompt states every cap the schema enforces (#101) — a cap the agent is not told
+ * about costs a failed attempt and a retry.
+ */
+/** Characters in `goal`. */
+export const MAX_GOAL_CHARS = 400;
+/** Characters in `done[].text`, `remaining[].text`, `remaining[].why` and `notes[].reason`. */
+export const MAX_TEXT_CHARS = 300;
+/** Characters in `notes[].text`. */
+export const MAX_NOTE_TEXT_CHARS = 500;
+/** Entries in `done[].files`. */
+export const MAX_FILES_PER_ITEM = 20;
+/** Entries in `remaining[].blocked_by`. */
+export const MAX_BLOCKED_BY = 10;
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -146,10 +162,10 @@ const dateTime = () => z.iso.datetime({ offset: true });
 /** Object shape of a Done item, before the cross-field evidence rule is applied. */
 export const DoneItemObject = z
   .object({
-    text: z.string().min(1).max(300).describe("Past tense, one unit of work."),
+    text: z.string().min(1).max(MAX_TEXT_CHARS).describe("Past tense, one unit of work."),
     files: z
       .array(z.string().min(1))
-      .max(20)
+      .max(MAX_FILES_PER_ITEM)
       .optional()
       .describe("Repo-relative paths touched."),
     commit: z.string().regex(COMMIT, "expected a 7-40 character lowercase git commit hash").optional(),
@@ -167,12 +183,12 @@ export type DoneItem = z.infer<typeof DoneItem>;
 /** Object shape of a Remaining item, before the `new` XOR `ref`+`rel` rule is applied. */
 export const RemainingItemObject = z
   .object({
-    text: z.string().min(1).max(300).describe("Imperative next action."),
-    why: z.string().min(1).max(300),
+    text: z.string().min(1).max(MAX_TEXT_CHARS).describe("Imperative next action."),
+    why: z.string().min(1).max(MAX_TEXT_CHARS),
     new: z.literal(true).optional(),
     ref: backlogId().optional(),
     rel: Rel.optional(),
-    blocked_by: z.array(backlogId()).max(10).optional(),
+    blocked_by: z.array(backlogId()).max(MAX_BLOCKED_BY).optional(),
   })
   .strict()
   .describe(
@@ -213,9 +229,9 @@ export type RemainingItem = z.infer<typeof RemainingItem>;
 export const NoteObject = z
   .object({
     type: NoteType,
-    text: z.string().min(1).max(500),
+    text: z.string().min(1).max(MAX_NOTE_TEXT_CHARS),
     by: NoteBy.optional(),
-    reason: z.string().min(1).max(300).optional(),
+    reason: z.string().min(1).max(MAX_TEXT_CHARS).optional(),
   })
   .strict()
   .describe("Decisions require `by` and `reason`.");
@@ -250,7 +266,7 @@ export const CheckpointPayload = z
     goal: z
       .string()
       .min(1)
-      .max(400)
+      .max(MAX_GOAL_CHARS)
       .optional()
       .describe(
         "What the human asked for, in the human's terms. Required at checkpoint 1; " +

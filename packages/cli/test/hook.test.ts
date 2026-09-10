@@ -18,6 +18,15 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  MAX_BLOCKED_BY,
+  MAX_FILES_PER_ITEM,
+  MAX_GOAL_CHARS,
+  MAX_NOTE_TEXT_CHARS,
+  MAX_PAYLOAD_BYTES,
+  MAX_SECTION_ITEMS,
+  MAX_TEXT_CHARS,
+} from "@workledger/core";
 import { createItem } from "@workledger/core/render/backlog";
 
 import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
@@ -25,7 +34,7 @@ import { DEFAULT_CONFIG, isPrivatePath, parseConfig } from "../src/config.js";
 import { EXIT_BLOCK, EXIT_OK } from "../src/exit-codes.js";
 import { gitInfo, normalizeRemote, parseIni } from "../src/git-info.js";
 import { openIndex } from "../src/index/db.js";
-import { checkpointInstruction, INSTRUCTION_VERSION } from "../src/instruction.js";
+import { checkpointInstruction, INSTRUCTION_VERSION, MAX_PREVIOUS_ERRORS } from "../src/instruction.js";
 import { runHook, firstCrossed, minutesSince, END_REASON_MAP } from "../src/commands/hook.js";
 import { sessionFile } from "../src/ledger-fs.js";
 import type { HookEvent } from "../src/commands/hook-events.js";
@@ -773,6 +782,19 @@ describe("the checkpoint instruction", () => {
     );
   });
 
+  it("states every cap the schema enforces, in the schema's numbers (#101)", () => {
+    const text = checkpointInstruction({ sessionId: "x", openIds: [] });
+    const caps = text.slice(text.indexOf("Caps:"), text.indexOf("Strings:"));
+    expect(caps).toContain(`goal ≤ ${MAX_GOAL_CHARS} chars`);
+    expect(caps).toContain(`text, why and reason ≤ ${MAX_TEXT_CHARS} chars`);
+    expect(caps).toContain(`notes text ≤ ${MAX_NOTE_TEXT_CHARS}`);
+    expect(caps).toContain(`files ≤ ${MAX_FILES_PER_ITEM}`);
+    expect(caps).toContain(`blocked_by ≤ ${MAX_BLOCKED_BY}`);
+    expect(caps).toContain(`≤ ${MAX_SECTION_ITEMS} items per section`);
+    expect(caps).toContain(`≤ ${MAX_PAYLOAD_BYTES} bytes total`);
+    expect(text).toContain(`At most ${MAX_PAYLOAD_BYTES} bytes`);
+  });
+
   it("tells the agent to mint an item when the backlog is empty", () => {
     expect(checkpointInstruction({ sessionId: "x", openIds: [] })).toContain('"new": true');
   });
@@ -782,7 +804,8 @@ describe("the checkpoint instruction", () => {
     const text = checkpointInstruction({ sessionId: "x", openIds: [], previousErrors: long });
     expect(text).toContain("previous attempt failed:");
     expect(text).toContain("… (truncated)");
-    expect(text.length).toBeLessThan(2500);
+    const base = checkpointInstruction({ sessionId: "x", openIds: [] }).length;
+    expect(text.length).toBeLessThan(base + MAX_PREVIOUS_ERRORS + 100);
     expect(checkpointInstruction({ sessionId: "x", openIds: [], previousErrors: "  " })).not.toContain(
       "previous attempt failed:",
     );
