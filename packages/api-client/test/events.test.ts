@@ -108,6 +108,7 @@ describe("frame decoding", () => {
     });
     expect(toLedgerEvent("notes.changed", "{}")).toEqual({ type: "notes.changed" });
     expect(toLedgerEvent("health.changed", "")).toEqual({ type: "health.changed" });
+    expect(toLedgerEvent("repos.changed", '{"repo":"0123456789ab"}')).toEqual({ type: "repos.changed", repo: "0123456789ab" });
   });
 
   it("drops the keep-alive, unknown names, bad JSON and a missing id", () => {

@@ -7,9 +7,10 @@
  * step change pushed a history entry and a selection change did not.
  */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app.js";
+import { REPOS_CHANGED_EVENT } from "../src/features/home/live.js";
 import { BackfillBanner } from "../src/features/onboarding/banner.js";
 import { BACKFILL_RUN_KEY, readBackfillRun, startBackfillRun } from "../src/features/onboarding/flags.js";
 import { unsuggestedHint } from "../src/features/onboarding/format.js";
@@ -289,6 +290,8 @@ describe("projects step", () => {
         ].filter((result) => input.repos.includes(result.path)),
       }),
     });
+    const announced = vi.fn();
+    window.addEventListener(REPOS_CHANGED_EVENT, announced);
     renderWizard(source);
     await screen.findByRole("heading", { name: "Choose the repos to track" });
     fireEvent.click(screen.getByRole("checkbox", { name: "mentat" }));
@@ -296,6 +299,9 @@ describe("projects step", () => {
 
     await screen.findByRole("heading", { name: "Repos enabled" });
     expect(calls.at(-1)).toBe(`initRepos:[{"repos":${JSON.stringify([DASHERO, KUBERA, MENTAT])}}]`);
+    // Home's list is told from inside the tab as well as by the daemon's `repos.changed` (#94).
+    expect(announced).toHaveBeenCalledTimes(1);
+    window.removeEventListener(REPOS_CHANGED_EVENT, announced);
     const results = screen.getByRole("list", { name: "Init results" });
     expect(within(results).getByText(".claude/settings.json")).toBeDefined();
     expect(within(results).getByText(FIXTURE_TRUST_STEP)).toBeDefined();

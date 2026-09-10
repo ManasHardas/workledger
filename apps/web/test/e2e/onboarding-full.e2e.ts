@@ -21,7 +21,7 @@
  * real repo — every path here is under one `mkdtemp`, and the daemon is stopped in `afterEach`.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -126,7 +126,9 @@ function writeClaudeStub(bin: string, callLog: string): void {
 
 /** Lay everything out on disk; nothing is started yet. */
 function makeFixture(): Omit<Fixture, "url"> {
-  const root = mkdtempSync(path.join(tmpdir(), "workledger-e2e-full-"));
+  // Resolved, because macOS's `tmpdir()` is a symlink (`/var` → `/private/var`) and the daemon
+  // reports every repo by its real path.
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "workledger-e2e-full-")));
   const home = path.join(root, "home");
   const wlhome = path.join(root, "wlhome");
   const bin = path.join(root, "bin");
@@ -244,8 +246,14 @@ async function walkToMethod(page: Page, fixture: Fixture): Promise<void> {
   // A daemon with no enabled repo redirects Home to the wizard.
   await expect(page).toHaveURL(/#\/onboarding$/);
   await expect(page.getByRole("heading", { name: "Choose the repos to track" })).toBeVisible();
-  // Both repos come from the Claude store ("known"), have a `.git`, and so are pre-checked.
-  for (const { name } of REPOS) await expect(page.getByRole("checkbox", { name, exact: true })).toBeChecked();
+  // Both repos come from the Claude store and have a `.git`, but they live under the OS temp dir,
+  // which discover lists without suggesting (amendment 2, #90) — so they are ticked here the way
+  // an operator would. `check()` is a no-op on a box that is already ticked.
+  for (const { name } of REPOS) {
+    const box = page.getByRole("checkbox", { name, exact: true });
+    await box.check();
+    await expect(box).toBeChecked();
+  }
 
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Repos enabled" })).toBeVisible();
@@ -369,10 +377,8 @@ test.describe("onboarding, full system", () => {
     expect(repos.map((repo) => repo.path).sort()).toEqual([...fixture.repos].sort());
 
     await page.getByRole("link", { name: "Go to home" }).click();
-    // Reloaded on purpose: without a backfill no SSE frame arrives, and Home's repo list is
-    // not re-read on the in-app navigation — it shows the empty state until a reload (#94).
-    // The daemon already lists both repos (asserted above); this checks what Home renders from it.
-    await page.reload();
+    // No reload: without a backfill the only frame is `init`'s `repos.changed`, and that is what
+    // has to move Home's list from the empty state to both cards (#94).
     await expectHome(page, 0);
     await expect(page.getByRole("status").filter({ hasText: "Backfilled" })).toHaveCount(0);
   });

@@ -9,6 +9,7 @@ import { messageOf } from "../../../lib/errors.js";
 import { isSuggested } from "../../../lib/ledger-source.js";
 import type { AppSource, DiscoverResult, InitRepoResult, RepoCandidate } from "../../../lib/ledger-source.js";
 import { useAsync } from "../../../lib/use-async.js";
+import { announceReposChanged } from "../../home/live.js";
 import { useAction } from "../../jobs/use-jobs.js";
 import { formatRelative, harnessCounts, harnessLabel, plural, unsuggestedHint } from "../format.js";
 import { goTo, replaceWith, type WizardState } from "../state.js";
@@ -45,7 +46,18 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
       return source.discover([...new Set([...defaults.current, ...added])]);
     }, [source, rootsKey]),
   );
-  const init = useAction(useCallback((repos: string[]) => source.initRepos({ repos }), [source]));
+  const init = useAction(
+    useCallback(
+      async (repos: string[]) => {
+        const result = await source.initRepos({ repos });
+        // The daemon's `repos.changed` frame is what re-reads Home's list; this is the same
+        // refresh from inside the tab, for a stream that is reconnecting when `init` answers.
+        if (result.results.some((entry) => entry.ok)) announceReposChanged();
+        return result;
+      },
+      [source],
+    ),
+  );
 
   if (init.state.state === "done") {
     return <InitSummary results={init.state.value.results} state={state} onBack={init.reset} />;

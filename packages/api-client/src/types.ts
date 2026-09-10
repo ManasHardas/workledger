@@ -163,7 +163,9 @@ export type LedgerEvent =
   | { type: "notes.changed"; repo?: string }
   | { type: "health.changed"; repo?: string }
   /** docs/contracts/p3/api.md: `job.changed { id, status }`. */
-  | { type: "job.changed"; id: string; status: string; repo?: string };
+  | { type: "job.changed"; id: string; status: string; repo?: string }
+  /** daemon-and-api.md amendment 4: the daemon started or stopped serving `repo`; re-read `/api/repos`. */
+  | { type: "repos.changed"; repo?: string };
 
 /** A `jobs` row on the wire — docs/contracts/p3/cli.md §Jobs, unchanged. */
 export interface Job {

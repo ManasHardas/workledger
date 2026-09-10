@@ -14,8 +14,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { appFor, fakeJob, seedRepo } from "./helpers.js";
+import { FakeOps, appFor, fakeJob, seedRepo } from "./helpers.js";
+import { createApp } from "../src/app.js";
+import { repoId } from "../src/repos.js";
 import type { ServerApp } from "../src/app.js";
+import type { LedgerEvent } from "../src/events.js";
 import type {
   DiscoverResult,
   HistoryResult,
@@ -201,6 +204,35 @@ describe("POST /api/onboarding/init", () => {
     });
     expect(response.status).toBe(200);
     expect(enabled).toEqual([repoA]);
+  });
+
+  it("in machine mode serves each enabled repo at once and emits repos.changed for it (#94)", async () => {
+    const machine = createApp({ repos: [], ops: new FakeOps("WL-unset"), onboarding: ops, env: { PATH: "" }, homeDir: repo.root });
+    const events: LedgerEvent[] = [];
+    machine.events.subscribe((event) => void events.push(event));
+    try {
+      const response = await machine.app.request("/api/onboarding/init", {
+        method: "POST",
+        body: JSON.stringify({ repos: [repoA, repoBad] }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(response.status).toBe(200);
+      // The one that `init` enabled is watched now, not at the next start; the failed one is not.
+      const id = repoId(repoA);
+      expect(machine.repos.get(id)?.root).toBe(repoA);
+      expect(machine.repos.size).toBe(1);
+      expect(events).toEqual([{ event: "repos.changed", data: { repo: id } }]);
+
+      // A second init of a served repo changes nothing and says nothing.
+      await machine.app.request("/api/onboarding/init", {
+        method: "POST",
+        body: JSON.stringify({ repos: [repoA] }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(events).toHaveLength(1);
+    } finally {
+      machine.close();
+    }
   });
 
   it("400s an empty list, a non-string path, an unknown field and bad harnesses", async () => {

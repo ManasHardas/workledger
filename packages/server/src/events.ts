@@ -1,5 +1,5 @@
 /**
- * The SSE event bus (api.md §SSE). Five event names, each with the payload the contract names,
+ * The SSE event bus (api.md §SSE). Six event names, each with the payload the contract names,
  * fanned out to every open `/api/events` stream.
  *
  * Every payload carries `repo` — docs/contracts/p8/daemon-and-api.md §Multi-repo endpoints,
@@ -14,7 +14,13 @@ export type LedgerEvent =
   | { event: "notes.changed"; data: { repo: string } }
   | { event: "health.changed"; data: { repo: string } }
   /** docs/contracts/p3/api.md: "SSE `job.changed { id, status }` added to `/api/events`". */
-  | { event: "job.changed"; data: { id: string; status: string; repo: string } };
+  | { event: "job.changed"; data: { id: string; status: string; repo: string } }
+  /**
+   * docs/contracts/p8/daemon-and-api.md amendment 4 (#94): the daemon started or stopped serving
+   * `repo` — the wizard's `init`, a `workledger init` the index re-read picked up, a removal —
+   * so a client re-reads `/api/repos` rather than waiting for a reload.
+   */
+  | { event: "repos.changed"; data: { repo: string } };
 
 /** A subscriber. Returning is enough; the bus never awaits a listener. */
 export type Listener = (event: LedgerEvent) => void;

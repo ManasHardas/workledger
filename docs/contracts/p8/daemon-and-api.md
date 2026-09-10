@@ -33,7 +33,11 @@ Exempt (machine-wide by nature): `/api/health`, `/api/repos`, `/api/notes/all`, 
 single-repo mode the parameter is optional and defaults to the one repo. New aggregate endpoints:
 `GET /api/notes/all?type&open` → `NoteRef & { repo: Repo }[]`, `GET /api/jobs/all` → `Job & { repo }[]`.
 SSE events gain `repo: <id>`; a client filters. `GET /api/health` returns machine-wide health plus
-`repos: Repo[]`.
+`repos: Repo[]`. Amendment 4 (2026-09-09, #94): a sixth SSE event, `repos.changed { repo: <id> }`,
+is emitted whenever the daemon starts or stops serving a repo — `POST /api/onboarding/init`
+enabling one, a `workledger init` the daemon's index re-read picks up, a removal — and the
+machine-mode daemon starts that repo's watcher and job poller at that moment, not at the next
+start. A client re-reads `GET /api/repos` on it; the wizard's Home never needs a reload.
 
 ## Onboarding endpoints
 
