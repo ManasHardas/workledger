@@ -172,15 +172,15 @@ interface Context {
  * `SessionStart` — data-flow §2.
  *
  * `startup` and `clear` mint a new ulid, `resume`, `fork` and `compact` reuse the row the index
- * already has for this `(harness, harness_session_id)`. A `startup` whose id the index *does*
- * know is reuse too, and not by preference: `(harness, harness_session_id)` is unique, so the
- * only alternative to reuse is a constraint violation. In practice it is the hook firing twice
+ * already has for this `(harness, harness_session_id)` in this repo. A `startup` whose id the
+ * index *does* know is reuse too, and not by preference: `(harness, harness_session_id,
+ * repo_path)` is unique, so the only alternative to reuse is a constraint violation. In practice it is the hook firing twice
  * for one session, and reuse is what makes that idempotent.
  */
 async function sessionStart(ctx: Context): Promise<number> {
   const { io, db, input } = ctx;
   const harness = io.adapter.harness;
-  const existing = db.getSessionByHarnessId(harness, input.harnessSessionId);
+  const existing = db.getSessionByHarnessId(harness, input.harnessSessionId, ctx.root);
   const size = io.adapter.transcriptSize(input.transcriptPath);
 
   let ulid: string;
@@ -344,7 +344,7 @@ async function buildSessionBrief(ctx: Context, ulid: string): Promise<string | u
  */
 async function stop(ctx: Context): Promise<number> {
   const { io, db, input } = ctx;
-  const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId);
+  const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId, ctx.root);
   // No SessionStart was seen for this id (a session that predates `init`, or a lost index).
   // There is nothing to count against and nothing to checkpoint into: allow.
   if (session === undefined) return EXIT_OK;
@@ -458,7 +458,7 @@ async function block(ctx: Context, ulid: string, previousErrors: string | undefi
 /** `SessionEnd` — data-flow §2. No output, exit 0 always. */
 async function sessionEnd(ctx: Context): Promise<number> {
   const { io, db, input } = ctx;
-  const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId);
+  const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId, ctx.root);
   if (session === undefined) return EXIT_OK;
 
   // `needs_repair` is a turn count, never a content read: a session that stopped many turns

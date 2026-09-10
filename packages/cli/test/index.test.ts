@@ -60,6 +60,7 @@ const SESSION_COLUMNS = [
   "last_attempt_errors",
   "updated_at",
   "pending_trigger",
+  "cwd",
 ];
 
 /** Column list of `checkpoints`, verbatim from the frozen DDL, in declaration order. */
@@ -179,20 +180,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0005_job_retry_after.sql` is the latest.
-    expect(row?.value).toBe("5");
+    // Bumped by every migration that lands; `0006_session_repo_key.sql` is the latest.
+    expect(row?.value).toBe("6");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0007_seventh.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0006_sixth.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0008_eighth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0007_seventh.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0006_sixth.sql", "0007_seventh.sql"]);
-    expect(schemaVersion(db.connection)).toBe(7);
+    expect(migrate(db.connection, dir)).toEqual(["0007_seventh.sql", "0008_eighth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(8);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -215,7 +216,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql"]);
   });
 });
 
@@ -225,7 +226,7 @@ describe("session accessors", () => {
     const inserted = db.insertSession(session());
 
     expect(db.getSessionByUlid(inserted.ulid)).toEqual(inserted);
-    expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa")).toEqual(inserted);
+    expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", REPO)).toEqual(inserted);
     expect(inserted).toMatchObject({
       private: 0,
       last_offset: 0,
@@ -236,7 +237,8 @@ describe("session accessors", () => {
       last_attempt_exit: null,
     });
     expect(db.getSessionByUlid("01JQ8ZK4T000000000000000ZZ")).toBeUndefined();
-    expect(db.getSessionByHarnessId("claude-code", "nope")).toBeUndefined();
+    expect(db.getSessionByHarnessId("claude-code", "nope", REPO)).toBeUndefined();
+    expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", "/repos/other")).toBeUndefined();
   });
 
   it("lists only the open sessions of one repo, oldest first", () => {
@@ -299,8 +301,9 @@ describe("repos (0003_repos.sql)", () => {
   it("is seeded from the sessions an older index already had", () => {
     const db = open();
     // Roll the schema back to before the table existed, re-insert the way 0002 left things,
-    // and let `openIndex` apply 0003 (and 0004 and 0005, whose columns have to go too) over it.
+    // and let `openIndex` apply 0003 (and 0004–0006, whose columns and tables have to go too) over it.
     db.connection.exec("DROP TABLE repos");
+    db.connection.exec("DROP TABLE transcript_touches");
     db.connection.exec("DROP INDEX jobs_by_source_status");
     db.connection.exec("ALTER TABLE jobs DROP COLUMN source");
     db.connection.exec("ALTER TABLE jobs DROP COLUMN error_code");
@@ -326,6 +329,79 @@ describe("repos (0003_repos.sql)", () => {
     db.insertSession(session());
     db.clearRepo(REPO);
     expect(db.listRepos().map((repo) => repo.repo_path)).toEqual([REPO]);
+  });
+});
+
+describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
+  it("holds one harness session in two repos, and still refuses a duplicate within one", () => {
+    const db = open();
+    const first = db.insertSession(session({ cwd: "/workspace" }));
+    const second = db.insertSession(
+      session({ ulid: "01JQ8ZK4T0000000000000000B", repo_path: "/repos/other", cwd: "/workspace" }),
+    );
+
+    expect(first.cwd).toBe("/workspace");
+    expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", REPO)).toEqual(first);
+    expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", "/repos/other")).toEqual(second);
+    expect(() => db.insertSession(session({ ulid: "01JQ8ZK4T0000000000000000C" }))).toThrow(/UNIQUE/);
+    expect(db.updateSession(first.ulid, { cwd: null })?.cwd).toBeNull();
+  });
+
+  it("migrates an index from before the wider key, keeping every row", () => {
+    const db = open();
+    // Roll the schema back to 0005's table: the P1 key, no `cwd`, no touch cache.
+    db.connection.exec("DROP TABLE transcript_touches");
+    db.connection.exec(
+      "CREATE TABLE sessions_v5 (ulid TEXT PRIMARY KEY, repo_path TEXT NOT NULL, harness TEXT NOT NULL, " +
+        "harness_session_id TEXT NOT NULL, transcript_path TEXT, status TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0, " +
+        "last_offset INTEGER NOT NULL DEFAULT 0, turns_total INTEGER NOT NULL DEFAULT 0, turns_since_checkpoint INTEGER NOT NULL DEFAULT 0, " +
+        "last_checkpoint_at TEXT, last_block_turn INTEGER, last_block_trigger TEXT, blocks_since_checkpoint INTEGER NOT NULL DEFAULT 0, " +
+        "last_attempt_at TEXT, last_attempt_exit INTEGER, last_attempt_errors TEXT, updated_at TEXT NOT NULL, pending_trigger TEXT, " +
+        "UNIQUE (harness, harness_session_id))",
+    );
+    db.connection.exec("DROP TABLE sessions");
+    db.connection.exec("ALTER TABLE sessions_v5 RENAME TO sessions");
+    db.connection
+      .prepare(
+        "INSERT INTO sessions (ulid, repo_path, harness, harness_session_id, transcript_path, status, turns_total, updated_at, pending_trigger) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("01JQ8ZK4T0000000000000000A", "/tmp/old", "claude-code", "h1", "/t/h1.jsonl", "ended", 4, "2026-09-01T00:00:00.000Z", "repair");
+    db.connection.prepare("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'").run();
+    db.close();
+    opened.pop();
+
+    const migrated = open();
+    expect(schemaVersion(migrated.connection)).toBe(6);
+    expect(columnsOf(migrated, "sessions")).toEqual(SESSION_COLUMNS);
+    expect(migrated.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toMatchObject({
+      repo_path: "/tmp/old",
+      harness_session_id: "h1",
+      transcript_path: "/t/h1.jsonl",
+      turns_total: 4,
+      pending_trigger: "repair",
+      cwd: null,
+    });
+    // The wider key: the same harness session may now be opened for a second repo.
+    migrated.insertSession(session({ ulid: "01JQ8ZK4T0000000000000000B", repo_path: "/tmp/new", harness_session_id: "h1" }));
+    expect(migrated.getSessionByHarnessId("claude-code", "h1", "/tmp/new")?.ulid).toBe("01JQ8ZK4T0000000000000000B");
+    expect(migrated.listTranscriptTouches("/t/h1.jsonl")).toEqual([]);
+  });
+
+  it("caches touch counts per transcript and root, replacing the set on every scan", () => {
+    const db = open();
+    const stamp = { mtimeMs: 1_700_000_000_000, size: 4096 };
+    db.replaceTranscriptTouches("/t/a.jsonl", stamp, [
+      { root: "/repos/b", refs: 7, writes: 1 },
+      { root: "/repos/a", refs: 0, writes: 0 },
+    ]);
+    expect(db.listTranscriptTouches("/t/a.jsonl")).toEqual([
+      { transcript_path: "/t/a.jsonl", root: "/repos/a", refs: 0, writes: 0, mtime_ms: stamp.mtimeMs, size: 4096 },
+      { transcript_path: "/t/a.jsonl", root: "/repos/b", refs: 7, writes: 1, mtime_ms: stamp.mtimeMs, size: 4096 },
+    ]);
+    db.replaceTranscriptTouches("/t/a.jsonl", { mtimeMs: 1, size: 2 }, [{ root: "/repos/c", refs: 2, writes: 0 }]);
+    expect(db.listTranscriptTouches("/t/a.jsonl").map((row) => [row.root, row.size])).toEqual([["/repos/c", 2]]);
+    expect(db.listTranscriptTouches("/t/none.jsonl")).toEqual([]);
   });
 });
 

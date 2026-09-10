@@ -234,6 +234,7 @@ describe("--since filtering and the plan", () => {
     });
 
     const plan = planBackfill(enumerateStore(fakeHome, repo), {
+      repoPath: repo,
       db,
       harness: "claude-code",
       since: "all",

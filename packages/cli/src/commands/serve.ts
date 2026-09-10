@@ -337,6 +337,7 @@ export function jobOps(
         const plan = planBackfill(enumerateStore(homeDir, repoRoot), {
           db,
           harness: claudeCodeAdapter.harness,
+          repoPath: repoRoot,
           since: input.since,
           now: new Date(),
           concurrency,

@@ -225,6 +225,8 @@ export function planBackfill(
   options: {
     db: IndexDb;
     harness: string;
+    /** The repo the plan is for: a session already indexed *for this repo* is `skipped`. */
+    repoPath: string;
     since: string;
     now: Date;
     concurrency: number;
@@ -235,7 +237,7 @@ export function planBackfill(
   const fresh: StoreSession[] = [];
   const skipped: StoreSession[] = [];
   for (const session of inWindow) {
-    const existing = options.db.getSessionByHarnessId(options.harness, session.harnessSessionId);
+    const existing = options.db.getSessionByHarnessId(options.harness, session.harnessSessionId, options.repoPath);
     (existing === undefined ? fresh : skipped).push(session);
   }
   const totalBytes = fresh.reduce((sum, session) => sum + session.bytes, 0);
@@ -393,6 +395,7 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
   const plan = planBackfill(enumerateStore(io.homeDir, io.root), {
     db: io.db,
     harness: io.adapter.harness,
+    repoPath: io.root,
     since,
     now: io.now(),
     concurrency,

@@ -224,7 +224,7 @@ describe("a session under a private_paths match", () => {
 
     const db = openIndex({ home: fixture.home });
     try {
-      expect(db.getSessionByHarnessId("claude-code", HARNESS_ID)?.private).toBe(1);
+      expect(db.getSessionByHarnessId("claude-code", HARNESS_ID, fixture.root)?.private).toBe(1);
     } finally {
       db.close();
     }

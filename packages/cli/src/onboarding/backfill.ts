@@ -84,6 +84,7 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
     const config = loadConfig(root);
     const options = {
       db,
+      repoPath: root,
       since: input.since,
       now: io.now(),
       concurrency: config.backfill.concurrency,

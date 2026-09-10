@@ -92,6 +92,13 @@ export interface SessionRow {
    */
   pending_trigger: string | null;
   updated_at: string;
+  /**
+   * Where the harness session was started, when that is not the repo root (migration
+   * `0006_session_repo_key`): a workspace folder holding the repo, or a transcript's recorded
+   * cwd. The resume spawns the harness there so it finds its session; the repair instruction
+   * names the repo with `--repo` when it differs. `null` reads as "the repo root".
+   */
+  cwd: string | null;
 }
 
 /** The columns a caller may supply to `insertSession`; the rest take their DDL defaults. */
@@ -279,6 +286,7 @@ const UPDATABLE_COLUMNS = new Set<keyof SessionRow>([
   "last_attempt_errors",
   "pending_trigger",
   "updated_at",
+  "cwd",
 ]);
 
 /** A value SQLite can bind directly. */
@@ -294,7 +302,12 @@ export interface IndexDb {
   readonly connection: Database.Database;
 
   getSessionByUlid(ulid: string): SessionRow | undefined;
-  getSessionByHarnessId(harness: string, harnessSessionId: string): SessionRow | undefined;
+  /**
+   * The row for one harness session *in one repo* — the key is `(harness, harness_session_id,
+   * repo_path)` since `0006_session_repo_key`, so a workspace-root session that touched two repos
+   * has two rows, and a hook or a plan asks for the one belonging to the repo it is working in.
+   */
+  getSessionByHarnessId(harness: string, harnessSessionId: string, repoPath: string): SessionRow | undefined;
   /** Open sessions for one repo, oldest first, which is the order a usage error lists them in. */
   listOpenSessions(repoPath: string): SessionRow[];
   /** Every repo the index knows, by path, with its open-session count and last hook time. */
@@ -335,9 +348,38 @@ export interface IndexDb {
   /** The Stop hook's give-up reset: thresholds must re-accumulate before another block. */
   giveUp(ulid: string, reset: CounterReset): void;
 
+  /**
+   * What the touched-path scanner cached for one transcript: one row per candidate root it was
+   * scanned against, with the file's mtime and size at scan time (`transcript_touches`).
+   */
+  listTranscriptTouches(transcriptPath: string): TouchRow[];
+  /**
+   * Replace the cached rows for one transcript at one (mtime, size): the rows given, and nothing
+   * else. Called with every root the scanner just looked for, zero counts included, so the next
+   * lookup can tell "scanned and found nothing" from "never scanned for this root".
+   */
+  replaceTranscriptTouches(transcriptPath: string, stamp: { mtimeMs: number; size: number }, rows: readonly TouchCount[]): void;
+
   /** Run `fn` under `BEGIN IMMEDIATE`. */
   transaction<T>(fn: () => T): T;
   close(): void;
+}
+
+/** One root's counts in one transcript, as the scanner produces them. */
+export interface TouchCount {
+  /** The candidate root, as the caller spelled it. */
+  root: string;
+  /** Tool inputs naming a path under `root`. */
+  refs: number;
+  /** Of those, the ones that wrote under it. */
+  writes: number;
+}
+
+/** A `transcript_touches` row. */
+export interface TouchRow extends TouchCount {
+  transcript_path: string;
+  mtime_ms: number;
+  size: number;
 }
 
 const SESSION_COLUMNS = [
@@ -360,6 +402,7 @@ const SESSION_COLUMNS = [
   "last_attempt_errors",
   "pending_trigger",
   "updated_at",
+  "cwd",
 ] as const satisfies ReadonlyArray<keyof SessionRow>;
 
 /**
@@ -387,6 +430,7 @@ function completeSession(session: NewSession): SessionRow {
     last_attempt_exit: null,
     last_attempt_errors: null,
     pending_trigger: null,
+    cwd: null,
     updated_at: new Date().toISOString(),
     ...given,
   };
@@ -416,8 +460,8 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   const insertColumns = SESSION_COLUMNS.join(", ");
   const insertPlaceholders = SESSION_COLUMNS.map((c) => `@${c}`).join(", ");
   const selectByUlid = db.prepare<[string], SessionRow>("SELECT * FROM sessions WHERE ulid = ?");
-  const selectByHarness = db.prepare<[string, string], SessionRow>(
-    "SELECT * FROM sessions WHERE harness = ? AND harness_session_id = ?",
+  const selectByHarness = db.prepare<[string, string, string], SessionRow>(
+    "SELECT * FROM sessions WHERE harness = ? AND harness_session_id = ? AND repo_path = ?",
   );
   const selectOpen = db.prepare<[string], SessionRow>(
     "SELECT * FROM sessions WHERE repo_path = ? AND status = 'open' ORDER BY ulid",
@@ -456,6 +500,21 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   );
   const countCheckpointsStmt = db.prepare<[string], { count: number }>(
     "SELECT COUNT(*) AS count FROM checkpoints WHERE session_ulid = ?",
+  );
+
+  const selectTouches = db.prepare<[string], TouchRow>(
+    "SELECT transcript_path, root, refs, writes, mtime_ms, size FROM transcript_touches " +
+      "WHERE transcript_path = ? ORDER BY root",
+  );
+  const deleteTouches = db.prepare<[string]>("DELETE FROM transcript_touches WHERE transcript_path = ?");
+  const insertTouch = db.prepare<[string, string, number, number, number, number]>(
+    "INSERT INTO transcript_touches (transcript_path, root, refs, writes, mtime_ms, size) VALUES (?, ?, ?, ?, ?, ?)",
+  );
+  const replaceTouchesTx = db.transaction(
+    (transcriptPath: string, stamp: { mtimeMs: number; size: number }, rows: readonly TouchCount[]) => {
+      deleteTouches.run(transcriptPath);
+      for (const row of rows) insertTouch.run(transcriptPath, row.root, row.refs, row.writes, stamp.mtimeMs, stamp.size);
+    },
   );
 
   // `updateSession` sits behind `recordAttempt`, `resetAfterCheckpoint` and `giveUp`, i.e. the
@@ -519,8 +578,8 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     connection: db,
 
     getSessionByUlid: (ulid) => selectByUlid.get(ulid),
-    getSessionByHarnessId: (harness, harnessSessionId) =>
-      selectByHarness.get(harness, harnessSessionId),
+    getSessionByHarnessId: (harness, harnessSessionId, repoPath) =>
+      selectByHarness.get(harness, harnessSessionId, repoPath),
     listOpenSessions: (repoPath) => selectOpen.all(repoPath),
     listRepos: () => selectRepos.all(),
     upsertRepo,
@@ -583,6 +642,11 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         last_checkpoint_at: reset.at,
         updated_at: reset.at,
       });
+    },
+
+    listTranscriptTouches: (transcriptPath) => selectTouches.all(transcriptPath),
+    replaceTranscriptTouches: (transcriptPath, stamp, rows) => {
+      replaceTouchesTx.immediate(transcriptPath, stamp, rows);
     },
 
     transaction: <T>(fn: () => T): T => db.transaction(fn).immediate(),

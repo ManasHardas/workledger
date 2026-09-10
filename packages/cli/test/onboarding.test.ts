@@ -457,7 +457,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     }
     // The Codex row is opened under its own harness with the rollout's id, which is what makes
     // the drain's `resumeSession` pick `codex exec resume` for it.
-    const codexRow = withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID));
+    const codexRow = withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID, repoA));
     expect(codexRow).toMatchObject({ repo_path: repoA, harness: "codex", status: "ended" });
     expect(queued.jobs.map((job) => job.session_ulid)).toContain(codexRow?.ulid);
     expect(readFileSync(path.join(repoA, ".workledger", "sessions", `${codexRow?.ulid}.md`), "utf8")).toContain("harness: codex");
@@ -490,7 +490,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     // Repo A's Codex session is left for a later resume: no row, no job.
     const forA = await queueOnboardingBackfill({ repos: [repoA], since: "90d", method: "extract", consent: true }, keyed);
     expect(forA.jobs.map((job) => job.kind)).toEqual(["extract", "extract"]);
-    expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID))).toBeUndefined();
+    expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID, repoA))).toBeUndefined();
   });
 
   it("queues nothing for method none or window none", async () => {

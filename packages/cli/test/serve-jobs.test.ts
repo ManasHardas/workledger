@@ -273,7 +273,7 @@ describe("jobOps.backfill and jobOps.estimateExtract", () => {
     expect(dry.estimate.oldest).not.toBeNull();
     // `--dry-run` is exactly that: no session file, no index row, no job.
     expect(listJobs(db, repo)).toEqual([]);
-    expect(db.getSessionByHarnessId("claude-code", "hs-recent")).toBeUndefined();
+    expect(db.getSessionByHarnessId("claude-code", "hs-recent", repo)).toBeUndefined();
 
     // A wider window sees the older one too, still without writing anything.
     expect((await ops.backfill!(repo, { since: "30d", consent: false })).estimate.count).toBe(2);
