@@ -34,8 +34,10 @@ const COMMANDS = [
  * introspection instead, and the bodies are driven against temp repos in their own test files.
  */
 const OPTIONS: Record<string, string[]> = {
-  init: ["--repo", "--yes", "--no-backfill"],
-  hook: [],
+  // `--harness` on both: `init` writes that harness's hook file, `hook` reads that harness's
+  // wire format (docs/contracts/p4/hooks-codex.md, hooks-cursor.md).
+  init: ["--repo", "--yes", "--no-backfill", "--harness"],
+  hook: ["--harness"],
   checkpoint: ["--session", "--dry-run"],
   brief: ["--repo", "--max-tokens"],
   doctor: ["--json"],

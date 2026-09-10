@@ -9,6 +9,7 @@ import type { BriefOptions } from "./commands/brief.js";
 import type { CheckpointOptions } from "./commands/checkpoint.js";
 import type { DoctorOptions } from "./commands/doctor.js";
 import type { HookEvent } from "./commands/hook-events.js";
+import type { HookOptions } from "./commands/hook.js";
 import type { InitOptions } from "./commands/init.js";
 import type { JobsOptions } from "./commands/jobs.js";
 import type { RepairOptions } from "./commands/repair.js";
@@ -84,6 +85,11 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .option("--repo <path>", "repo to enable (default: the repo root above cwd)")
     .option("--yes", "skip the confirmation prompt before editing .claude/settings.json")
     .option("--no-backfill", "accepted and ignored until P3")
+    .option(
+      "--harness <name>",
+      "also write this harness's hook file even if it is not detected (repeatable)",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
     .action(async (options: InitOptions) => {
       const { initCommand } = await import("./commands/init.js");
       exit.code = await initCommand(options);
@@ -91,13 +97,18 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
 
   program
     .command("hook")
-    .description("handle a Claude Code hook event; reads the hook JSON on stdin")
+    .description("handle a coding-agent hook event; reads the hook JSON on stdin")
     .addArgument(
       new Argument("<event>", "the hook event").choices([...HOOK_EVENTS]),
     )
-    .action(async (event: HookEvent) => {
+    // Not `.choices()`: an unknown harness is allowed with one stderr line, never a usage error.
+    // The flag comes from a hook file that outlives the CLI that wrote it, and commander would
+    // reject it before `hook.ts` ever got the chance to fail open (docs/contracts/p1/cli.md
+    // §`workledger hook`: never exits non-zero except the deliberate Stop-block 2).
+    .option("--harness <name>", "wire format stdin speaks (default: claude-code)")
+    .action(async (event: HookEvent, options: HookOptions) => {
       const { hookCommand } = await import("./commands/hook.js");
-      exit.code = await hookCommand(event);
+      exit.code = await hookCommand(event, options);
     });
 
   program

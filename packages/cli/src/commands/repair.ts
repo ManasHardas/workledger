@@ -16,6 +16,7 @@
 import process from "node:process";
 
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
+import { adapterFor } from "../adapters/registry.js";
 import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
@@ -178,6 +179,24 @@ export interface ResumeSessionOptions {
 }
 
 /**
+ * The adapter that can resume `session`: the one its `harness` column names, not the caller's.
+ *
+ * P4 made this a real branch. `repair` is handed one adapter for the process, but the row it is
+ * repairing remembers which harness recorded it — and only that harness knows the id. Resuming a
+ * Cursor conversation with `claude --resume` would spend a session finding out that Claude Code
+ * has never heard of it; worse, Cursor has no verified headless resume at all, so the right answer
+ * is `cursorAdapter`'s refusal and its `--extract` fallback
+ * (docs/contracts/p4/hooks-cursor.md §Repair and backfill).
+ *
+ * `fallback` wins when the harness matches it — that is what keeps an injected test adapter, and
+ * any future adapter this build does not know, reachable.
+ */
+export function adapterForSession(session: SessionRow, fallback: HarnessAdapter): HarnessAdapter {
+  if (session.harness === fallback.harness) return fallback;
+  return adapterFor(session.harness) ?? fallback;
+}
+
+/**
  * Resume one session and see whether a checkpoint came out of it — contract step 2, as a job
  * handler.
  *
@@ -198,9 +217,13 @@ export async function resumeSession(
 ): Promise<JobResult> {
   const { db, root } = io;
   const ulid = session.ulid;
-  const resume = io.adapter.resumeHeadless?.bind(io.adapter);
+  const adapter = adapterForSession(session, io.adapter);
+  const resume = adapter.resumeHeadless?.bind(adapter);
   if (resume === undefined) {
-    return { ok: false, error: `${io.adapter.harness} cannot resume a session headlessly` };
+    return {
+      ok: false,
+      error: adapter.noResumeMessage ?? `${adapter.harness} cannot resume a session headlessly`,
+    };
   }
 
   const before = db.countCheckpoints(ulid);
@@ -278,8 +301,9 @@ export async function runRepair(
     return await runExtract(session, { yes: options.yes === true }, io);
   }
 
-  if (io.adapter.resumeHeadless === undefined) {
-    io.stderr(`repair: ${io.adapter.harness} cannot resume a session headlessly`);
+  const adapter = adapterForSession(session, io.adapter);
+  if (adapter.resumeHeadless === undefined) {
+    io.stderr(`repair: ${adapter.noResumeMessage ?? `${adapter.harness} cannot resume a session headlessly`}`);
     io.stderr(`run \`workledger repair ${ulid} --extract\` to reconstruct the digest instead`);
     return EXIT_JOB_FAILED;
   }

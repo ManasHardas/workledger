@@ -797,6 +797,10 @@ describe("the Claude Code adapter", () => {
       model: "m",
       stopHookActive: false,
       reason: undefined,
+      // Claude Code has neither a never-block session class nor a reported author; both are the
+      // adapter's answer, not an absence the state machine has to guess at.
+      neverBlock: false,
+      userEmail: undefined,
     });
   });
 
@@ -833,10 +837,16 @@ describe("the Claude Code adapter", () => {
     expect(failed).toEqual({ message: "workledger: hook Stop: stdin is not valid JSON" });
   });
 
-  it("blockStop is exit 2 with the reason on stderr", () => {
+  it("blockStop is exit 2 with the reason on stderr, and writes no stdout", () => {
     const lines: string[] = [];
-    expect(claudeCodeAdapter.blockStop("do the thing", (line) => lines.push(line))).toBe(EXIT_BLOCK);
+    const out: string[] = [];
+    const code = claudeCodeAdapter.blockStop("do the thing", {
+      stdout: (line) => out.push(line),
+      stderr: (line) => lines.push(line),
+    });
+    expect(code).toBe(EXIT_BLOCK);
     expect(lines).toEqual(["do the thing"]);
+    expect(out).toEqual([]);
   });
 
   it("transcriptSize reports undefined rather than throwing", () => {

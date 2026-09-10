@@ -68,6 +68,12 @@ export type SinceWindow = (typeof SINCE_WINDOWS)[number];
 
 /** The subset of `config.yaml` the hook state machine reads. */
 export interface HookConfig {
+  /**
+   * The harnesses enabled for this repo — the ones `init` wrote a hook file for and `doctor`
+   * reports a row for. The hook state machine does not read it (the `--harness` flag in each
+   * hook command says which adapter to use), but `init` and `doctor` do.
+   */
+  harnesses: string[];
   thresholds: Thresholds;
   brief: BriefSettings;
   /** `SessionEnd` sets `needs_repair` when `turns_since_checkpoint` exceeds this. */
@@ -87,6 +93,7 @@ export interface HookConfig {
 
 /** The defaults from cli.md, used for a missing file and for every key that does not parse. */
 export const DEFAULT_CONFIG: HookConfig = {
+  harnesses: ["claude-code"],
   thresholds: { bytes: 2000000, minutes: 20, turns: 15 },
   brief: { inject: true, max_tokens: 2000 },
   stale_turns: 5,
@@ -99,6 +106,7 @@ export const DEFAULT_CONFIG: HookConfig = {
 /** A fresh deep copy of {@link DEFAULT_CONFIG}, so a caller can never mutate the shared object. */
 export function defaultConfig(): HookConfig {
   return {
+    harnesses: [...DEFAULT_CONFIG.harnesses],
     thresholds: { ...DEFAULT_CONFIG.thresholds },
     brief: { ...DEFAULT_CONFIG.brief },
     stale_turns: DEFAULT_CONFIG.stale_turns,
@@ -296,7 +304,11 @@ export function parseConfig(text: string): HookConfig {
   const backfill = mapping(entries.get("backfill"));
   const extract = mapping(entries.get("extract"));
   const defaults = DEFAULT_CONFIG;
+  const harnesses = sequence(entries.get("harnesses"))?.filter((name) => name !== "");
   return {
+    harnesses: harnesses === undefined || harnesses.length === 0
+      ? [...defaults.harnesses]
+      : harnesses,
     thresholds: {
       bytes: positiveInt(thresholds["bytes"], defaults.thresholds.bytes),
       minutes: positiveInt(thresholds["minutes"], defaults.thresholds.minutes),
@@ -374,27 +386,32 @@ export function isPrivatePath(root: string, patterns: readonly string[], home: s
 
 /**
  * The `.workledger/config.yaml` `workledger init` writes, verbatim from cli.md
- * §`.workledger/config.yaml`. It is a string rather than a serialized object on purpose: the
- * contract fixes the *text*, including the flow mappings and the key order, and a round-trip
- * through a YAML emitter would quietly reformat it.
+ * §`.workledger/config.yaml` with `harnesses` set to the ones `init` enabled. It is assembled as
+ * text rather than serialized from an object on purpose: the contract fixes the *text*, including
+ * the flow mappings and the key order, and a round-trip through a YAML emitter would quietly
+ * reformat it.
  */
-export const DEFAULT_CONFIG_YAML = [
-  "schema_version: 1",
-  "harnesses: [claude-code]",
-  "thresholds: { bytes: 2000000, minutes: 20, turns: 15 }",
-  "brief: { inject: true, max_tokens: 2000 }",
-  "stale_turns: 5",
-  "orphan_minutes: 30",
-  "private_paths: []",
-  "auto_commit: false",
-  // P3 (docs/contracts/p3/cli.md §Config additions). Emitted so the knobs are discoverable in
-  // the file rather than only in the contract; both blocks fall back to the same values when a
-  // repo enabled before P3 has no line for them.
-  "backfill: { since: 14d, concurrency: 2, seconds_per_session: 45 }",
-  "extract: { model: claude-haiku-4-5, usd_per_million_input: 1, usd_per_million_output: 5 }",
-  "",
-].join("\n");
+export function configYaml(harnesses: readonly string[] = DEFAULT_CONFIG.harnesses): string {
+  return [
+    "schema_version: 1",
+    `harnesses: [${(harnesses.length === 0 ? DEFAULT_CONFIG.harnesses : harnesses).join(", ")}]`,
+    "thresholds: { bytes: 2000000, minutes: 20, turns: 15 }",
+    "brief: { inject: true, max_tokens: 2000 }",
+    "stale_turns: 5",
+    "orphan_minutes: 30",
+    "private_paths: []",
+    "auto_commit: false",
+    // P3 (docs/contracts/p3/cli.md §Config additions). Emitted so the knobs are discoverable in
+    // the file rather than only in the contract; both blocks fall back to the same values when a
+    // repo enabled before P3 has no line for them.
+    "backfill: { since: 14d, concurrency: 2, seconds_per_session: 45 }",
+    "extract: { model: claude-haiku-4-5, usd_per_million_input: 1, usd_per_million_output: 5 }",
+    "",
+  ].join("\n");
+}
 
+/** {@link configYaml} for a repo where only Claude Code was detected. */
+export const DEFAULT_CONFIG_YAML: string = configYaml();
 /** The outcome of validating one repo's `config.yaml` against the `Config` zod schema. */
 export interface ConfigCheck {
   /** Absolute path of the file that was looked for. */

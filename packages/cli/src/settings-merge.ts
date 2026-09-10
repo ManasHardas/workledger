@@ -274,21 +274,27 @@ function serialize(settings: Record<string, unknown>): string {
 }
 
 /**
- * Merge the contract's hooks block into `<root>/.claude/settings.json`.
+ * Merge one JSON config file in place: read, transform, diff, ask, back up, write.
  *
- * Order is the contract's: compute, print the diff, ask, back up, write. Nothing is written when
- * the merge is a no-op, so a second `init` leaves the file byte-identical — including its
- * indentation, if the operator reformatted it.
+ * The order is the contract's and it is the same for every harness's hook file, so it is written
+ * once here and `mergeSettingsFile` (`.claude/settings.json`), `codex-hooks.ts`
+ * (`.codex/hooks.json`) and `cursor-hooks.ts` (`.cursor/hooks.json`) all reach it. Nothing is
+ * written when `transform` reports no change, so a second `init` leaves the file byte-identical —
+ * including its indentation, if the operator reformatted it.
  *
- * @throws {SettingsError} when the file is not valid JSON, or holds a `hooks` shape the merge
- * cannot preserve.
+ * @param file absolute path of the file to merge into.
+ * @param label the path shown in the unified diff, relative to the repo root.
+ * @param transform the merge itself, given the parsed object (`{}` for a file that is absent).
+ * @throws {SettingsError} when the file is not valid JSON, is not a JSON object, or holds a
+ * shape `transform` refuses. Rewriting such a file would destroy data, so `init` refuses instead.
  */
-export async function mergeSettingsFile(
-  root: string,
+export async function applyJsonFile(
+  file: string,
+  label: string,
+  transform: (existing: Record<string, unknown>) => MergeResult,
   io: SettingsIo,
   ask: boolean,
 ): Promise<SettingsOutcome> {
-  const file = path.join(root, SETTINGS_PATH);
   let before = "";
   let existing: Record<string, unknown> = {};
   let exists = false;
@@ -311,11 +317,11 @@ export async function mergeSettingsFile(
     existing = parsed;
   }
 
-  const { settings, changed } = mergeHooks(existing);
+  const { settings, changed } = transform(existing);
   if (!changed) return { status: "unchanged", file, diff: "" };
 
   const after = serialize(settings);
-  const diff = unifiedDiff(before, after, SETTINGS_PATH);
+  const diff = unifiedDiff(before, after, label);
   for (const line of diff.replace(/\n$/, "").split("\n")) io.stdout(line);
 
   if (ask && !(await io.confirm(`Write these changes to ${file}?`))) {
@@ -330,4 +336,22 @@ export async function mergeSettingsFile(
   }
   writeFileSync(file, after, "utf8");
   return { status: "written", file, backup, diff };
+}
+
+/**
+ * Merge the contract's hooks block into `<root>/.claude/settings.json`.
+ *
+ * Order is the contract's: compute, print the diff, ask, back up, write. Nothing is written when
+ * the merge is a no-op, so a second `init` leaves the file byte-identical — including its
+ * indentation, if the operator reformatted it.
+ *
+ * @throws {SettingsError} when the file is not valid JSON, or holds a `hooks` shape the merge
+ * cannot preserve.
+ */
+export async function mergeSettingsFile(
+  root: string,
+  io: SettingsIo,
+  ask: boolean,
+): Promise<SettingsOutcome> {
+  return await applyJsonFile(path.join(root, SETTINGS_PATH), SETTINGS_PATH, mergeHooks, io, ask);
 }

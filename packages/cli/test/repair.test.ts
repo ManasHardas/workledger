@@ -19,6 +19,7 @@ import process from "node:process";
 
 import { EXIT_JOB_FAILED, EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
 import { CLAUDE_BIN_ENV, claudeCodeAdapter } from "../src/adapters/claude-code.js";
+import { CURSOR_NO_RESUME } from "../src/adapters/cursor.js";
 import { openIndex } from "../src/index/db.js";
 import { getJob, listJobs } from "../src/jobs/queue.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
@@ -263,6 +264,20 @@ describe("runRepair — resume path", () => {
     expect(await runRepair(ULID, {}, repairIo(adapter))).toBe(EXIT_JOB_FAILED);
     expect(listJobs(db, repo)).toEqual([]);
     expect(err.join("\n")).toContain("cannot resume a session headlessly");
+  });
+
+  it("a Cursor session exits 5 with the contract's message, not `claude --resume`", async () => {
+    // The row says `cursor`, so the adapter is chosen from the *session*, not from the caller:
+    // resuming this conversation id with Claude Code would spend a session finding out that
+    // Claude Code has never heard of it (docs/contracts/p4/hooks-cursor.md §Repair and backfill).
+    crashedSession();
+    db.updateSession(ULID, { harness: "cursor" });
+
+    expect(await runRepair(ULID, {}, repairIo(checkpointingAdapter()))).toBe(EXIT_JOB_FAILED);
+
+    expect(listJobs(db, repo)).toEqual([]);
+    expect(err.join("\n")).toContain(CURSOR_NO_RESUME);
+    expect(err.join("\n")).toContain("--extract");
   });
 });
 
