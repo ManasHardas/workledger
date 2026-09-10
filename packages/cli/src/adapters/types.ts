@@ -63,7 +63,11 @@ export interface HookInputError {
 
 /** What {@link HarnessAdapter.resumeHeadless} is asked to do. */
 export interface ResumeOptions {
-  /** Working directory the resumed session is pinned to — the enabled repo root. */
+  /**
+   * Working directory the resumed session runs in: the enabled repo root, or — for a session
+   * that was started somewhere else, a workspace folder above the repo — that directory, which is
+   * where the harness looks its session up (docs/contracts/p8/daemon-and-api.md amendment 8).
+   */
   cwd: string;
   /** The prompt handed to the resumed agent (`src/instruction.ts`). */
   instruction: string;

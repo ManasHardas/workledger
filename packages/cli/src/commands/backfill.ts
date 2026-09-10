@@ -366,6 +366,8 @@ export async function createBackfilledSession(
     harness_session_id: session.harnessSessionId,
     status: "ended",
     transcript_path: session.file,
+    // Where the harness session started — the resume spawns there (amendment 8, #105).
+    cwd: session.cwd,
     // Zero rather than the file size: an extraction fallback measures its span from here, and a
     // backfilled session has never been described, so the span is the whole transcript.
     last_offset: 0,
@@ -392,7 +394,11 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
   }
   const concurrency = options.concurrency ?? config.backfill.concurrency;
 
-  const plan = planBackfill(enumerateStore(io.homeDir, io.root), {
+  // The cwd rule's sessions, then the ones attributed by touched paths (amendment 8, #105) —
+  // a session started in a workspace folder above this repo that did its work here.
+  const { attributeTranscripts } = await import("../onboarding/attribution.js");
+  const touched = (await attributeTranscripts(io.homeDir, [io.root], io.db)).get(io.root);
+  const plan = planBackfill([...enumerateStore(io.homeDir, io.root), ...(touched?.claude ?? [])], {
     db: io.db,
     harness: io.adapter.harness,
     repoPath: io.root,

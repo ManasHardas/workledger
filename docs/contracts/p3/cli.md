@@ -80,6 +80,13 @@ Stdout: `scan: <n> orphaned, <m> repair job(s) queued`.
    Amendment (2026-09-10, #97): each resume's timeout is per session,
    `min(1800, 600 + 120 × ceil(transcript bytes / 1e6))` seconds — the same rule for `workledger
    backfill` and the onboarding wizard's backfill.
+   Amendment (2026-09-10, #105; p8 amendment 8): step 1 also enumerates transcripts started
+   elsewhere whose tool inputs touch this repo (≥ 5 references or ≥ 1 write, per
+   `packages/cli/src/onboarding/touched.ts`), and a transcript that touched several repos is
+   backfilled into each — one session row and one `repair` job per (session, repo), the row keyed
+   by `(harness, harness_session_id, repo_path)` and carrying the session's start directory as
+   `cwd`. The resume of such a row is spawned in that directory and its instruction names the
+   target with `--repo <root>` (p1 cli.md). `--since all` (p8 amendment 9) applies no lower bound.
 5. Summary: `backfill: <done> digested, <failed> failed, <skipped> skipped (already indexed)`.
 
 ## Config additions (`.workledger/config.yaml`)

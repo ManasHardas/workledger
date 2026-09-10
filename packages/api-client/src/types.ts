@@ -346,7 +346,7 @@ export interface LedgerSource {
 // every other wire type is — the UI never imports the server.
 
 /** The backfill windows the wizard offers; `none` is "no backfill". */
-export type OnboardingWindow = "7d" | "30d" | "90d" | "none";
+export type OnboardingWindow = "7d" | "30d" | "90d" | "all" | "none";
 
 /** How the backfill digests each session; `none` is "no backfill". */
 export type OnboardingMethod = "resume" | "extract" | "none";
@@ -366,10 +366,27 @@ export interface RepoCandidate {
    * sends it lands; a client reads it through {@link isSuggested}, which falls back to `hasGit`.
    */
   suggested?: boolean;
-  /** Sessions per harness store that name this repo as their working directory. */
+  /**
+   * Sessions per harness store attributed to this repo: started in it, or (P8 amendment 8)
+   * started elsewhere and touching it.
+   */
   harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
   lastSessionAt: string | null;
+  /**
+   * Amendment 8: distinct directories the touched-path sessions started in, none of them this
+   * repo. Optional for a server from before the amendment; read it as `[]`.
+   */
+  startedIn?: string[];
+  /** Amendment 8: how many of `harnessSessions` were attributed by touched paths. */
+  touchedSessions?: number;
+}
+
+/** Amendment 8: a start directory that is not a repo but holds selected candidates. */
+export interface WorkspaceCandidate {
+  path: string;
+  repos: string[];
+  hooksInstalled: boolean;
 }
 
 /** `candidate.suggested`, or `hasGit` for a server from before amendment 2. */
@@ -385,6 +402,8 @@ export interface DiscoverResult {
   found: RepoCandidate[];
   /** The roots that were walked, absolute. */
   roots: string[];
+  /** Amendment 8: workspace folders holding selected candidates. Optional for an older server. */
+  workspaces?: WorkspaceCandidate[];
 }
 
 /** One backfill window's size. */
@@ -396,7 +415,8 @@ export interface HistoryWindow {
 
 /** `GET /api/onboarding/history`. */
 export interface HistoryResult {
-  windows: { "7d": HistoryWindow; "30d": HistoryWindow; "90d": HistoryWindow };
+  /** `all` (amendment 9) has no cutoff; optional for a server from before it. */
+  windows: { "7d": HistoryWindow; "30d": HistoryWindow; "90d": HistoryWindow; all?: HistoryWindow };
 }
 
 /** `POST /api/onboarding/init` body. */

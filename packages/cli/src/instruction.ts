@@ -40,6 +40,13 @@ export interface InstructionInput {
    * the P1 block path, where the text stays byte-identical to instruction v2.
    */
   sinceCheckpoint?: number | undefined;
+  /**
+   * The repo root the checkpoint must land in, printed as `--repo <root>` when the session's
+   * working directory is not that repo — a workspace-root session resumed where it started
+   * (docs/contracts/p8/daemon-and-api.md amendment 8). Omitted when the cwd is the repo, where
+   * the command line stays exactly what it was.
+   */
+  repo?: string | undefined;
 }
 
 /** How many characters of a cached failure are quoted back before it is truncated. */
@@ -60,7 +67,8 @@ export function checkpointInstruction(input: InstructionInput): string {
   const lines = [
     `workledger: record a checkpoint before you stop (instruction v${INSTRUCTION_VERSION}).`,
     "",
-    `Run exactly one command: workledger checkpoint --session ${input.sessionId} --payload '<json>'`,
+    `Run exactly one command: workledger checkpoint --session ${input.sessionId}` +
+      `${input.repo === undefined ? "" : ` --repo ${input.repo}`} --payload '<json>'`,
     `where <json> is a CheckpointPayload describing the work ${span}:`,
     "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 16384 bytes.",
     "Shapes: done {text, files[], commit?, verified: tests-passed|tests-failed|not-verified};",

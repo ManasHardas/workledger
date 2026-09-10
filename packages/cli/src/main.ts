@@ -142,6 +142,7 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .command("checkpoint")
     .description("record a checkpoint from a CheckpointPayload: --payload, --payload-file, or stdin")
     .option("--session <ulid>", "session to record against, when the index lookup is ambiguous")
+    .option("--repo <path>", "repo whose ledger takes the checkpoint (default: the repo root above cwd)")
     .option("--payload <json>", "the payload as one argument (headless sessions cannot feed stdin)")
     .option("--payload-file <path>", "read the payload from this file")
     .option("--dry-run", "validate and render without writing anything")
@@ -243,7 +244,7 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .option("--json", "emit the six onboarding API objects as one JSON document")
     .option("--roots <dirs>", "comma-separated directories to search for repos (default: ~/Projects)")
     .option("--select <paths>", "comma-separated repos to enable (default: every repo with agent sessions)")
-    .option("--since <window>", "backfill window: 7d, 30d, 90d or none")
+    .option("--since <window>", "backfill window: 7d, 30d, 90d, all or none")
     .option("--method <method>", "how to digest past sessions: resume, extract or none")
     .option("--yes", "take every default and consent to the backfill")
     .action(async (options: OnboardOptions) => {

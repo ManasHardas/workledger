@@ -22,7 +22,7 @@
  * {@link touchedRoots}), keyed by the file's mtime and size so an unchanged transcript is never
  * scanned twice. Transcript excerpts never enter the repo or the index (CLAUDE.md).
  */
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
@@ -109,11 +109,16 @@ class Tallies {
     this.homeDir = homeDir;
   }
 
-  /** Count one path, resolved against `cwd`. Returns the root it landed in, if any. */
-  touch(given: string, cwd: string, write: boolean): string | undefined {
+  /**
+   * Count one path, resolved against `cwd`. Returns the root it landed in, if any. With
+   * `mustExist`, only a path that is on disk counts — the rule for a bare word in a shell
+   * command (`ls card-a`), which is a path only when something by that name is there.
+   */
+  touch(given: string, cwd: string, write: boolean, mustExist = false): string | undefined {
     const absolute = resolvePath(given, cwd, this.homeDir);
     const key = rootOf(absolute, this.keys);
     if (key === undefined) return undefined;
+    if (mustExist && !existsSync(absolute)) return undefined;
     const root = [...this.roots.keys()][this.keys.indexOf(key)] as string;
     const tally = this.roots.get(root) as TouchTally;
     tally.refs += 1;
@@ -156,12 +161,16 @@ class Tallies {
         continue;
       }
       let named = false;
-      for (const word of words.slice(start)) {
+      for (const word of words.slice(start, start === words.length ? start : undefined)) {
         if (word.startsWith("-") || SCHEME.test(word)) continue;
         const candidate = word.includes("=") && !word.startsWith("/") ? (word.split("=").pop() as string) : word;
-        if (!(candidate.startsWith("/") || candidate.startsWith("~") || candidate.startsWith(".") || candidate.includes("/"))) continue;
-        if (candidate.startsWith(".") && candidate !== "." && candidate !== ".." && !candidate.startsWith("./") && !candidate.startsWith("../")) continue;
-        if (this.touch(candidate, current, write) !== undefined) named = true;
+        // A word with a separator, `~`, `.` or `..` is a path on its face; a bare word after the
+        // command (`ls card-a`) is one only when it names something on disk under a candidate.
+        const onItsFace =
+          candidate.startsWith("/") || candidate.startsWith("~") || candidate === "." || candidate === ".." ||
+          candidate.startsWith("./") || candidate.startsWith("../") || (candidate.includes("/") && !candidate.startsWith("."));
+        if (!onItsFace && (word === head || candidate.startsWith(".") || !/^[\w][\w.@+-]*$/.test(candidate))) continue;
+        if (this.touch(candidate, current, write, !onItsFace) !== undefined) named = true;
       }
       if (write && !named) this.writeAt(current);
     }

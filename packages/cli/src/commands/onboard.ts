@@ -1,7 +1,7 @@
 /**
  * `workledger onboard [--json] [--roots <a,b>] [--select <paths>] [--since 7d|30d|90d|none]
  * [--method resume|extract|none] [--yes]` — docs/contracts/p8/daemon-and-api.md §CLI, "terminal
- * parity for the wizard".
+ * parity for the wizard". `--since all` (amendment 9) selects every attributed transcript.
  *
  * The same six calls the web wizard makes, in the same order, against the same functions
  * (`src/onboarding/`): discover, select, history, init, plan, consent, run, status. On a terminal
@@ -72,7 +72,7 @@ export interface OnboardReport {
   status: OnboardingStatus | null;
 }
 
-const WINDOWS: readonly OnboardingWindow[] = ["7d", "30d", "90d", "none"];
+const WINDOWS: readonly OnboardingWindow[] = ["7d", "30d", "90d", "all", "none"];
 const METHODS: readonly OnboardingMethod[] = ["resume", "extract", "none"];
 const DEFAULT_WINDOW: OnboardingWindow = "30d";
 const DEFAULT_METHOD: OnboardingMethod = "resume";
@@ -213,7 +213,7 @@ async function onboard(options: OnboardOptions, io: OnboardIo): Promise<number> 
 
   // 1. Discover.
   const roots = csv(options.roots);
-  const discover = discoverRepos(roots.length === 0 ? {} : { roots }, io);
+  const discover = await discoverRepos(roots.length === 0 ? {} : { roots }, io);
   say(`workledger onboard: ${discover.known.length} repo(s) with agent sessions, ${discover.found.length} more under ${discover.roots.join(", ")}`);
 
   // 2. Select. Where nothing can be asked, nothing is written without `--yes`: a cron job or a
@@ -235,8 +235,8 @@ async function onboard(options: OnboardOptions, io: OnboardIo): Promise<number> 
   }
 
   // 3. History.
-  const history = historyWindows(repos, io);
-  for (const window of ["7d", "30d", "90d"] as const) {
+  const history = await historyWindows(repos, io);
+  for (const window of ["7d", "30d", "90d", "all"] as const) {
     const { sessions, bytes } = history.windows[window];
     say(`  ${window.padEnd(4)} ${sessions} session(s), ${bytes} bytes`);
   }

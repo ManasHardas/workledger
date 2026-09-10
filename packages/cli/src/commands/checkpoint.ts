@@ -1,6 +1,6 @@
 /**
- * `workledger checkpoint [--session <ulid>] [--payload <json> | --payload-file <path>] [--dry-run]`
- * — docs/contracts/p1/cli.md.
+ * `workledger checkpoint [--session <ulid>] [--repo <path>] [--payload <json> | --payload-file
+ * <path>] [--dry-run]` — docs/contracts/p1/cli.md.
  *
  * The only validated write path into the ledger. Reads a `CheckpointPayload` from exactly one
  * source — the `--payload` argument, the `--payload-file` path, or stdin — and runs the
@@ -15,7 +15,7 @@
  * rules, and the two side effects core is forbidden to have: the filesystem and SQLite.
  */
 import { Readable } from "node:stream";
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, realpathSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -67,6 +67,11 @@ import type { IndexDb, SessionRow } from "../index/db.js";
 export interface CheckpointOptions {
   /** The session ulid, when the index lookup would otherwise be ambiguous. */
   session?: string;
+  /**
+   * The repo whose ledger takes the checkpoint, regardless of the cwd (p8 amendment 8): a
+   * workspace-root session's digest goes into the repo it touched. Resolved against the cwd.
+   */
+  repo?: string;
   /** The payload as one argument — the form the instruction prescribes for headless sessions. */
   payload?: string;
   /** A file holding the payload, resolved against the cwd. */
@@ -288,6 +293,18 @@ export function stampOffset(session: SessionRow): number {
   return size ?? session.last_offset;
 }
 
+/** Two spellings of one directory, symlinks resolved when they can be. */
+function sameDirectory(a: string, b: string): boolean {
+  const real = (file: string): string => {
+    try {
+      return realpathSync(file);
+    } catch {
+      return path.resolve(file);
+    }
+  };
+  return real(a) === real(b);
+}
+
 /**
  * Step 1: resolve the session — `--session`, else `WORKLEDGER_SESSION`, else the single open
  * session for this repo. Two or more open sessions is a usage error naming them (data-flow §3).
@@ -300,6 +317,11 @@ function resolveSession(
   if (explicit !== undefined) {
     const session = db.getSessionByUlid(explicit);
     if (session === undefined) return { errors: [`--session: no session ${explicit} in the index`] };
+    // The row is keyed by (harness session, repo): a workspace-root session has one row per repo
+    // it touched, and the one named must be this repo's — its ledger is where the digest lands.
+    if (!sameDirectory(session.repo_path, repoRoot)) {
+      return { errors: [`--session: session ${explicit} belongs to ${session.repo_path}, not ${repoRoot}`] };
+    }
     return { session };
   }
 
@@ -435,9 +457,10 @@ export async function runCheckpoint(
 ): Promise<number> {
   const dryRun = options.dryRun === true;
 
-  const repoRoot = findRepoRoot(io.cwd);
+  const from = options.repo === undefined ? io.cwd : path.resolve(io.cwd, options.repo);
+  const repoRoot = findRepoRoot(from);
   if (repoRoot === undefined || !isEnabled(repoRoot)) {
-    io.stderr(`workledger: ${io.cwd} is not an enabled repo; run \`workledger init\` first`);
+    io.stderr(`workledger: ${from} is not an enabled repo; run \`workledger init\` first`);
     return EXIT_NOT_ENABLED;
   }
 

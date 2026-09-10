@@ -16,7 +16,7 @@ import type { SessionFrontmatter } from "@workledger/core";
 
 import { redactLine, runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
 import type { CheckpointIo, CheckpointOptions } from "../src/commands/checkpoint.js";
-import { EXIT_OK, EXIT_SECRET, EXIT_USAGE } from "../src/exit-codes.js";
+import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_SECRET, EXIT_USAGE } from "../src/exit-codes.js";
 import { openIndex } from "../src/index/db.js";
 import { listOpenBacklogIds, readTextFile, writeFileAtomic } from "../src/ledger-fs.js";
 
@@ -460,6 +460,31 @@ describe("workledger checkpoint", () => {
     const unknown = await run(fixture, MINIMAL, { session: "01JQ8ZK4T0000000000000000Z" });
     expect(unknown.code).toBe(EXIT_USAGE);
     expect(unknown.err[0]).toContain("no session 01JQ8ZK4T0000000000000000Z");
+  });
+
+  it("--repo writes into that repo's ledger from any cwd, and refuses a session of another repo (p8 amendment 8)", async () => {
+    const fixture = setup();
+    const elsewhere = tempDir("workledger-workspace-");
+    const capture = makeIo(fixture, JSON.stringify(MINIMAL));
+    capture.io.cwd = elsewhere;
+
+    // Without --repo the cwd decides, and a workspace folder is not an enabled repo.
+    expect(await runCheckpoint({ session: ULID_A }, capture.io)).toBe(EXIT_NOT_ENABLED);
+    expect(readFileSync(fixture.sessionPath(ULID_A), "utf8")).not.toContain("[cp 1]");
+
+    // With it, the digest lands in the named repo's ledger, resolved by (session, repo).
+    expect(await runCheckpoint({ session: ULID_A, repo: fixture.root }, capture.io)).toBe(EXIT_OK);
+    expect(capture.out[0]).toContain("checkpoint 1 recorded");
+    expect(readFileSync(fixture.sessionPath(ULID_A), "utf8")).toContain("- [cp 1] Wrote the command.");
+
+    // A session row that belongs to a different repo is refused: its ledger is not this one.
+    const other = setup([ULID_B]);
+    const wrong = makeIo(fixture, JSON.stringify(MINIMAL));
+    wrong.io.cwd = elsewhere;
+    wrong.io.home = other.home;
+    expect(await runCheckpoint({ session: ULID_B, repo: fixture.root }, wrong.io)).toBe(EXIT_USAGE);
+    expect(wrong.err[0]).toContain(`session ${ULID_B} belongs to ${other.root}, not ${fixture.root}`);
+    expect(readFileSync(other.sessionPath(ULID_B), "utf8")).not.toContain("[cp 1]");
   });
 
   it("WORKLEDGER_SESSION resolves the session when the index lookup is ambiguous", async () => {

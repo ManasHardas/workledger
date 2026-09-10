@@ -56,6 +56,8 @@ function claudeTranscript(): string {
     toolUse("Glob", { pattern: `${beta}/**/*.ts` }),
     toolUse("Edit", { file_path: path.join(alpha, "src", "a.ts"), old_string: "a", new_string: "b" }),
     toolUse("Bash", { command: `cd ${gamma}; git commit -m "wip"` }),
+    // A bare word is a path when something by that name is there: `src` under alpha is, `wip` is not.
+    toolUse("Bash", { command: "cd alpha && ls src && echo wip" }),
     // Paths outside every candidate, and a URL that must not resolve against the cwd.
     toolUse("Bash", { command: "curl https://example.com/x/y > /tmp/out.txt" }),
     toolUse("Read", { file_path: "~/.zshrc" }),
@@ -109,6 +111,8 @@ beforeEach(() => {
   gamma = path.join(ws, "gamma");
   home = path.join(dir, "home");
   for (const repo of [alpha, beta, gamma]) mkdirSync(path.join(repo, ".git"), { recursive: true });
+  // The one path a bare shell word is checked against.
+  mkdirSync(path.join(alpha, "src"), { recursive: true });
   mkdirSync(home, { recursive: true });
 });
 
@@ -124,8 +128,9 @@ describe("scanTranscript", () => {
     const scan = await scanTranscript(file, [alpha, beta, gamma], { homeDir: home });
 
     expect(scan.cwd).toBe(ws);
-    // alpha: Read (relative), cd alpha, src/a.ts after the cd, Edit (absolute) — the Edit writes.
-    expect(scan.roots.get(alpha)).toEqual({ refs: 4, writes: 1 });
+    // alpha: Read (relative), cd alpha, src/a.ts after the cd, Edit (absolute) — the Edit writes —
+    // then the second cd and the bare `src` that exists.
+    expect(scan.roots.get(alpha)).toEqual({ refs: 6, writes: 1 });
     // beta: ls, Read, Grep path, Glob pattern — four reads, no write.
     expect(scan.roots.get(beta)).toEqual({ refs: 4, writes: 0 });
     // gamma: the cd, and `git commit` after it writes where the shell is.
@@ -191,11 +196,11 @@ describe("touchedRoots (the index cache)", () => {
 
     const first = await touchedRoots(db, file, [alpha, beta], { cwd: ws, homeDir: home });
     expect([...first.entries()]).toEqual([
-      [alpha, { refs: 4, writes: 1 }],
+      [alpha, { refs: 6, writes: 1 }],
       [beta, { refs: 4, writes: 0 }],
     ]);
     expect(db.listTranscriptTouches(file).map((row) => [row.root, row.refs, row.writes])).toEqual([
-      [alpha, 4, 1],
+      [alpha, 6, 1],
       [beta, 4, 0],
     ]);
 
@@ -208,7 +213,7 @@ describe("touchedRoots (the index cache)", () => {
     // A root the cache has not seen is scanned — against the file as it is now — and the
     // cached rows for the others are kept.
     const widened = await touchedRoots(db, file, [alpha, gamma], { cwd: ws, homeDir: home });
-    expect(widened.get(alpha)).toEqual({ refs: 4, writes: 1 });
+    expect(widened.get(alpha)).toEqual({ refs: 6, writes: 1 });
     expect(widened.get(gamma)).toEqual({ refs: 0, writes: 0 });
     expect(db.listTranscriptTouches(file).map((row) => row.root)).toEqual([alpha, beta, gamma]);
 

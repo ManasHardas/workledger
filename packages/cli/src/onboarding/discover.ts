@@ -18,12 +18,20 @@
  * Paths are compared resolved: roots are realpath'd and deduplicated once they are known to
  * exist, and a candidate is one candidate however it was spelled (`~/Projects/`, a symlink to
  * it). A `known` path is reported as the harness recorded it, the way `findRepoRoot` keeps it.
+ *
+ * A second attribution runs over the candidates once both lists exist (amendment 8, #105): a
+ * transcript started somewhere else — a workspace folder above the repos, another repo — counts
+ * for every candidate its tool inputs touched (`./attribution.ts`), and a `found` repo that gains
+ * a session that way moves to `known`. `startedIn` says where those sessions began and
+ * `touchedSessions` how many there were; `harnessSessions` counts them with the rest.
  */
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { configFile } from "../config.js";
 import { findRepoRoot } from "../ledger-fs.js";
+import { attributeTranscripts } from "./attribution.js";
+import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
 import { claudeProjects, codexSessions, isDirectory } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
@@ -60,6 +68,8 @@ function candidate(repo: string): RepoCandidate {
     suggested: false,
     harnessSessions: {},
     lastSessionAt: null,
+    startedIn: [],
+    touchedSessions: 0,
   };
 }
 
@@ -107,7 +117,7 @@ function realOr(file: string): string {
 }
 
 /** The step, over the stores under `io.homeDir` and the given (or default) roots. */
-export function discoverRepos(options: { roots?: string[] | undefined }, io: OnboardingIo): DiscoverResult {
+export async function discoverRepos(options: { roots?: string[] | undefined }, io: OnboardingIo): Promise<DiscoverResult> {
   // The default root may be absent (a machine with no `~/Projects`) and is simply empty; a root
   // the caller named has to be an absolute existing directory (`./repo-path.ts`).
   const given = assertRootPaths((options.roots ?? []).map((root) => expandRoot(root, io)));
@@ -118,14 +128,17 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
 
   // Both maps are keyed by resolved path; `known` keeps the first spelling a store recorded.
   const known = new Map<string, RepoCandidate>();
-  const bump = (repo: string, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
-    const key = realOr(repo);
-    const entry = known.get(key) ?? candidate(repo);
+  const count = (entry: RepoCandidate, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
     entry.harnessSessions[harness] = (entry.harnessSessions[harness] ?? 0) + sessions;
     if (newestMs > 0) {
       const at = new Date(newestMs).toISOString();
       if (entry.lastSessionAt === null || at > entry.lastSessionAt) entry.lastSessionAt = at;
     }
+  };
+  const bump = (repo: string, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
+    const key = realOr(repo);
+    const entry = known.get(key) ?? candidate(repo);
+    count(entry, harness, sessions, newestMs);
     known.set(key, entry);
   };
 
@@ -148,6 +161,25 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
     });
   }
 
+  // The touched-path rule, over every candidate from both lists. A transcript is scanned once
+  // through the index cache whatever its cwd; a `found` repo it touched is a `known` one after all.
+  const touched = await withIndex(io, (db) =>
+    attributeTranscripts(io.homeDir, [...known.keys(), ...found.keys()], db, { tempDirs }),
+  );
+  for (const [key, attribution] of touched) {
+    const sessions = [...attribution.claude.map((s) => ["claude-code", s] as const), ...attribution.codex.map((s) => ["codex", s] as const)];
+    if (sessions.length === 0) continue;
+    let entry = known.get(key);
+    if (entry === undefined) {
+      entry = found.get(key) as RepoCandidate;
+      found.delete(key);
+      known.set(key, entry);
+    }
+    for (const [harness, session] of sessions) count(entry, harness, 1, session.mtimeMs);
+    entry.touchedSessions += sessions.length;
+    entry.startedIn = attribution.startedIn;
+  }
+
   const all = [...known.entries(), ...found.entries()];
   const holdsAnother = (key: string): boolean => all.some(([other]) => other.startsWith(`${key}${path.sep}`));
   for (const [key, entry] of all) {
@@ -162,5 +194,7 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
     ),
     found: [...found.values()].sort((a, b) => a.path.localeCompare(b.path)),
     roots,
+    // Filled by the workspace-hooks slot of #105; the shape is amendment 8's.
+    workspaces: [],
   };
 }
