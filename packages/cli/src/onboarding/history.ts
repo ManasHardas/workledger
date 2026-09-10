@@ -3,14 +3,14 @@
  * sessions, and how many transcript bytes, each backfill window would cover.
  *
  * Counted the way the backfill itself will count them, so the card the operator picks from and
- * the plan they consent to agree: the same `enumerateStore` over the Claude Code store, the same
- * `filterSince` on file mtime (a session that was active yesterday is inside the 7-day window
- * however long ago it started). Codex sessions appear in discovery's per-harness counts but not
- * here — the P3 backfill digests Claude Code transcripts, and a window that counted sessions the
- * plan could not digest would promise more than the run delivers.
+ * the plan they consent to agree: the same `enumerateStore` over the Claude Code store and
+ * `enumerateCodexStore` over the Codex one, the same `filterSince` on file mtime (a session that
+ * was active yesterday is inside the 7-day window however long ago it started). Both harnesses
+ * resume headlessly, so every session counted here is one the resume plan can digest.
  */
 import { enumerateStore, filterSince } from "../commands/backfill.js";
 import { assertRepoPaths } from "./repo-path.js";
+import { enumerateCodexStore } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
 import type { HistoryResult, HistoryWindow } from "@workledger/server";
 
@@ -26,7 +26,7 @@ export function historyWindows(repos: readonly string[], io: OnboardingIo): Hist
     "90d": { sessions: 0, bytes: 0 },
   };
   for (const repo of assertRepoPaths(repos)) {
-    const sessions = enumerateStore(io.homeDir, repo);
+    const sessions = [...enumerateStore(io.homeDir, repo), ...enumerateCodexStore(io.homeDir, repo)];
     for (const window of WINDOWS) {
       for (const session of filterSince(sessions, window, now)) {
         windows[window].sessions += 1;

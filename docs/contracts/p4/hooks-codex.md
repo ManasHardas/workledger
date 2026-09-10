@@ -43,11 +43,14 @@ apply) and marks provenance spans unavailable.
 
 ## Headless resume (P3 repair and backfill)
 
-`codex exec resume <SESSION_ID> "<instruction>"` with `--sandbox workspace-write` and the prompt
-being the checkpoint instruction; hooks must be trusted for the resumed run or invoked with the
-CLI's run-hooks-without-trust flag, which `repair` never does silently (it prints the command).
-Store: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; `session_meta.cwd` maps a file to a repo for
-backfill enumeration.
+`codex exec --sandbox workspace-write resume <SESSION_ID> "<instruction>"`, the prompt being the
+checkpoint instruction; hooks must be trusted for the resumed run or invoked with the CLI's
+run-hooks-without-trust flag, which `repair` never does silently (it prints the command).
+Amendment (2026-09-09, #85): `--sandbox` is an option of `codex exec`, not of `exec resume` — on
+0.150.1 `codex exec resume --sandbox …` exits 2 with a usage error, so the flag goes before the
+subcommand. Store: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; `session_meta.cwd` maps a file
+to a repo and `session_meta.id` is the id the resume takes, for backfill enumeration
+(`src/onboarding/stores.ts`).
 
 ## Version drift
 

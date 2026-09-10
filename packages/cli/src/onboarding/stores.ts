@@ -10,6 +10,8 @@ import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { CLAUDE_STORE, projectSlug, readFirstLine } from "../commands/backfill.js";
+import { findRepoRoot } from "../ledger-fs.js";
+import type { StoreSession } from "../commands/backfill.js";
 
 /** Where Codex keeps its rollouts, relative to the home directory (hooks-codex.md §Headless resume). */
 export const CODEX_STORE = path.join(".codex", "sessions");
@@ -30,12 +32,20 @@ export interface ClaudeProject {
 }
 
 /** One Codex rollout, by its metadata and its `session_meta` record. */
-export interface CodexSession {
+export interface CodexSession extends CodexMeta {
   file: string;
   bytes: number;
   mtimeMs: number;
-  /** `session_meta.payload.cwd`, or `null` when the first record does not carry one. */
+}
+
+/** What the first record of a rollout says about the session; each `null` when it does not say. */
+export interface CodexMeta {
+  /** `session_meta.payload.cwd`. */
   cwd: string | null;
+  /** `session_meta.payload.id` — the id `codex exec resume` takes. */
+  id: string | null;
+  /** `session_meta.payload.timestamp`, when it parses as a date. */
+  startedIso: string | null;
 }
 
 /**
@@ -127,24 +137,33 @@ export function claudeProjects(homeDir: string): ClaudeProject[] {
 }
 
 /**
- * The `cwd` of a rollout's `session_meta` record.
+ * The `cwd`, `id` and `timestamp` of a rollout's `session_meta` record.
  *
  * The first line of `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` is
- * `{ "type": "session_meta", "payload": { "cwd": …, "timestamp": … } }` (hooks-codex.md). A file
- * whose first line is anything else yields `null`, and is counted for no repo.
+ * `{ "type": "session_meta", "payload": { "id": …, "cwd": …, "timestamp": … } }` (hooks-codex.md).
+ * A file whose first line is anything else yields three `null`s, and is counted for no repo.
  */
-export function codexCwd(file: string): string | null {
+export function codexMeta(file: string): CodexMeta {
+  const none: CodexMeta = { cwd: null, id: null, startedIso: null };
   const line = readFirstLine(file);
-  if (line === undefined) return null;
+  if (line === undefined) return none;
   try {
     const parsed = JSON.parse(line) as Record<string, unknown>;
-    if (parsed["type"] !== "session_meta") return null;
+    if (parsed["type"] !== "session_meta") return none;
     const payload = parsed["payload"];
-    if (typeof payload !== "object" || payload === null) return null;
-    const cwd = (payload as Record<string, unknown>)["cwd"];
-    return typeof cwd === "string" && cwd !== "" ? cwd : null;
+    if (typeof payload !== "object" || payload === null) return none;
+    const text = (key: string): string | null => {
+      const value = (payload as Record<string, unknown>)[key];
+      return typeof value === "string" && value !== "" ? value : null;
+    };
+    const at = text("timestamp");
+    return {
+      cwd: text("cwd"),
+      id: text("id"),
+      startedIso: at !== null && !Number.isNaN(Date.parse(at)) ? at : null,
+    };
   } catch {
-    return null;
+    return none;
   }
 }
 
@@ -172,9 +191,37 @@ export function codexSessions(homeDir: string): CodexSession[] {
         continue;
       }
       if (stat.size === 0) continue;
-      found.push({ file: child, bytes: stat.size, mtimeMs: stat.mtimeMs, cwd: codexCwd(child) });
+      found.push({ file: child, bytes: stat.size, mtimeMs: stat.mtimeMs, ...codexMeta(child) });
     }
   };
   walk(path.join(homeDir, CODEX_STORE), 0);
   return found;
+}
+
+/**
+ * Every Codex rollout that belongs to `repoPath`, newest first, in the shape the P3 backfill
+ * plans and queues (`StoreSession`).
+ *
+ * Codex has no per-project directory, so the whole store is walked and each rollout's
+ * `session_meta.cwd` decides: a session recorded anywhere inside the repo counts for it, the same
+ * walk-up-to-`.git` rule the discovery step applies, and a cwd that no longer exists counts for
+ * nothing. A rollout whose first record carries no `id` is dropped too — it is the id
+ * `codex exec resume` is given, and a session that cannot be named cannot be resumed.
+ */
+export function enumerateCodexStore(homeDir: string, repoPath: string): StoreSession[] {
+  const root = path.resolve(repoPath);
+  const sessions: StoreSession[] = [];
+  for (const session of codexSessions(homeDir)) {
+    if (session.cwd === null || session.id === null || !isDirectory(session.cwd)) continue;
+    if ((findRepoRoot(session.cwd) ?? path.resolve(session.cwd)) !== root) continue;
+    sessions.push({
+      harnessSessionId: session.id,
+      file: session.file,
+      bytes: session.bytes,
+      mtimeMs: session.mtimeMs,
+      startedIso: session.startedIso,
+      cwd: session.cwd,
+    });
+  }
+  return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
