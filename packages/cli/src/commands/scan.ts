@@ -14,7 +14,7 @@ import { statSync } from "node:fs";
 import process from "node:process";
 
 import { loadConfig } from "../config.js";
-import { EXIT_NOT_ENABLED, EXIT_OK } from "../exit-codes.js";
+import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { findRepoRoot, isEnabled, readTextFile, sessionFile, writeFileAtomic } from "../ledger-fs.js";
 import { enqueueJob } from "../jobs/queue.js";
 import type { IndexDb, SessionRow } from "../index/db.js";
@@ -23,6 +23,13 @@ import type { IndexDb, SessionRow } from "../index/db.js";
 export interface ScanOptions {
   repo?: string;
   json?: boolean;
+  /**
+   * Sweep every enabled repo the index knows instead of one
+   * (docs/contracts/p5/config-and-identities.md §CLI additions). Mutually exclusive with
+   * `--repo`, and it does not need the working directory to be an enabled repo at all — that is
+   * the point of it on a machine with several.
+   */
+  all?: boolean;
 }
 
 /** One session the sweep marked crashed. */
@@ -188,8 +195,66 @@ export function scanLine(result: ScanResult): string {
   return `scan: ${result.orphans.length} orphaned, ${result.queued} repair ${jobs} queued`;
 }
 
+/**
+ * `workledger scan --all` — sweep every enabled repo in the index.
+ *
+ * One index handle for the whole run rather than one per repo: the sweep is a read-mostly pass
+ * and `better-sqlite3` opens are the expensive part. Repos are swept in index order and a repo
+ * whose sweep throws does not stop the others — a broken ledger in one checkout must not leave
+ * the orphans in every other one unswept.
+ */
+export async function runScanAll(io: {
+  db: IndexDb;
+  now: () => Date;
+  newId: () => string;
+  stderr: (line: string) => void;
+}): Promise<ScanResult[]> {
+  const results: ScanResult[] = [];
+  for (const repo of io.db.listRepos()) {
+    if (!isEnabled(repo.repo_path)) continue;
+    try {
+      results.push(await runScan({ db: io.db, root: repo.repo_path, now: io.now, newId: io.newId }));
+    } catch (error) {
+      io.stderr(
+        `workledger scan: ${repo.repo_path} skipped (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
+  return results;
+}
+
 /** @returns the process exit code. */
 export async function scanCommand(options: ScanOptions): Promise<number> {
+  const { newSessionId: newId } = await import("@workledger/core/ids");
+  const { openIndex: open } = await import("../index/db.js");
+  const homeEnv = process.env["WORKLEDGER_HOME"]?.trim();
+
+  if (options.all === true) {
+    if (options.repo !== undefined) {
+      process.stderr.write("workledger scan: pass either --repo or --all, not both\n");
+      return EXIT_USAGE;
+    }
+    const db = open(homeEnv ? { home: homeEnv } : {});
+    try {
+      const results = await runScanAll({
+        db,
+        now: () => new Date(),
+        newId,
+        stderr: (line) => void process.stderr.write(`${line}\n`),
+      });
+      if (options.json === true) {
+        process.stdout.write(`${JSON.stringify(results)}\n`);
+      } else if (results.length === 0) {
+        process.stdout.write("scan: no enabled repos in the index\n");
+      } else {
+        for (const result of results) process.stdout.write(`${result.repo}: ${scanLine(result)}\n`);
+      }
+      return EXIT_OK;
+    } finally {
+      db.close();
+    }
+  }
+
   const from = options.repo ?? process.cwd();
   const root = findRepoRoot(from);
   if (root === undefined || !isEnabled(root)) {
@@ -197,12 +262,9 @@ export async function scanCommand(options: ScanOptions): Promise<number> {
     return EXIT_NOT_ENABLED;
   }
 
-  const { newSessionId } = await import("@workledger/core/ids");
-  const { openIndex } = await import("../index/db.js");
-  const home = process.env["WORKLEDGER_HOME"]?.trim();
-  const db = openIndex(home ? { home } : {});
+  const db = open(homeEnv ? { home: homeEnv } : {});
   try {
-    const result = await runScan({ db, root, now: () => new Date(), newId: newSessionId });
+    const result = await runScan({ db, root, now: () => new Date(), newId });
     process.stdout.write(
       options.json === true ? `${JSON.stringify(result)}\n` : `${scanLine(result)}\n`,
     );

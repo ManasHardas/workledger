@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { matchGlob } from "./glob.js";
 import { LEDGER_DIR } from "./ledger-fs.js";
 
 /** Stop-hook thresholds (cli.md §`.workledger/config.yaml`). */
@@ -66,6 +67,15 @@ export interface ExtractSettings {
 export const SINCE_WINDOWS = ["7d", "14d", "30d", "all"] as const;
 export type SinceWindow = (typeof SINCE_WINDOWS)[number];
 
+/**
+ * `auto_commit` (docs/contracts/p5/config-and-identities.md): `false` off, or the moment the
+ * ledger is committed for you. Never a push, and never a change to a hook's exit code.
+ */
+export const AUTO_COMMIT_MODES = ["on_checkpoint", "on_session_end"] as const;
+export type AutoCommitMode = (typeof AUTO_COMMIT_MODES)[number];
+/** `false` is the off position; the contract spells the key `false | on_checkpoint | on_session_end`. */
+export type AutoCommit = false | AutoCommitMode;
+
 /** The subset of `config.yaml` the hook state machine reads. */
 export interface HookConfig {
   /**
@@ -83,8 +93,17 @@ export interface HookConfig {
    * (docs/contracts/p3/cli.md §`workledger scan`).
    */
   orphan_minutes: number;
-  /** Repo paths that are always private: boundary record only, no brief, never a block. */
+  /**
+   * Paths that are always private: boundary record only, no brief, never a block.
+   *
+   * A relative pattern is a picomatch glob against the session's `cwd` relative to the repo
+   * root (P5); an absolute or `~`-rooted one keeps P1's prefix semantics against the repo.
+   */
   private_paths: string[];
+  /** When and whether `.workledger/` is committed for the operator. */
+  auto_commit: AutoCommit;
+  /** `identities.yaml`, relative to `.workledger/` — the email → display-name map. */
+  identities_file: string;
   /** `workledger backfill` defaults (docs/contracts/p3/cli.md §Config additions). */
   backfill: BackfillSettings;
   /** `workledger repair --extract` model and rates. */
@@ -99,6 +118,8 @@ export const DEFAULT_CONFIG: HookConfig = {
   stale_turns: 5,
   orphan_minutes: 30,
   private_paths: [],
+  auto_commit: false,
+  identities_file: "identities.yaml",
   backfill: { since: "14d", concurrency: 2, seconds_per_session: 45 },
   extract: { model: "claude-haiku-4-5", usd_per_million_input: 1, usd_per_million_output: 5 },
 };
@@ -112,6 +133,8 @@ export function defaultConfig(): HookConfig {
     stale_turns: DEFAULT_CONFIG.stale_turns,
     orphan_minutes: DEFAULT_CONFIG.orphan_minutes,
     private_paths: [...DEFAULT_CONFIG.private_paths],
+    auto_commit: DEFAULT_CONFIG.auto_commit,
+    identities_file: DEFAULT_CONFIG.identities_file,
     backfill: { ...DEFAULT_CONFIG.backfill },
     extract: { ...DEFAULT_CONFIG.extract },
   };
@@ -287,6 +310,19 @@ function sinceWindow(value: Scalar | undefined, fallback: string): string {
   return (SINCE_WINDOWS as readonly string[]).includes(text) ? text : fallback;
 }
 
+/**
+ * `on_checkpoint` / `on_session_end`, or `false` for `false`, an absent key and anything else.
+ *
+ * Fails to the off position on purpose: an unreadable value must never make the tool start
+ * writing commits into a repo the operator did not ask it to.
+ */
+function autoCommit(value: Scalar | undefined, fallback: AutoCommit): AutoCommit {
+  if (value === undefined) return fallback;
+  const text = unquote(value).toLowerCase();
+  if ((AUTO_COMMIT_MODES as readonly string[]).includes(text)) return text as AutoCommitMode;
+  return false;
+}
+
 /** `true` / `false`, or `fallback` for anything else. */
 function boolean(value: Scalar | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -321,6 +357,8 @@ export function parseConfig(text: string): HookConfig {
     stale_turns: positiveInt(entries.get("stale_turns")?.value, defaults.stale_turns),
     orphan_minutes: positiveInt(entries.get("orphan_minutes")?.value, defaults.orphan_minutes),
     private_paths: sequence(entries.get("private_paths")) ?? [...defaults.private_paths],
+    auto_commit: autoCommit(entries.get("auto_commit")?.value, defaults.auto_commit),
+    identities_file: nonEmpty(entries.get("identities_file")?.value, defaults.identities_file),
     backfill: {
       since: sinceWindow(backfill["since"], defaults.backfill.since),
       concurrency: positiveInt(backfill["concurrency"], defaults.backfill.concurrency),
@@ -380,6 +418,52 @@ export function isPrivatePath(root: string, patterns: readonly string[], home: s
   return false;
 }
 
+/**
+ * `cwd` as a `/`-separated path relative to `root`, or `undefined` when it is outside the repo.
+ * The repo root itself is the empty string, which is what a bare `**` pattern matches.
+ */
+export function relativeToRoot(root: string, cwd: string): string | undefined {
+  const rel = path.relative(path.resolve(root), path.resolve(cwd));
+  if (rel === "") return "";
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
+  return rel.split(path.sep).join("/");
+}
+
+/** A pattern that names a filesystem location rather than a repo-relative glob. */
+function isAbsolutePattern(pattern: string): boolean {
+  return pattern.startsWith("/") || pattern.startsWith("~") || path.isAbsolute(pattern);
+}
+
+/**
+ * `true` when this session is private by configuration —
+ * docs/contracts/p5/config-and-identities.md §`private_paths`.
+ *
+ * Two pattern shapes, because P5 redefined the key without invalidating what P1 repos already
+ * have in it. A **relative** pattern is a picomatch glob matched against the session's `cwd`
+ * relative to the repo root, which is the P5 rule and the one an operator writing
+ * `experiments/**` expects. An **absolute** (or `~`-rooted) pattern keeps P1's prefix
+ * semantics, matched against both the repo root and the session's `cwd` so a repo listed by its
+ * path is still private no matter which subdirectory the session started in.
+ */
+export function isPrivateSession(
+  root: string,
+  cwd: string,
+  patterns: readonly string[],
+  home: string,
+): boolean {
+  const absolute = patterns.filter((pattern) => isAbsolutePattern(pattern.trim()));
+  if (absolute.length > 0 && (isPrivatePath(root, absolute, home) || isPrivatePath(cwd, absolute, home))) {
+    return true;
+  }
+  const relative = relativeToRoot(root, cwd);
+  if (relative === undefined) return false;
+  return patterns.some((raw) => {
+    const pattern = raw.trim();
+    if (pattern === "" || isAbsolutePattern(pattern)) return false;
+    return matchGlob(relative, pattern.replace(/^\.\//, "").replace(/\/+$/, ""));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Full validation — `init` and `doctor` only
 // ---------------------------------------------------------------------------
@@ -400,7 +484,10 @@ export function configYaml(harnesses: readonly string[] = DEFAULT_CONFIG.harness
     "stale_turns: 5",
     "orphan_minutes: 30",
     "private_paths: []",
+    // P5 (docs/contracts/p5/config-and-identities.md). `auto_commit` is `false`,
+    // `on_checkpoint` or `on_session_end`; `identities_file` is relative to `.workledger/`.
     "auto_commit: false",
+    "identities_file: identities.yaml",
     // P3 (docs/contracts/p3/cli.md §Config additions). Emitted so the knobs are discoverable in
     // the file rather than only in the contract; both blocks fall back to the same values when a
     // repo enabled before P3 has no line for them.

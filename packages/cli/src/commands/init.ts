@@ -23,8 +23,8 @@ import readline from "node:readline/promises";
 import { configYaml } from "../config.js";
 import { CODEX_HOOKS_PATH, mergeCodexHooksFile } from "../codex-hooks.js";
 import { CURSOR_HOOKS_PATH, mergeCursorHooksFile } from "../cursor-hooks.js";
-import { EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
-import { LEDGER_DIR, findRepoRoot } from "../ledger-fs.js";
+import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
+import { LEDGER_DIR, findRepoRoot, isEnabled } from "../ledger-fs.js";
 import { gitDir, parseIni } from "../git-info.js";
 import { SETTINGS_PATH, SettingsError, mergeSettingsFile } from "../settings-merge.js";
 import { isInstalled, probeCodex, probeCursor, probeHarness, processHealthIo } from "./doctor.js";
@@ -45,6 +45,12 @@ export interface InitOptions {
    * teammate's is. Detected harnesses are always enabled on top of these.
    */
   harness?: string[];
+  /**
+   * Teammate onboarding for a repo that is *already* enabled and whose hook files arrived with
+   * the clone — docs/contracts/p5/config-and-identities.md §CLI additions. Confirms the
+   * identity, writes nothing, offers a backfill, and says so.
+   */
+  teammate?: boolean;
 }
 
 /** {@link HealthIo} plus the one thing only `init` needs: a way to ask. */
@@ -93,6 +99,30 @@ cache and can be rebuilt from these files.
 
 Agents never write these files directly; every write goes through \`workledger checkpoint\` or
 the backlog commands, which validate and secret-scan first. Commit this directory.
+
+## If you cloned this repo
+
+The hook files are committed, so the behaviour arrives with the clone and there is nothing to
+wire up: install workledger, then run \`workledger init --teammate\` in your checkout. It confirms
+the git identity your sessions will be recorded under, offers to backfill the sessions you have
+already had in this repo, and leaves \`.claude/settings.json\` (and any other hook file) exactly
+as the repo committed it. Until workledger is on your \`PATH\` the committed hook commands are a
+silent no-op, so a teammate who never installs it is never inconvenienced by it.
+
+Names instead of email addresses come from \`identities.yaml\` next to this file, which is
+committed and shared; a person missing from it simply shows up as their git email.
+
+## Conflicts
+
+Every ledger write goes into one small file, so a conflict is an ordinary git conflict in one
+file and not a merge of a database. Two people editing the *same* backlog item is the only case
+that conflicts at all — sessions are named by ULID and never collide. Resolve it the way you
+resolve any other conflict: keep both sets of \`history:\` entries, in timestamp order, and pick
+one \`status:\`.
+
+If the same work was filed twice — two people proposed it independently before either pulled —
+that is not a conflict but a duplicate, and \`workledger backlog merge <id> --into <id>\` is the
+tool for it: the source item is discarded, the target gains its body, and both files record why.
 `;
 
 /** git's global config files, in the order git reads them (later wins). */
@@ -165,6 +195,68 @@ function scaffold(root: string, config: string): string[] {
   return created;
 }
 
+
+/**
+ * `workledger init --teammate` — docs/contracts/p5/config-and-identities.md §CLI additions.
+ *
+ * The clone path. The repo is already enabled and its hook files came down with the checkout,
+ * so the one thing that is *not* shared — which git identity this machine records sessions
+ * under — is what this confirms, and the one thing that must not happen is a write to a hook
+ * file the repo already owns. A teammate who ran plain `init` here would be offered a diff
+ * against a settings file that is already correct; worse, on a repo whose hooks were hand-edited
+ * after the merge, they would be offered the contract's version of them.
+ *
+ * "`init --teammate` in a repo that is not enabled exits 4 with 'run `workledger init`
+ * instead'".
+ */
+export async function runTeammate(
+  root: string,
+  options: InitOptions,
+  io: InitIo,
+): Promise<number> {
+  if (!isEnabled(root)) {
+    io.stderr(`workledger init --teammate: ${root} is not an enabled repo; run \`workledger init\` instead`);
+    return EXIT_NOT_ENABLED;
+  }
+
+  const identity = gitIdentity(root, io);
+  if (identity.name === undefined || identity.email === undefined) {
+    const missing = [
+      identity.name === undefined ? "user.name" : undefined,
+      identity.email === undefined ? "user.email" : undefined,
+    ].filter((key): key is string => key !== undefined);
+    io.stderr(
+      `workledger init --teammate: git ${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} empty in ${root}; ` +
+        "set them so the ledger can record who did the work",
+    );
+    return EXIT_USAGE;
+  }
+
+  io.stdout(`workledger init --teammate: ${root}`);
+  io.stdout(`  identity: ${identity.name} <${identity.email}>`);
+  io.stdout("  hooks: committed with the repo; nothing was written");
+
+  // The backfill offer. Declining is the common case — most people join a repo without a
+  // history of their own in it — so it is a question rather than something `--teammate` does.
+  if (options.backfill !== false) {
+    const wanted =
+      options.yes === true ||
+      (await io.confirm(`Record digests for your own past sessions in ${root}?`));
+    if (wanted) {
+      const { backfillCommand } = await import("./backfill.js");
+      const code = await backfillCommand({ repo: root, ...(options.yes === true ? { yes: true } : {}) });
+      // A backfill that failed is reported and then let go: it is an offer made after the repo
+      // was already usable, and its exit code is not this command's (cli.md §Exit codes).
+      if (code !== EXIT_OK) io.stderr(`workledger init --teammate: backfill exited ${code}`);
+    }
+  }
+
+  io.stdout("");
+  io.stdout("you are set — start a session in this repo and SessionStart injects the brief.");
+  io.stdout("Run `workledger doctor` to confirm the hooks are live.");
+  return EXIT_OK;
+}
+
 /** The command, with its environment injected. @returns the process exit code. */
 export async function runInit(options: InitOptions, io: InitIo): Promise<number> {
   // Step 0: which repo. `--repo` is taken as given (resolved against cwd); without it the walk
@@ -183,6 +275,10 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
       return EXIT_USAGE;
     }
   }
+
+  // `--teammate` short-circuits every step below: the repo is already enabled and its hook
+  // files are the repo's, not this machine's (P5 §CLI additions).
+  if (options.teammate === true) return await runTeammate(root, options, io);
 
   // Step 1 — detect harnesses (metadata only; no transcript is ever opened).
   const forced = new Set((options.harness ?? []).map((name) => name.trim()).filter((name) => name !== ""));

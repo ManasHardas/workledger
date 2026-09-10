@@ -84,7 +84,8 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .description("enable workledger for one repo")
     .option("--repo <path>", "repo to enable (default: the repo root above cwd)")
     .option("--yes", "skip the confirmation prompt before editing .claude/settings.json")
-    .option("--no-backfill", "accepted and ignored until P3")
+    .option("--no-backfill", "do not offer to backfill past sessions")
+    .option("--teammate", "onboard onto a repo that is already enabled; writes no hook files")
     .option(
       "--harness <name>",
       "also write this harness's hook file even if it is not detected (repeatable)",
@@ -157,6 +158,7 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .command("scan")
     .description("mark orphaned sessions crashed and queue their repairs")
     .option("--repo <path>", "repo to sweep (default: the repo root above cwd)")
+    .option("--all", "sweep every enabled repo the index knows")
     .option("--json", "emit the result as JSON")
     .action(async (options: ScanOptions) => {
       const { scanCommand } = await import("./commands/scan.js");

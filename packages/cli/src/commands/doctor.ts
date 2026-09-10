@@ -419,8 +419,24 @@ export interface DoctorReport {
   cursor_hooks: CursorHookFileCheck | null;
   config: { file: string | null; present: boolean; valid: boolean; errors: string[] };
   index: { path: string; exists: boolean; size_bytes: number | null; open_sessions: number | null };
+  /**
+   * One entry per enabled repo the index knows — docs/contracts/p5/config-and-identities.md:
+   * "`workledger doctor` gains one row per enabled repo: path, open sessions, last hook".
+   *
+   * This is the multi-repo case the phase is named for: several enabled repos on one machine
+   * share one index, and before P5 `doctor` could only see the one it was run in.
+   */
+  repos: RepoRow[];
   checks: Check[];
   status: "ok" | "warnings" | "broken";
+}
+
+/** One `repos` row. */
+export interface RepoRow {
+  path: string;
+  open_sessions: number;
+  /** ISO 8601 of the last hook that touched this repo, or `null` when none ever has. */
+  last_hook: string | null;
 }
 
 /** The exit code a report's worst check earns (cli.md §Exit codes). */
@@ -543,6 +559,18 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
     add("index", "ok", `${index.path} (${index.size_bytes ?? 0} bytes, ${index.open_sessions} open session(s))`);
   }
 
+  // The multi-repo rows. Informational by design: another repo's state is not this invocation's
+  // health, so a row never moves the exit code — it is there so an operator with `dashero`,
+  // `kubera` and this repo enabled can see all three from wherever they happen to be.
+  const repos = await readRepos(io);
+  for (const repo of repos) {
+    add(
+      `repo ${repo.path}`,
+      "ok",
+      `${repo.open_sessions} open session(s), last hook ${repo.last_hook ?? "never"}`,
+    );
+  }
+
   const status = checks.some((check) => check.status === "broken")
     ? "broken"
     : checks.some((check) => check.status === "warn")
@@ -559,9 +587,41 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
     cursor_hooks: cursorHooks,
     config,
     index,
+    repos,
     checks,
     status,
   };
+}
+
+/**
+ * Every enabled repo the index knows, newest activity first.
+ *
+ * `isEnabled` is the filter the contract asks for: a repo whose `.workledger/` was deleted or
+ * whose checkout has moved is still in the index — it is a cache — and reporting it as a health
+ * row would be reporting on something that no longer exists. An index that will not open is
+ * already a `broken` check above, so it is simply no rows here.
+ */
+async function readRepos(io: HealthIo): Promise<RepoRow[]> {
+  const { openIndex } = await import("../index/db.js");
+  const home = io.env["WORKLEDGER_HOME"]?.trim();
+  try {
+    const db = openIndex(home ? { home } : {});
+    try {
+      return db
+        .listRepos()
+        .filter((repo) => isEnabled(repo.repo_path))
+        .map((repo) => ({
+          path: repo.repo_path,
+          open_sessions: repo.open_sessions,
+          last_hook: repo.last_hook,
+        }))
+        .sort((a, b) => (b.last_hook ?? "").localeCompare(a.last_hook ?? "") || a.path.localeCompare(b.path));
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
 }
 
 /** Index path, size and open-session count. A failure to open leaves `open_sessions` null. */

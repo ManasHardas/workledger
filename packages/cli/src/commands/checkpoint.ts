@@ -42,6 +42,7 @@ import type {
   ValidationError,
 } from "@workledger/core";
 
+import { loadConfig } from "../config.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_SECRET, EXIT_USAGE } from "../exit-codes.js";
 import { openIndex } from "../index/db.js";
 import {
@@ -576,6 +577,21 @@ export async function runCheckpoint(
     // --- Step 7, index half, and step 8 -----------------------------------------------------
     db.resetAfterCheckpoint(ulid, { offset, at });
     io.stdout(ackLine(row.n, summary as CheckpointSummary));
+    // P5 `auto_commit: on_checkpoint`. After the ack, and after everything that can fail: the
+    // checkpoint has already succeeded and nothing below may take that back
+    // (docs/contracts/p5/config-and-identities.md). Behind a lazy import for the same reason
+    // `hook` uses one — `node:child_process` has no business in a path that does not spawn.
+    const autoCommit = loadConfig(repoRoot).auto_commit;
+    if (autoCommit === "on_checkpoint") {
+      const { checkpointMessage, maybeAutoCommit } = await import("../auto-commit.js");
+      maybeAutoCommit({
+        configured: autoCommit,
+        when: "on_checkpoint",
+        root: repoRoot,
+        message: checkpointMessage(row.n, ulid),
+        stderr: io.stderr,
+      });
+    }
     return EXIT_OK;
   } finally {
     db.close();

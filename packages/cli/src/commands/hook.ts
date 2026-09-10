@@ -25,7 +25,7 @@ import process from "node:process";
 import os from "node:os";
 
 import { DEFAULT_HARNESS, adapterFor } from "../adapters/registry.js";
-import { isPrivatePath, loadConfig } from "../config.js";
+import { isPrivateSession, loadConfig } from "../config.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { checkpointInstruction } from "../instruction.js";
 import {
@@ -474,6 +474,24 @@ async function sessionEnd(ctx: Context): Promise<number> {
   });
 
   db.updateSession(session.ulid, { status: "ended", updated_at: ctx.nowIso });
+
+  // P5 `auto_commit: on_session_end`. Last, and behind a lazy import so the Stop allow path
+  // never pays for `node:child_process`; it cannot change this hook's exit code
+  // (docs/contracts/p5/config-and-identities.md).
+  if (ctx.config.auto_commit === "on_session_end") {
+    try {
+      const { maybeAutoCommit, sessionEndMessage } = await import("../auto-commit.js");
+      maybeAutoCommit({
+        configured: ctx.config.auto_commit,
+        when: "on_session_end",
+        root: ctx.root,
+        message: sessionEndMessage(session.ulid),
+        stderr: io.stderr,
+      });
+    } catch (error) {
+      io.stderr(`workledger: auto_commit skipped (${describe(error)})`);
+    }
+  }
   return EXIT_OK;
 }
 
@@ -512,9 +530,13 @@ export async function runHook(event: HookEvent, io: HookIo): Promise<number> {
     if (root === undefined || !isEnabled(root)) return EXIT_OK;
 
     const config = loadConfig(root);
+    // `private_paths` is matched against the session's own working directory, not the repo root
+    // — the contract's unit is "the session's `cwd` relative to the repo root", so a session
+    // started inside `experiments/` is private while one started at the root is not.
+    const sessionCwd = parsed.cwd?.trim() || io.cwd;
     const isPrivate =
       io.env["WORKLEDGER_PRIVATE"] === "1" ||
-      isPrivatePath(root, config.private_paths, io.homeDir);
+      isPrivateSession(root, sessionCwd, config.private_paths, io.homeDir);
 
     // The first module that costs anything: `better-sqlite3` is a native addon, and the three
     // returns above are the ones that must not pay for it.

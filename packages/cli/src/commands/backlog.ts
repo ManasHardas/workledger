@@ -163,6 +163,23 @@ function row(item: { id: string; status: string; priority?: string | null; title
   return `${item.id}  ${item.status.padEnd(11)}  ${(item.priority ?? "-").padEnd(4)}  ${item.title}`;
 }
 
+/**
+ * The identity map for one repo, loaded on demand.
+ *
+ * `show` and `list` are the two read commands, and P5 says both display the mapped name in
+ * place of whatever the ledger recorded for that email
+ * (docs/contracts/p5/config-and-identities.md §`identities.yaml`). Loaded here rather than in
+ * `backlog-ops.ts` because the mapping is presentation: the files on disk keep the `Actor` git
+ * gave them, and `packages/server` resolves the same map for the UI.
+ */
+async function identitiesFor(root: string): Promise<import("../identities.js").IdentityMap> {
+  const [{ loadIdentities }, { loadConfig }] = await Promise.all([
+    import("../identities.js"),
+    import("../config.js"),
+  ]);
+  return loadIdentities(root, loadConfig(root));
+}
+
 // ---------------------------------------------------------------------------
 // The command
 // ---------------------------------------------------------------------------
@@ -287,14 +304,21 @@ function buildProgram(io: CommandIo, cell: Cell): Command {
     .action(async (id: string, options: { json?: boolean }) => {
       cell.code = await withLedger("backlog show", io, false, async (ctx, ops) => {
         const found = ops.readItem(ctx.repoRoot, id);
-        const item = found.frontmatter;
+        const { formatActor, resolveMaybe } = await import("../identities.js");
+        const identities = await identitiesFor(ctx.repoRoot);
+        const raw = found.frontmatter;
+        const item = {
+          ...raw,
+          owner: resolveMaybe(raw.owner, identities),
+          confirmed_by: resolveMaybe(raw.confirmed_by, identities),
+        };
         if (options.json === true) {
           io.stdout(JSON.stringify({ id: item.id, item, body: found.body }, null, 2));
           return;
         }
         io.stdout(row(item));
         if (item.owner !== null && item.owner !== undefined) {
-          io.stdout(`owner: ${item.owner.name} <${item.owner.email}>`);
+          io.stdout(`owner: ${formatActor(item.owner, identities)}`);
         }
         if (item.area.length > 0) io.stdout(`area: ${item.area.join(", ")}`);
         const body = found.body.replace(/\n+$/, "");
@@ -311,7 +335,16 @@ function buildProgram(io: CommandIo, cell: Cell): Command {
           options.status === undefined
             ? undefined
             : await readStatuses(options.status);
-        const rows = ops.listItems(ctx.repoRoot, statuses);
+        const { resolveMaybe } = await import("../identities.js");
+        const identities = await identitiesFor(ctx.repoRoot);
+        const rows = ops.listItems(ctx.repoRoot, statuses).map((entry) => ({
+          ...entry,
+          item: {
+            ...entry.item,
+            owner: resolveMaybe(entry.item.owner, identities),
+            confirmed_by: resolveMaybe(entry.item.confirmed_by, identities),
+          },
+        }));
         if (options.json === true) {
           io.stdout(JSON.stringify(rows, null, 2));
           return;

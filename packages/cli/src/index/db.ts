@@ -129,6 +129,23 @@ export interface CounterReset {
   at: string;
 }
 
+/**
+ * One repo the index has ever seen a session for — the row `doctor` prints and the unit
+ * `scan --all` sweeps (docs/contracts/p5/config-and-identities.md §CLI additions).
+ *
+ * There is no `repos` table: the index is a cache of sessions, so the set of repos *is* the
+ * distinct `repo_path` of the sessions in it. A repo whose `.workledger/` has since been
+ * deleted still appears here; both callers filter on `isEnabled` because the contract's unit is
+ * "every enabled repo the index knows".
+ */
+export interface RepoSummary {
+  repo_path: string;
+  /** Sessions still `open` in this repo. */
+  open_sessions: number;
+  /** The newest `updated_at` of any of its sessions — when a hook last ran. `null` if none. */
+  last_hook: string | null;
+}
+
 /** Options for {@link openIndex}. */
 export interface OpenIndexOptions {
   /** Overrides `WORKLEDGER_HOME`, which itself overrides `~/.workledger`. */
@@ -276,6 +293,8 @@ export interface IndexDb {
   getSessionByHarnessId(harness: string, harnessSessionId: string): SessionRow | undefined;
   /** Open sessions for one repo, oldest first, which is the order a usage error lists them in. */
   listOpenSessions(repoPath: string): SessionRow[];
+  /** Every repo the index knows, by path, with its open-session count and last hook time. */
+  listRepos(): RepoSummary[];
   insertSession(session: NewSession): SessionRow;
   /** Partial update by ulid. Returns the stored row, or `undefined` when the ulid is unknown. */
   updateSession(ulid: string, patch: Partial<Omit<SessionRow, "ulid">>): SessionRow | undefined;
@@ -393,6 +412,12 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   const selectOpen = db.prepare<[string], SessionRow>(
     "SELECT * FROM sessions WHERE repo_path = ? AND status = 'open' ORDER BY ulid",
   );
+  const selectRepos = db.prepare<[], RepoSummary>(
+    "SELECT repo_path, " +
+      "SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_sessions, " +
+      "MAX(updated_at) AS last_hook " +
+      "FROM sessions GROUP BY repo_path ORDER BY repo_path",
+  );
   const insertSessionStmt = db.prepare<SessionRow>(
     `INSERT INTO sessions (${insertColumns}) VALUES (${insertPlaceholders})`,
   );
@@ -471,6 +496,7 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     getSessionByHarnessId: (harness, harnessSessionId) =>
       selectByHarness.get(harness, harnessSessionId),
     listOpenSessions: (repoPath) => selectOpen.all(repoPath),
+    listRepos: () => selectRepos.all(),
 
     insertSession(session) {
       const row = completeSession(session);
