@@ -44,7 +44,16 @@ const CLI_DIR = path.join(REPO_ROOT, "packages", "cli");
  * does not ship and at this machine's pnpm store layout — and `dist/main.d.ts`, which imports
  * `commander` from a package that no longer declares it.
  */
-const REQUIRED_FILES = ["bin/workledger", "dist/main.js", "dist/web/index.html", "package.json"];
+// `dist/server.js` is the second bundle `workledger serve` loads with `import("./server.js")`;
+// it is separate so that `@hono/node-server`'s `node:http` imports stay out of the startup path
+// of every other command (scripts/bundle-cli.mjs, SERVER_SRC).
+const REQUIRED_FILES = [
+  "bin/workledger",
+  "dist/main.js",
+  "dist/server.js",
+  "dist/web/index.html",
+  "package.json",
+];
 /**
  * Prefixes whose contents are allowed without being listed file by file. `dist/web/` is Vite
  * output — hashed asset names change on every build, so an exact list would be a lockfile nobody
