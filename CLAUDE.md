@@ -3,7 +3,7 @@
 Local observer for coding-agent sessions: the session's own agent writes checkpoint digests
 through a validated CLI, the ledger lives in `.workledger/` in each repo, and a local UI edits the
 backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decisions:
-`docs/decision-log.md`. Phases: `plans/roadmap.md`. Current phase spec: `plans/feature-p1-cli-core.md`.
+`docs/decision-log.md`. Phases: `plans/roadmap.md`. Current phase spec: `plans/feature-p8-onboarding-home.md`.
 
 ## Hard rules for this repo
 
@@ -25,6 +25,7 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
   In S1 two agents clobbered each other's `/tmp/prbody.md` and one PR was merged with another
   PR's body (`Closes #10` on PR #22), so its issue had to be closed by hand.
 - **Never remove a worktree from inside it.** Merge and clean up from the repo root.
+- **`workledger onboard`/init must never touch a repo the operator did not select; the wizard and the CLI enforce this (P8).**
 
 ## Orchestration (agentwaves)
 

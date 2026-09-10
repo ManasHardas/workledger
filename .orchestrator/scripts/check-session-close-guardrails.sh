@@ -94,8 +94,8 @@ NEXT_SESSION=$((SESSION + 1))
 # Resolve prior-session SHA — always the most recent chore: S<N> commit OTHER
 # than the current session's. Range (PRIOR_SHA, HEAD] covers all merges in this
 # session whether the chore-close exists yet or not.
-PRIOR_SHA=$(git log --grep="^chore: S[0-9]" --pretty=format:'%H %s' \
-            | grep -vE "^[0-9a-f]+ chore: S${SESSION}\b" \
+PRIOR_SHA=$(git log --grep="^chore: S[0-9]" --grep="^chore(close): S[0-9]" --pretty=format:'%H %s' \
+            | grep -vE "^[0-9a-f]+ chore(\(close\))?: S${SESSION}\b" \
             | head -1 | cut -d' ' -f1 || true)
 if [[ -z "$PRIOR_SHA" ]]; then
   PRIOR_SHA="HEAD~30"  # generous fallback for the first session ever
@@ -120,7 +120,7 @@ check_velocity_rollup() {
   # Exclude the chore-close commit itself — velocity.json only tracks build PRs.
   local merged_prs
   merged_prs=$(git log "${PRIOR_SHA}..HEAD" --pretty=format:'%s' \
-               | grep -vE '^chore: S[0-9]' \
+               | grep -vE '^chore(\(close\))?: S[0-9]' \
                | grep -oE '\(#[0-9]+\)$' \
                | grep -oE '[0-9]+' | sort -u || true)
   local merged_count
@@ -286,7 +286,7 @@ check_stale_remote_branches() {
   fi
   local merged_prs
   merged_prs=$(git log "${PRIOR_SHA}..HEAD" --pretty=format:'%s' \
-               | grep -vE '^chore: S[0-9]' \
+               | grep -vE '^chore(\(close\))?: S[0-9]' \
                | grep -oE '\(#[0-9]+\)$' | grep -oE '[0-9]+' || true)
   if [[ -z "$merged_prs" ]]; then
     info "9. remote branches — no build PRs merged this session"
@@ -317,7 +317,7 @@ check_stale_remote_branches
 #     close-chore commit message OR the SHD for next session
 check_operating_mode() {
   local close_subject
-  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
+  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --grep="^chore(close): S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
   local target=""
   if [[ -n "$close_subject" ]]; then
     target="$close_subject"
@@ -336,7 +336,7 @@ check_operating_mode
 # 11. Watchdog status declared (T-A / T-G / T-D)
 check_watchdog_status() {
   local close_subject
-  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
+  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --grep="^chore(close): S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
   local target="${close_subject:-$(cat plans/next-session.md 2>/dev/null || true)}"
   local hits=0
   echo "$target" | grep -qiE "T${SESSION}-A|cumulative ceiling|ceiling" && hits=$((hits + 1))
@@ -359,7 +359,7 @@ check_issue_closes() {
   fi
   local merged_prs
   merged_prs=$(git log "${PRIOR_SHA}..HEAD" --pretty=format:'%s' \
-               | grep -vE '^chore: S[0-9]' \
+               | grep -vE '^chore(\(close\))?: S[0-9]' \
                | grep -oE '\(#[0-9]+\)$' | grep -oE '[0-9]+' || true)
   if [[ -z "$merged_prs" ]]; then
     info "12. issue closes — no build PRs merged this session"
@@ -463,7 +463,7 @@ check_main_ci_green
 # 13. Phase tracking issue mention (informational; only enforced at phase ship)
 check_phase_tracking_mention() {
   local close_subject
-  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
+  close_subject=$(git log -1 --grep="^chore: S${SESSION}" --grep="^chore(close): S${SESSION}" --pretty=format:'%B' 2>/dev/null || true)
   local target="${close_subject:-$(cat plans/next-session.md 2>/dev/null || true)}"
   if echo "$target" | grep -qiE 'tracking issue|p[0-9]+ tracking|#[0-9]+ tracking'; then
     ok "13. phase tracking — mentioned in close-commit/SHD"

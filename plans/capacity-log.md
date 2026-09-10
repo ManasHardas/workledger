@@ -93,3 +93,32 @@
 - Shared `/tmp` filenames between concurrent agents and in-worktree cwd for cleanup are the two recurring process defects; both are now rules in CLAUDE.md.
 
 **S3 forecast:** P7 Wave 1 (~2 frontend PRs) once the operator supplies the Figma file and node ids; P6 (~3 PRs) only if un-deferred.
+
+## Session 3 — 2026-09-09 (P8 Onboarding and home, Wave 0 → 2)
+
+**Stage 2 PM:** ACTIVE, orchestrator inline. Lean mode (Clause #12); Clause #13 not in force.
+
+**Waves executed:** P8 Wave 0 (spec, contract, tracking #75; amendments 1–4 as direct commits or inside PRs), Wave 0.5 (issues #76–#81 filed five-line; #85 #87 #88 #89 #94 filed for defects found in flight), Wave 1 (eight build PRs), Wave 2 (QA e2e #95 plus the integration fix #96). Wave 3 (tag) deferred to the operator's walkthrough.
+
+**Build PRs merged:** 10 (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96). Direct commits for the spec, the contract and its amendments 1–2, the roadmap, and the S3 handoff.
+
+**Activities completed:** everything in the CHANGELOG Unreleased section: one daemon per machine (`workledger` = `open`, `stop`, `~/.workledger/serve.json`), multi-repo server with a `repo` parameter and aggregates, `/api/onboarding/*` and `workledger onboard`, Home with a repo switcher and machine-wide Needs you and Jobs, the onboarding wizard (projects, history, method, running, done), Codex sessions in onboarding, release workflow with npm publish dry-run and Homebrew tap, README install. Proven end to end by #95: a fresh HOME with two repos runs the wizard through backfill with a stub `claude`.
+
+**Issues filed:** #75 (tracking), #76–#81, #85, #87, #88, #89, #94 (all five-line, filed directly). None open at close besides the tracking issues #72 and #75.
+
+**Discipline holds:**
+- T-A held: never tripped (≈2.12M implementer + ≈1.11M reviewer across the session).
+- T-G held: every slot within ~1.5× of the S2 lean anchors; the two backend first-of-class slots (#83 daemon, #84 onboarding ops) ran 350–370k implementer and 160–260k reviewer.
+- T-D held: three PRs needed one fix-cycle (#84, #90, #93); none needed a second.
+- T-X held: worktree-per-PR on disjoint packages; #90 and #92 both touched onboarding ops and rebased cleanly.
+- T-Y held: every PR closed its issue via `Closes #N`; #91 closed two.
+- Orchestrator errors: none recorded. One orchestrator-requested fix on #90 before its review round.
+- HARD CONSTRAINT: every PR stated host verification (Node ≥ 22 + pnpm ≥ 10); no Docker.
+
+**Calibration findings:**
+- Defects found by review or smoke, all fixed before merge: init accepted relative and non-git paths with no Origin check (#84); discovery treated a root with `.git` as a leaf and leaked temp-dir candidates (#87 → #90); non-TTY `onboard` initialized without consent (#90); the wizard's Add folder dropped the default roots and non-git candidates were tickable (#93); Home stale after init (#94 → #96). Four of five sit on the "never touch a repo the operator did not select" boundary, now a hard rule in `CLAUDE.md`.
+- Reviewer cost on first-of-class backend slots (160–260k) approaches the implementer cost; on sibling and fix slots it is 85–175k. Orchestrator verification without a review round worked for the thin infra slot (#82) and a narrow frontend fix (#91) at ~90k each.
+- The operator's walkthrough as the ship gate (spec §Acceptance) is a new pattern: the tag is not the last merge but the operator's verdict; defects become five-line issues in the same phase.
+- Secrets are an operator dependency, not an agent one: the release workflow degrades cleanly without `NPM_TOKEN` and `TAP_TOKEN` and prints the manual commands.
+
+**S4 forecast:** walkthrough verdict → version 0.4.0, CHANGELOG, tags `v0.4.0` and `p8-shipped`, close #75 (orchestrator direct, ~20k); defect fixes at ~230–310k per backend fix and ~90–430k per frontend fix depending on breadth; P7 Wave 1 (~2 frontend PRs, ~450k each) only if the Figma inputs exist. P6 stays deferred.

@@ -6,22 +6,22 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S2)
+## Current state — 2026-09-09 (post-S3)
 
-**Phase:** P7. Wave 0 merged (#74: token sync, Code Connect skeletons, Lighthouse script). Wave 1 blocked on the operator's Figma file, node ids, and variables export. Tags: `p1-shipped` … `p5-shipped` (version 0.3.0). P6 deferred by the operator.
+**Phase:** P8 (Onboarding and home) built: all ten build PRs merged on main (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96); contract `docs/contracts/p8/daemon-and-api.md` carries amendments 1–4. **Not yet tagged:** `p8-shipped` and `v0.4.0` wait for the operator's personal walkthrough from a fresh state (`WORKLEDGER_HOME=$(mktemp -d)/wl workledger`); version is still 0.3.0 and CHANGELOG has an Unreleased section. Tags: `p1-shipped` … `p5-shipped`. P7 Wave 0 merged (#74); P7 Wave 1 blocked on Figma inputs. P6 deferred by the operator.
 
-**Wave:** P7 Wave 1, blocked on inputs. Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
+**Wave:** P8 Wave 3 (ship gate) pending the operator's verdict; P7 Wave 1 blocked on inputs. Lean mode (Clause #12) throughout; Clause #13 not in force here by operator decision.
 
-**Last session:** S2 closed after PR #74: 25 build PRs merged (P1 close, P2, P3, P4, P5, P7 Wave 0), five tags, version 0.3.0.
+**Last session:** S3 closed after PR #96: 10 build PRs merged (P8 infra, two backend first-of-class, Home, wizard, three fixes, QA e2e, integration fix); ~2.12M implementer + ~1.11M reviewer tokens; 3 fix-cycles across 10 PRs; five defects found by review or smoke, all fixed before merge.
 
 **Carry-over slots:** none.
 
-**Open blockers:** None at file-write time. `dome_workspace` enablement is operator-manual.
+**Open blockers:** the operator's walkthrough verdict gates the tag; npm publish and tap automation need the `NPM_TOKEN` and `TAP_TOKEN` repository secrets from the operator (the release workflow prints the manual command when either is absent); P7 Wave 1 needs the Figma file key, node ids, and variables export.
 
 **Next required activities (in order):**
-1. ⏳ P2 Wave 1: server + api-client + backlog-ops (Backend, parallel with the Frontend scaffold), then the web views, then `serve` packaging (Infra).
-2. ⏳ P2 Wave 2 (one QA e2e over `serve`), Wave 3 tag `p2-shipped`.
-3. ⏳ P3 finish (#54 #56 #57), P4 (#59), P5 (#63 #64), then P7 when Figma inputs exist. P6 deferred by the operator.
+1. ⏳ Operator walkthrough of onboarding from a fresh state; each defect becomes a five-line issue in P8.
+2. ⏳ After the verdict: bump `packages/cli` to 0.4.0, CHANGELOG 0.4.0, tag `v0.4.0` (release workflow) and `p8-shipped`, close #75 (orchestrator direct task).
+3. ⏳ P8 defect fixes (one PR each, lean), then P7 Wave 1 when the Figma inputs exist. P6 deferred by the operator.
 
 **Operating mode:** ACTIVE, Clause #12 lean (one reviewer per PR, one fix-cycle, merge on green).
 
@@ -36,6 +36,7 @@
 | S0 | P1 / design | n/a | 0 | Spec, decision log, roadmap, phase spec, implementation plan, agentwaves vendored |
 | S1 | P1 / Wave 0 → 0.5 → 1 | ACTIVE, serial | 10 (#1 freeze, #15 amendment, 8 builds) | 8/12 slots merged; T-D on slot 5; anchors recalibrated |
 | S2 | P1 close → P2 → P3 → P4 → P5 → P7 Wave 0 | ACTIVE, lean | 25 | Five phases shipped; ~6.4M implementer + 1.8M reviewer tokens; 8 fix-cycles across 25 PRs |
+| S3 | P8 Wave 0 → 0.5 → 1 → 2 | ACTIVE, lean | 10 | P8 built, tag pending operator walkthrough; ~2.12M implementer + 1.11M reviewer tokens; 3 fix-cycles across 10 PRs |
 
 ---
 

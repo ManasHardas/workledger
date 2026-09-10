@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — P8 Onboarding and home
+
+Built on main; `p8-shipped` and `v0.4.0` follow the operator's walkthrough from a fresh state.
+
+- `workledger` with no arguments (`workledger open`) starts one daemon per machine (port 7419 or a free one, URL and pid in `~/.workledger/serve.json`), prints the URL, opens Home, and reuses a running daemon on the next call; `workledger stop` stops it. The server serves every enabled repo the index knows: `/api/repos`, a `repo` parameter on every P2/P3 endpoint, `repo` on SSE events, machine-wide aggregates; `serve --repo` remains for debugging and points at `open` (#83).
+- `/api/onboarding/*` (discover, history counts for 7/30/90 days, init, backfill plan, run) backed by the CLI's own functions, and `workledger onboard [--json]` for parity; `init` only ever touches a repo the operator selected, and it refuses relative and non-git paths (#84, #90).
+- Web Home: one card per tracked repo with sessions in the last 7 days, open backlog, blockers and questions, last hook time, and health; `/#/r/<id>/` routes with a repo switcher; machine-wide Needs you and Jobs with the repo per row; Add projects opens the wizard (#86). Home re-reads when the daemon emits `repos.changed` after an init, no reload needed (#96).
+- Onboarding wizard at `/#/onboarding`, opened automatically when the daemon starts with zero enabled repos: projects (known repos pre-checked when suggested, other `.git` repos under `~/Projects`, Add folder keeps the default roots, only git repos are tickable), history, method (resume, else an extraction estimate that can be denied), running with live progress while Home stays usable, done with the per-repo summary and the Codex trust steps (#93).
+- Discovery descends into a root that is itself a repo, never enters nested repos, drops candidates under the OS temp dir, and marks `suggested` (#90). Codex sessions appear in onboarding history, plan, and backfill (resumed with `codex exec resume`; excluded from extraction with an `unsupported.codex` count); `codex exec resume` argv fixed (#92).
+- Next and Health fit a 375 px viewport (#91).
+- Install: `.github/workflows/release.yml` on `v*` tags builds, packs, publishes to npm (skipped with a printed command when `NPM_TOKEN` is absent), attaches the tarball to a GitHub release, and updates the Homebrew tap formula (skipped when `TAP_TOKEN` is absent); README install section for `npm install -g workledger` and `brew tap ManasHardas/workledger && brew install workledger` (#82).
+- Proven end to end: a fresh `HOME` with two temp repos and fixture transcripts runs `workledger`, drives the wizard through backfill with a stub `claude`, and Home shows both repos (#95).
+
 ## 0.3.0 — P5 Team (2026-09-09)
 
 - `auto_commit: false | on_checkpoint | on_session_end`: one commit touching only `.workledger/`, never a push, skipped during merge/rebase/cherry-pick, never changes a hook's exit code.
