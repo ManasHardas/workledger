@@ -8,12 +8,18 @@
  */
 import type {
   BacklogView,
+  DiscoverResult,
   Health,
+  HistoryResult,
+  InitRepoResult,
   JobAcrossRepos,
   NoteAcrossRepos,
   NoteRef,
+  OnboardingStatus,
   ParsedSession,
+  PlanResult,
   Repo,
+  RepoCandidate,
 } from "./ledger-source.js";
 
 const AUTHOR = { name: "Manas Hardas", email: "manas.hardas@gmail.com" };
@@ -318,3 +324,91 @@ export const FIXTURE_BRIEF = [
   "Open session: Wire the P2 server's file watcher to the SSE endpoint (2 checkpoints).",
   "Next: reconnect the EventSource after a dropped stream.",
 ].join("\n");
+
+// --- Onboarding (P8) --------------------------------------------------------------------------
+//
+// What `/api/onboarding/*` answers on a machine with a few projects: the wire shapes of
+// docs/contracts/p8/daemon-and-api.md §Onboarding endpoints, so the wizard can be walked in dev
+// and every step's test reads the same fields the daemon sends.
+
+const PROJECTS = "/Users/me/Projects";
+
+const candidate = (name: string, overrides: Partial<RepoCandidate> = {}): RepoCandidate => ({
+  path: `${PROJECTS}/${name}`,
+  name,
+  hasGit: true,
+  enabled: false,
+  suggested: true,
+  harnessSessions: {},
+  lastSessionAt: null,
+  ...overrides,
+});
+
+/**
+ * `known` is sorted the way the daemon sorts it — most recent agent activity first. It holds one
+ * repo that is already tracked, two suggested ones, and the projects folder itself, which Claude
+ * Code was once started in: known, but an ancestor of the others and so not suggested.
+ */
+export const FIXTURE_DISCOVER: DiscoverResult = {
+  known: [
+    candidate("workledger", {
+      enabled: true,
+      harnessSessions: { "claude-code": 41, codex: 3 },
+      lastSessionAt: "2026-09-09T08:02:00Z",
+    }),
+    candidate("dashero", { harnessSessions: { "claude-code": 12 }, lastSessionAt: "2026-09-07T17:40:00Z" }),
+    candidate("kubera", { harnessSessions: { codex: 5 }, lastSessionAt: "2026-09-02T11:15:00Z" }),
+    {
+      path: PROJECTS,
+      name: "Projects",
+      hasGit: false,
+      enabled: false,
+      suggested: false,
+      harnessSessions: { "claude-code": 2 },
+      lastSessionAt: "2026-08-30T09:00:00Z",
+    },
+  ],
+  found: [candidate("mentat"), candidate("splitfire")],
+  roots: [PROJECTS],
+};
+
+export const FIXTURE_HISTORY: HistoryResult = {
+  windows: {
+    "7d": { sessions: 9, bytes: 3_400_000 },
+    "30d": { sessions: 27, bytes: 11_800_000 },
+    "90d": { sessions: 58, bytes: 26_100_000 },
+  },
+};
+
+/** The one-time step `workledger init` leaves to the operator when Codex is detected. */
+export const FIXTURE_TRUST_STEP = "Open Codex in this repo once and accept its hooks prompt";
+
+/** What `init` reports for `path`: the two files it writes, plus the Codex step for a Codex repo. */
+export function fixtureInitResult(path: string): InitRepoResult {
+  const known = FIXTURE_DISCOVER.known.find((repo) => repo.path === path);
+  if (known?.enabled) return { path, ok: true, hooksWritten: [], trustSteps: [] };
+  return {
+    path,
+    ok: true,
+    hooksWritten: [".claude/settings.json", ".workledger/config.yaml"],
+    trustSteps: known?.harnessSessions.codex ? [FIXTURE_TRUST_STEP] : [],
+  };
+}
+
+/** 27 sessions over 30 days, at the config's default 45 s per headless resume. */
+export const FIXTURE_PLAN_RESUME: PlanResult = { sessions: 27, estimate: { seconds: 27 * 45 } };
+
+/** The same 27 sessions priced for extraction, on a daemon started without an API key. */
+export const FIXTURE_PLAN_EXTRACT: PlanResult = {
+  sessions: 27,
+  estimate: { tokens: 1_900_000, usd: 6.84, needsApiKey: true },
+};
+
+/** Nothing queued yet, which the contract defines as complete. */
+export const FIXTURE_ONBOARDING_STATUS: OnboardingStatus = {
+  total: 0,
+  done: 0,
+  failed: 0,
+  running: 0,
+  complete: true,
+};

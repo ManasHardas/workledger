@@ -23,10 +23,14 @@ import type {
   BackfillRequest,
   BacklogStatus,
   BacklogView,
+  DiscoverResult,
   EditPatch,
   Excerpt,
   Health,
+  HistoryResult,
   Identity,
+  InitInput,
+  InitResult,
   Job,
   JobAcrossRepos,
   LedgerEvent,
@@ -35,8 +39,14 @@ import type {
   NoteAcrossRepos,
   NoteRef,
   NoteType,
+  OnboardingSource,
+  OnboardingStatus,
   ParsedSession,
+  PlanInput,
+  PlanResult,
   Repo,
+  RunInput,
+  RunResult,
   ScanSummary,
   SourceCapabilities,
 } from "./types.js";
@@ -68,7 +78,7 @@ function commaList(values: readonly string[] | undefined): string | undefined {
   return values === undefined || values.length === 0 ? undefined : values.join(",");
 }
 
-export class LocalServerSource implements LedgerSource, MachineSource {
+export class LocalServerSource implements LedgerSource, MachineSource, OnboardingSource {
   /**
    * The local server owns the ledger files, so it can write and it watches. `provenance` became
    * true in P3 (docs/contracts/p3/api.md): `GET /api/sessions/:ulid/excerpt` hands back the
@@ -126,6 +136,15 @@ export class LocalServerSource implements LedgerSource, MachineSource {
     return this.#request(path, undefined, async (r) => (await r.json()) as T);
   }
 
+  /** A JSON POST on a machine-wide route, which takes no `repo`. */
+  #postMachine<T>(path: string, body: unknown): Promise<T> {
+    return this.#request(
+      path,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+      async (r) => (await r.json()) as T,
+    );
+  }
+
   #getText(path: string): Promise<string> {
     return this.#request(this.#scoped(path), undefined, (r) => r.text());
   }
@@ -159,6 +178,37 @@ export class LocalServerSource implements LedgerSource, MachineSource {
   /** The same server, scoped to `id`; `fetch`, `EventSource` and the reconnect knobs carry over. */
   forRepo(id: string): LocalServerSource {
     return new LocalServerSource({ ...this.#options, fetch: this.#fetch, repo: id });
+  }
+
+  // --- OnboardingSource (P8) ------------------------------------------------------------------
+  //
+  // Machine-wide like the reads above: no `?repo=` even on a scoped source, because the wizard
+  // runs before the repo it would name exists. The POSTs always carry `content-type:
+  // application/json` — the server's write guard answers 415 to anything else — and no body-less
+  // form, since every one of them has a body.
+
+  discover(roots?: string[]): Promise<DiscoverResult> {
+    return this.#getMachine<DiscoverResult>(`/api/onboarding/discover${queryString({ roots: commaList(roots) })}`);
+  }
+
+  history(repos: string[]): Promise<HistoryResult> {
+    return this.#getMachine<HistoryResult>(`/api/onboarding/history${queryString({ repos: commaList(repos) })}`);
+  }
+
+  initRepos(input: InitInput): Promise<InitResult> {
+    return this.#postMachine<InitResult>("/api/onboarding/init", input);
+  }
+
+  plan(input: PlanInput): Promise<PlanResult> {
+    return this.#postMachine<PlanResult>("/api/onboarding/plan", input);
+  }
+
+  run(input: RunInput): Promise<RunResult> {
+    return this.#postMachine<RunResult>("/api/onboarding/run", input);
+  }
+
+  status(): Promise<OnboardingStatus> {
+    return this.#getMachine<OnboardingStatus>("/api/onboarding/status");
   }
 
   // --- LedgerSource ---------------------------------------------------------------------------

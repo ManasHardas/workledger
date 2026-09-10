@@ -33,6 +33,13 @@ function stubSource(overrides: Partial<LedgerSource> = {}): AppSource {
     listAllNotes: (q) => fixture.listAllNotes(q),
     listAllJobs: () => fixture.listAllJobs(),
     forRepo: () => source,
+    // The wizard half (P8, #79): the fixture's canned answers; nothing in this file reaches them.
+    discover: (roots) => fixture.discover(roots),
+    history: (repos) => fixture.history(repos),
+    initRepos: (input) => fixture.initRepos(input),
+    plan: (input) => fixture.plan(input),
+    run: (input) => fixture.run(input),
+    status: () => fixture.status(),
     listSessions: (q) => fixture.listSessions(q),
     getSession: (ulid) => fixture.getSession(ulid),
     listBacklog: (q) => fixture.listBacklog(q),

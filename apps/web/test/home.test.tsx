@@ -1,7 +1,8 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app.js";
+import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { formatRelative } from "../src/features/home/format.js";
 import { REPOS_REFRESH_MS } from "../src/features/home/live.js";
 import { FIXTURE_REPOS } from "../src/lib/fixtures.js";
@@ -103,8 +104,15 @@ describe("Home", () => {
     expect(within(across).getByRole("link", { name: "Jobs" }).getAttribute("href")).toBe("#/jobs");
   });
 
-  it("shows the empty state, still pointing at the wizard, when nothing is tracked", async () => {
-    renderHome(machine(() => []).source);
+  it("sends a first visit with nothing tracked to the wizard, and shows the empty state after that", async () => {
+    resetEmptyMachineRedirect();
+    const empty = machine(() => []).source;
+    const first = renderHome(empty);
+    await waitFor(() => expect(window.location.hash).toBe("#/onboarding"));
+    first.unmount();
+
+    // Coming back to Home on purpose (the wizard's own Home link) is not bounced again.
+    renderHome(empty);
     expect(await screen.findByText(/No projects are tracked yet/)).toBeDefined();
     expect(screen.queryByRole("list", { name: "Projects" })).toBeNull();
     const links = screen.getAllByRole("link", { name: "Add projects" });
