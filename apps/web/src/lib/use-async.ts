@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { messageOf } from "./errors.js";
+
 /** What a view knows about one `LedgerSource` call: still loading, failed, or resolved. */
 export type Async<T> =
   | { state: "loading" }
@@ -34,10 +36,4 @@ export function useAsync<T>(load: () => Promise<T>): Async<T> {
   }, [load]);
 
   return result;
-}
-
-function messageOf(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null && "code" in error) return String(error.code);
-  return String(error);
 }

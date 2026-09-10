@@ -277,4 +277,87 @@ describe("workledger serve", () => {
     it_.stop.abort();
     expect(await running).toBe(EXIT_OK);
   });
+
+  /**
+   * Every P3 path, through the app `serveCommand` actually builds.
+   *
+   * `packages/server/test/jobs.test.ts` asserts these routes against a hand-built `createApp`, so
+   * it stays green even if `serve` stops handing `createApp` its `jobs` ops — and a server without
+   * that injection answers `/api/jobs` and `/api/sessions/:ulid/excerpt` with the contract's
+   * `no route` 404 (`app.ts`, `CreateAppOptions.jobs`), which is exactly what a build predating
+   * the injection does. The only thing that catches that is a request made against the real
+   * command, so this is a route *registration* test and deliberately asserts status codes rather
+   * than payloads.
+   */
+  it("registers every P3 route on the app the command builds", async () => {
+    const transcript = openSession(SESSION, 5);
+    writeFileSync(
+      transcript,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: "hi" } })}\n`,
+      "utf8",
+    );
+    db.insertCheckpoint({
+      session_ulid: SESSION,
+      n: 1,
+      at: "2026-09-09T10:00:00.000Z",
+      transcript_offset: 10_000,
+      turns: 1,
+      trigger: "turns",
+    });
+
+    const it_ = io();
+    const running = serveCommand({ open: false, repo, scanIntervalMs: 3_600_000 }, it_);
+    await vi.waitFor(() => expect(it_.out[0]).toMatch(/^http:/), { timeout: 5000 });
+    const url = it_.out[0]!;
+
+    const statuses: Record<string, number> = {};
+    const hit = async (method: string, path_: string, body?: unknown): Promise<number> => {
+      const response = await fetch(`${url}${path_}`, {
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      });
+      statuses[`${method} ${path_}`] = response.status;
+      return response.status;
+    };
+
+    await hit("GET", "/api/jobs");
+    await hit("GET", "/api/jobs?status=queued");
+    await hit("POST", "/api/jobs/scan");
+    await hit("POST", "/api/jobs/backfill", { since: "7d", consent: false });
+    await hit("GET", `/api/sessions/${SESSION}/excerpt?cp=1`);
+    await hit("GET", `/api/sessions/${SESSION}/excerpt?cp=9`);
+    await hit("GET", "/api/jobs/nope/cancel");
+    await hit("POST", "/api/jobs/nope/cancel");
+    await hit("POST", "/api/jobs/nope/retry");
+    await hit("GET", "/api/nope");
+
+    // Not one of these is the contract's `no route` body, which is what a missing `jobs`
+    // injection turns every P3 path into.
+    expect(statuses).toEqual({
+      "GET /api/jobs": 200,
+      "GET /api/jobs?status=queued": 200,
+      "POST /api/jobs/scan": 200,
+      // `backfill` belongs to the CLI module of #55's sibling; the route exists and says so.
+      "POST /api/jobs/backfill": 501,
+      [`GET /api/sessions/${SESSION}/excerpt?cp=1`]: 200,
+      // A cp past the end of the checkpoint list is a 404 *from the route*, not from the router.
+      [`GET /api/sessions/${SESSION}/excerpt?cp=9`]: 404,
+      // GET on a POST-only path is the router's 405-shaped 404; the POST is the route's own 404.
+      "GET /api/jobs/nope/cancel": 404,
+      "POST /api/jobs/nope/cancel": 404,
+      "POST /api/jobs/nope/retry": 404,
+      "GET /api/nope": 404,
+    });
+
+    const missing = await fetch(`${url}/api/jobs/nope/cancel`, { method: "POST" });
+    expect(((await missing.json()) as { error: { code: string } }).error.code).toBe("not_found");
+    const routed = await fetch(`${url}/api/sessions/${SESSION}/excerpt?cp=9`);
+    const body = (await routed.json()) as { error: { code: string; message: string } };
+    expect(body.error.message).not.toContain("no route");
+
+    it_.stop.abort();
+    expect(await running).toBe(EXIT_OK);
+  });
 });

@@ -1,4 +1,6 @@
 import { AsyncPanel } from "../../components/async-panel.js";
+import { RepairSheet } from "../jobs/repair-sheet.js";
+import { useSource } from "../../lib/source-context.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
@@ -39,6 +41,7 @@ export function SessionDetail({ ulid }: { ulid: string }) {
 
 function SessionBody({ session }: { session: ParsedSession }) {
   const { frontmatter } = session;
+  const source = useSource();
 
   return (
     <div className="flex flex-col gap-4">
@@ -50,6 +53,16 @@ function SessionBody({ session }: { session: ParsedSession }) {
         <span className="text-xs text-muted-foreground">
           {frontmatter.author.name} · started {formatInstant(frontmatter.started)}
         </span>
+        {/*
+          Repair is a write, so it is absent — not disabled — on a source that cannot write: a
+          Dome card has no queue to put the job in, and a control that could only ever refuse is
+          worse than no control (design spec §14.2).
+        */}
+        {source.capabilities.write ? (
+          <span className="ml-auto">
+            <RepairSheet session={frontmatter.id} />
+          </span>
+        ) : null}
       </div>
 
       {/*

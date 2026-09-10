@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
+import { ExcerptViewer } from "./excerpt-viewer.js";
 import { cpMarker, formatCount, formatInstant } from "./format.js";
 
 /**
@@ -7,18 +8,18 @@ import { cpMarker, formatCount, formatInstant } from "./format.js";
  * between the empty state and the populated one.
  */
 export const TRANSCRIPT_NOTICE =
-  "Transcript excerpt viewer arrives in P3; the transcript stays on this machine.";
+  "Transcript spans are read from this machine on demand and never enter the repo; tool inputs and outputs are counted, never shown.";
 
 /**
  * Where every line above came from: one row per checkpoint, carrying exactly the four fields the
- * frozen `Checkpoint` schema records — `at`, `turns`, `transcript_offset` and `trigger`.
+ * frozen `Checkpoint` schema records — `at`, `turns`, `transcript_offset` and `trigger` — and, in
+ * P3, the span itself behind a disclosure control (design spec §8, p3/api.md §excerpt).
  *
  * The span for checkpoint `n` is `[offset(n-1), offset(n))`, so the offsets are shown as the byte
- * range they delimit. Design spec §8 has this panel open the transcript itself; P2 ships the
- * metadata only, and says so rather than rendering a dead control.
+ * range they delimit and the viewer below re-states the same range against what it actually read.
  */
 export function ProvenancePanel({ session }: { session: ParsedSession }) {
-  const { checkpoints } = session.frontmatter;
+  const { checkpoints, id } = session.frontmatter;
 
   return (
     <Card className="border-dashed">
@@ -31,13 +32,13 @@ export function ProvenancePanel({ session }: { session: ParsedSession }) {
             No checkpoints recorded for this session yet.
           </p>
         ) : (
-          <ul className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-3" aria-label="Checkpoints, oldest first">
             {checkpoints.map((checkpoint, index) => {
               const from = checkpoints[index - 1]?.transcript_offset ?? 0;
               return (
                 <li
                   key={checkpoint.n}
-                  className="flex flex-col gap-1 border-l-2 border-border pl-3 text-sm"
+                  className="flex flex-col gap-2 border-l-2 border-border pl-3 text-sm"
                 >
                   <span className="font-mono text-xs text-muted-foreground">
                     {cpMarker(checkpoint.n)}
@@ -51,6 +52,7 @@ export function ProvenancePanel({ session }: { session: ParsedSession }) {
                     />
                     <Field label="trigger" value={checkpoint.trigger} />
                   </dl>
+                  <ExcerptViewer ulid={id} cp={checkpoint.n} />
                 </li>
               );
             })}

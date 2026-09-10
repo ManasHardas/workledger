@@ -3,6 +3,7 @@ import type { LedgerSource } from "./lib/ledger-source.js";
 import { useRoute } from "./lib/router.js";
 import { SourceProvider } from "./lib/source-context.js";
 import { HealthView } from "./routes/health.js";
+import { JobsView } from "./routes/jobs.js";
 import { LedgerView } from "./routes/ledger.js";
 import { NeedsYouView } from "./routes/needs-you.js";
 import { NextView } from "./routes/next.js";
@@ -11,6 +12,7 @@ const NAV: NavItem[] = [
   { id: "ledger", label: "Ledger" },
   { id: "next", label: "Next" },
   { id: "needs-you", label: "Needs you" },
+  { id: "jobs", label: "Jobs" },
   { id: "health", label: "Health" },
 ];
 
@@ -18,6 +20,7 @@ const VIEWS = {
   ledger: LedgerView,
   next: NextView,
   "needs-you": NeedsYouView,
+  jobs: JobsView,
   health: HealthView,
 } as const;
 

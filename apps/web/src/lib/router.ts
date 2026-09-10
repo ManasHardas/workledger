@@ -5,7 +5,7 @@ import { useCallback, useSyncExternalStore } from "react";
  * card, from an iframe whose path it does not control, so the route has to live after the `#`.
  * `openDeepLink` targets the same strings (§14.2).
  */
-export const ROUTE_IDS = ["ledger", "next", "needs-you", "health"] as const;
+export const ROUTE_IDS = ["ledger", "next", "needs-you", "jobs", "health"] as const;
 
 export type RouteId = (typeof ROUTE_IDS)[number];
 
