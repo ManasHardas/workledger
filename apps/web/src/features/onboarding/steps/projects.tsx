@@ -23,11 +23,12 @@ const LIST_SEP = "\u0000";
  *
  * Two lists from `GET /api/onboarding/discover`: the repos the harness stores already have
  * sessions for, pre-checked when the daemon suggests them (amendment 2), and the other git repos
- * under the roots, unchecked. A repo that is already enabled is shown ticked and locked so the
- * operator sees it is covered without being able to re-select it. Continue is `POST
- * /api/onboarding/init` for the selection, and the step then shows what `init` did in each repo
- * before moving on — the hook files are real writes into the operator's repos, and they get to
- * read the list.
+ * under the roots, unchecked. A repo that is already enabled is badged "already tracked" and left
+ * unchecked, but stays selectable (#109): ticking it puts it in the backfill without `init` ever
+ * touching its hook files again. Continue is `POST /api/onboarding/init` for the selected repos
+ * that are not tracked yet, and the step then shows what `init` did in each repo before moving
+ * on — the hook files are real writes into the operator's repos, and they get to read the list.
+ * A selection of tracked repos only has nothing to init and goes straight to the history step.
  *
  * Under the repo lists, the folders sessions were started from that are not repos but hold
  * selected ones (amendment 8, `discover.workspaces`), each with a pre-checked box: `init` writes
@@ -53,12 +54,12 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
   );
   const init = useAction(
     useCallback(
-      async (repos: string[], workspaces: string[]) => {
+      async (repos: string[], tracked: string[], workspaces: string[]) => {
         const result = await source.initRepos({ repos, ...(workspaces.length === 0 ? {} : { workspaces }) });
         // The daemon's `repos.changed` frame is what re-reads Home's list; this is the same
         // refresh from inside the tab, for a stream that is reconnecting when `init` answers.
         if (result.results.some((entry) => entry.ok)) announceReposChanged();
-        return result;
+        return { ...result, tracked };
       },
       [source],
     ),
@@ -68,6 +69,7 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
     return (
       <InitSummary
         results={init.state.value.results}
+        tracked={init.state.value.tracked}
         workspaces={init.state.value.workspaces ?? []}
         state={state}
         onBack={init.reset}
@@ -92,7 +94,11 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
             found={found}
             state={state}
             initState={init.state}
-            onContinue={(repos, workspaces) => init.run(repos, workspaces)}
+            onContinue={(repos, tracked, workspaces) =>
+              // Nothing to init when every selected repo is tracked already: the backfill is all
+              // the operator asked for, and `init` must not rewrite a hook file for it.
+              repos.length === 0 ? goTo({ ...state, step: "history", repos: tracked }) : init.run(repos, tracked, workspaces)
+            }
           />
         )}
       </AsyncPanel>
@@ -100,20 +106,30 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
   );
 }
 
-/** Whether the box can be ticked at all: not already tracked, and a git repo `init` will accept. */
+/** Whether the box can be ticked at all: a git repo `init` will accept, tracked already or not. */
 export function tickable(repo: RepoCandidate): boolean {
-  return !repo.enabled && repo.hasGit;
+  return repo.hasGit;
 }
 
 /**
  * The selection: the checked paths, or the daemon's suggestion when nothing was touched yet.
  * Always narrowed to what can be ticked, so a path a stale URL names never reaches `init` —
- * one non-git path fails the whole batch with 400 `invalid-repo`.
+ * one non-git path fails the whole batch with 400 `invalid-repo`. A tracked repo is never
+ * suggested: it is selected only by hand, for a backfill (#109).
  */
 export function selectedRepos(found: DiscoverResult, state: WizardState): string[] {
   const allowed = new Set([...found.known, ...found.found].filter(tickable).map((repo) => repo.path));
   if (state.repos !== undefined) return state.repos.filter((path) => allowed.has(path));
-  return found.known.filter((repo) => tickable(repo) && isSuggested(repo)).map((repo) => repo.path);
+  return found.known.filter((repo) => tickable(repo) && !repo.enabled && isSuggested(repo)).map((repo) => repo.path);
+}
+
+/** The selection split into the repos `init` must run in and the tracked ones it must leave alone. */
+export function splitTracked(found: DiscoverResult, selected: readonly string[]): { fresh: string[]; tracked: string[] } {
+  const enabled = new Set([...found.known, ...found.found].filter((repo) => repo.enabled).map((repo) => repo.path));
+  return {
+    fresh: selected.filter((path) => !enabled.has(path)),
+    tracked: selected.filter((path) => enabled.has(path)),
+  };
 }
 
 /** The workspaces worth offering: the start folders holding at least one selected repo. */
@@ -139,12 +155,13 @@ function RepoPicker({
 }: {
   found: DiscoverResult;
   state: WizardState;
-  initState: ReturnType<typeof useAction<[string[], string[]], unknown>>["state"];
-  onContinue: (repos: string[], workspaces: string[]) => void;
+  initState: ReturnType<typeof useAction<[string[], string[], string[]], unknown>>["state"];
+  onContinue: (repos: string[], tracked: string[], workspaces: string[]) => void;
 }) {
   const selected = useMemo(() => selectedRepos(found, state), [found, state]);
   const all = useMemo(() => [...found.known, ...found.found], [found]);
   const enabledCount = found.known.filter((repo) => repo.enabled).length;
+  const { fresh, tracked } = useMemo(() => splitTracked(found, selected), [found, selected]);
   const workspaces = useMemo(() => offeredWorkspaces(found, selected), [found, selected]);
   const ticked = useMemo(() => selectedWorkspaces(found, state, selected), [found, state, selected]);
 
@@ -199,7 +216,7 @@ function RepoPicker({
         <Button
           className="ml-auto"
           disabled={selected.length === 0 || running}
-          onClick={() => onContinue(selected, ticked)}
+          onClick={() => onContinue(fresh, tracked, ticked)}
         >
           {running ? "Enabling…" : "Continue"}
         </Button>
@@ -238,7 +255,7 @@ function RepoGroup({
               <CandidateRow
                 repo={repo}
                 hint={isSuggested(repo) ? null : unsuggestedHint(repo, all)}
-                checked={repo.enabled || selected.includes(repo.path)}
+                checked={selected.includes(repo.path)}
                 disabled={disabled || !tickable(repo)}
                 onToggle={(on) => onToggle(repo.path, on)}
                 now={now}
@@ -292,6 +309,7 @@ function CandidateRow({
         </span>
         <span className="break-all font-mono text-xs text-muted-foreground">{repo.path}</span>
         <span id={`${repo.path}-meta`} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {repo.enabled ? <span>select to backfill</span> : null}
           {counts.map(([harness, sessions]) => (
             <span key={harness}>
               {harnessLabel(harness)} · {plural(sessions, "session")}
@@ -436,11 +454,14 @@ function AddFolder({ state, disabled }: { state: WizardState; disabled: boolean 
 /** What `init` did: per repo, the files written, the Codex step if any, or why it failed. */
 function InitSummary({
   results,
+  tracked,
   workspaces,
   state,
   onBack,
 }: {
   results: InitRepoResult[];
+  /** Repos selected for the backfill that were tracked already: `init` was not run in them (#109). */
+  tracked: string[];
   /** The workspace rows, in the same shape; empty when none was asked for. */
   workspaces: InitRepoResult[];
   state: WizardState;
@@ -448,18 +469,22 @@ function InitSummary({
 }) {
   const enabled = results.filter((result) => result.ok).map((result) => result.path);
   const failed = results.length - enabled.length;
+  const unchanged = tracked.length === 0 ? "" : `; ${plural(tracked.length, "repo")} was already tracked and its hooks were left as they are`;
   return (
     <StepFrame
       title="Repos enabled"
       lead={
         failed === 0
-          ? `workledger init ran in ${plural(results.length, "repo")}. From now on every agent session in them is recorded. Next: how much history to backfill.`
-          : `${plural(enabled.length, "repo")} enabled; ${plural(failed, "repo")} could not be, and will be left out of the backfill.`
+          ? `workledger init ran in ${plural(results.length, "repo")}${unchanged}. From now on every agent session in them is recorded. Next: how much history to backfill.`
+          : `${plural(enabled.length, "repo")} enabled${unchanged}; ${plural(failed, "repo")} could not be, and will be left out of the backfill.`
       }
     >
       <ul className="flex flex-col gap-2" aria-label="Init results">
         {results.map((result) => (
           <InitRow key={result.path} result={result} />
+        ))}
+        {tracked.map((path) => (
+          <TrackedRow key={path} path={path} />
         ))}
       </ul>
       {workspaces.length > 0 ? (
@@ -478,13 +503,27 @@ function InitSummary({
         </Button>
         <Button
           className="ml-auto"
-          disabled={enabled.length === 0}
-          onClick={() => goTo({ ...state, step: "history", repos: enabled })}
+          disabled={enabled.length === 0 && tracked.length === 0}
+          onClick={() => goTo({ ...state, step: "history", repos: [...enabled, ...tracked] })}
         >
           Next: choose history
         </Button>
       </StepActions>
     </StepFrame>
+  );
+}
+
+/** A repo selected for the backfill that `init` was not run in: tracked already, hooks untouched. */
+function TrackedRow({ path }: { path: string }) {
+  return (
+    <li className="flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-card p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">{path.split("/").pop()}</span>
+        <Badge variant="secondary">already tracked</Badge>
+      </div>
+      <span className="break-all font-mono text-xs text-muted-foreground">{path}</span>
+      <p className="text-xs text-muted-foreground">Hooks unchanged.</p>
+    </li>
   );
 }
 

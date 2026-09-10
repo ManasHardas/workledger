@@ -52,6 +52,8 @@ interface Daemon {
   server: Server;
   /** Every `/api` request, method and path, for assertions on what the wizard sent. */
   requests: string[];
+  /** Every `POST /api/onboarding/init` body, for assertions on which repos were initialized. */
+  initBodies: Record<string, unknown>[];
   close(): Promise<void>;
 }
 
@@ -82,6 +84,7 @@ function repoId(root: string): string {
 
 async function startDaemon(): Promise<Daemon> {
   const requests: string[] = [];
+  const initBodies: Record<string, unknown>[] = [];
   const enabled = new Set<string>();
   const jobs: FixtureJob[] = [];
   const streams = new Set<ServerResponse>();
@@ -151,6 +154,7 @@ async function startDaemon(): Promise<Daemon> {
             return json(res, 200, { windows: { "7d": { sessions: 1, bytes: 400_000 }, "30d": { sessions: 3, bytes: 1_200_000 }, "90d": { sessions: 7, bytes: 2_900_000 }, all: { sessions: 9, bytes: 3_400_000 } } });
           case "POST /api/onboarding/init": {
             const body = await readJson(req);
+            initBodies.push(body);
             const repos = body["repos"] as string[];
             const workspaces = body["workspaces"] as string[] | undefined;
             for (const root of repos) enabled.add(root);
@@ -207,6 +211,7 @@ async function startDaemon(): Promise<Daemon> {
     url: `http://127.0.0.1:${String(address.port)}`,
     server,
     requests,
+    initBodies,
     close: async () => {
       if (timer !== undefined) clearInterval(timer);
       for (const stream of streams) stream.end();
@@ -319,6 +324,38 @@ test.describe("onboarding wizard", () => {
     await page.getByRole("button", { name: "Skip backfill" }).click();
     await expect(page.getByRole("heading", { name: "Nothing was backfilled" })).toBeVisible();
     expect(daemon.requests.some((r) => r.startsWith("POST /api/onboarding/run"))).toBe(false);
+  });
+
+  test("an already-tracked repo can be ticked for a backfill without being re-initialized (#109)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // alpha was enabled earlier: the fake daemon reports it tracked from now on.
+    await page.request.post(`${daemon.url}/api/onboarding/init`, { data: { repos: [ALPHA] } });
+    daemon.requests.length = 0;
+    daemon.initBodies.length = 0;
+    await page.goto(`${daemon.url}/#/onboarding`);
+    await expect(page.getByRole("heading", { name: "Choose the repos to track" })).toBeVisible();
+    const alpha = page.getByRole("checkbox", { name: "alpha" });
+    await expect(alpha).not.toBeChecked();
+    await expect(alpha).toBeEnabled();
+    await expect(page.getByText("already tracked", { exact: true })).toBeVisible();
+    await expect(page.getByText("select to backfill")).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "beta" })).toBeChecked();
+    await alpha.check();
+    // The hash keeps the selection: the list is joined with commas, each path encoded twice.
+    await expect.poll(() => page.url()).toContain(encodeURIComponent(encodeURIComponent(ALPHA)));
+    await shot(page, "onboarding-projects-tracked-1280");
+
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: "Repos enabled" })).toBeVisible();
+    await expect(page.getByText("Hooks unchanged.")).toBeVisible();
+    // init was asked for beta only: nothing is rewritten in alpha.
+    expect(daemon.requests.filter((r) => r === "POST /api/onboarding/init")).toHaveLength(1);
+    expect(daemon.initBodies).toEqual([{ repos: [BETA] }]);
+
+    await page.getByRole("button", { name: "Next: choose history" }).click();
+    await expect(page.getByRole("heading", { name: "How much history to backfill" })).toBeVisible();
+    await expect(page).toHaveURL(/step=history/);
+    expect(daemon.requests.some((r) => r.startsWith("GET /api/onboarding/history?") && r.includes(encodeURIComponent(ALPHA)))).toBe(true);
   });
 
   test("fits 375 px without sideways scroll on the projects and method steps", async ({ page }) => {
