@@ -29,10 +29,13 @@ checkpoints:
 - [cp 1] Make the 40 MB upload stop timing out
 
 ## Done
-- [cp 1] Reproduced the timeout with a 40 MB fixture. files: fixtures/big.bin · verified: not-verified
+- [cp 1] Reproduced the timeout with a 40 MB fixture.
+  files: fixtures/big.bin · verified: not-verified
 
 ## Remaining
 - [cp 1] → WL-01J9AC00000000000000000000 (new) Ask ops whether the 50 MB limit is configurable; why: the answer decides whether we cap or chunk; blocked_by: none
 
 ## Notes
 - discovery [cp 1]: The upload service strips Content-Length on redirect; retries must re-stream.
+
+## Memory

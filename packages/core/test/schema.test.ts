@@ -4,8 +4,13 @@ import {
   BacklogItem,
   CheckpointPayload,
   Config,
+  MAX_DETAIL_CHARS,
+  MAX_GIST_CHARS,
+  MAX_MEMORY_TEXT_CHARS,
   MAX_PAYLOAD_BYTES,
+  MAX_REMAINING_TEXT_CHARS,
   MAX_SECTION_ITEMS,
+  MAX_WHY_CHARS,
   SCHEMA_VERSION,
   SessionFrontmatter,
   formatIssuePath,
@@ -33,6 +38,11 @@ const coreSources = import.meta.glob<string>("../src/**/*.ts", {
   query: "?raw",
   import: "default",
 });
+
+/** The error paths of a failed validation, for the cap assertions. */
+function paths(result: ReturnType<typeof validateCheckpointPayload>): string[] {
+  return result.ok ? [] : result.errors.map((error) => error.path);
+}
 
 function fixture(group: Record<string, { default: unknown }>, name: string): unknown {
   const key = Object.keys(group).find((path) => path.endsWith(`/${name}.json`));
@@ -81,7 +91,7 @@ describe("CheckpointPayload", () => {
     }
   });
 
-  it("defaults the three sections to empty arrays", () => {
+  it("defaults the four sections to empty arrays", () => {
     const result = validateCheckpointPayload(fixture(validFixtures, "minimal"));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -90,6 +100,7 @@ describe("CheckpointPayload", () => {
       done: [],
       remaining: [],
       notes: [],
+      memory: [],
     });
   });
 
@@ -114,6 +125,43 @@ describe("CheckpointPayload", () => {
     const match = result.errors.find((error) => error.path === path);
     expect(match, `errors: ${JSON.stringify(result.errors)}`).toBeDefined();
     if (message !== undefined) expect(match!.message).toMatch(message);
+  });
+
+  it("amendment 11: gist, detail, memory and the tighter caps", () => {
+    const result = validateCheckpointPayload(fixture(validFixtures, "gist-detail-memory"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.done[0]!.detail).toMatch(/^Checkout control/);
+    expect(result.value.memory).toEqual([
+      { text: "gh needs the ManasHardas token prefix", file: "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+      { text: "Push workledger to origin without asking" },
+    ]);
+    // Old payloads (no `memory`, no `detail`) still parse and default `memory` to [].
+    expect(validateCheckpointPayload(fixture(validFixtures, "full")).ok).toBe(true);
+    const minimal = validateCheckpointPayload(fixture(validFixtures, "minimal"));
+    expect(minimal.ok && minimal.value.memory).toEqual([]);
+
+    const done = (text: string, detail?: string) => ({
+      done: [{ text, ...(detail === undefined ? {} : { detail }), commit: "0447dab", verified: "not-verified" }],
+    });
+    expect(validateCheckpointPayload(done("g".repeat(MAX_GIST_CHARS))).ok).toBe(true);
+    expect(paths(validateCheckpointPayload(done("g".repeat(MAX_GIST_CHARS + 1))))).toEqual(["done[0].text"]);
+    expect(validateCheckpointPayload(done("g", "d".repeat(MAX_DETAIL_CHARS))).ok).toBe(true);
+    expect(paths(validateCheckpointPayload(done("g", "d".repeat(MAX_DETAIL_CHARS + 1))))).toEqual(["done[0].detail"]);
+
+    const remaining = (text: string, why: string) => ({ remaining: [{ text, why, new: true }] });
+    expect(validateCheckpointPayload(remaining("t".repeat(MAX_REMAINING_TEXT_CHARS), "w".repeat(MAX_WHY_CHARS))).ok).toBe(true);
+    expect(paths(validateCheckpointPayload(remaining("t".repeat(MAX_REMAINING_TEXT_CHARS + 1), "w".repeat(MAX_WHY_CHARS + 1))))).toEqual([
+      "remaining[0].text",
+      "remaining[0].why",
+    ]);
+
+    expect(validateCheckpointPayload({ memory: [{ text: "m".repeat(MAX_MEMORY_TEXT_CHARS) }] }).ok).toBe(true);
+    expect(paths(validateCheckpointPayload({ memory: [{ text: "m".repeat(MAX_MEMORY_TEXT_CHARS + 1) }] }))).toEqual(["memory[0].text"]);
+    expect(paths(validateCheckpointPayload({ memory: [{ text: "" }] }))).toEqual(["memory[0].text"]);
+    expect(paths(validateCheckpointPayload({ memory: [{ text: "x", file: "" }] }))).toEqual(["memory[0].file"]);
+    expect(paths(validateCheckpointPayload({ memory: [{ text: "x", extra: 1 }] }))).toEqual(["memory[0]"]);
+    expect(validateCheckpointPayload({ memory: Array.from({ length: MAX_SECTION_ITEMS + 1 }, () => ({ text: "x" })) }).ok).toBe(false);
   });
 
   it("accepts exactly the item cap", () => {

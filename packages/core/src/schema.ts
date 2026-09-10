@@ -36,8 +36,21 @@ export const MAX_SECTION_ITEMS = 12;
  */
 /** Characters in `goal`. */
 export const MAX_GOAL_CHARS = 400;
-/** Characters in `done[].text`, `remaining[].text`, `remaining[].why` and `notes[].reason`. */
+/** Characters in `notes[].reason` and `done[].detail`. */
 export const MAX_TEXT_CHARS = 300;
+/**
+ * Characters in `done[].text` — the gist for humans (P8 amendment 11): an outcome in plain
+ * words, no paths, no commit ids. The specifics go in `done[].detail`.
+ */
+export const MAX_GIST_CHARS = 140;
+/** Characters in `done[].detail`, the how / what exactly / caveats for agents. */
+export const MAX_DETAIL_CHARS = MAX_TEXT_CHARS;
+/** Characters in `remaining[].text`: one action per item, split rather than compound. */
+export const MAX_REMAINING_TEXT_CHARS = 100;
+/** Characters in `remaining[].why`. */
+export const MAX_WHY_CHARS = 100;
+/** Characters in `memory[].text`, one fact committed to a memory file. */
+export const MAX_MEMORY_TEXT_CHARS = 200;
 /** Characters in `notes[].text`. */
 export const MAX_NOTE_TEXT_CHARS = 500;
 /** Entries in `done[].files`. */
@@ -162,7 +175,20 @@ const dateTime = () => z.iso.datetime({ offset: true });
 /** Object shape of a Done item, before the cross-field evidence rule is applied. */
 export const DoneItemObject = z
   .object({
-    text: z.string().min(1).max(MAX_TEXT_CHARS).describe("Past tense, one unit of work."),
+    text: z
+      .string()
+      .min(1)
+      .max(MAX_GIST_CHARS)
+      .describe(
+        "The gist for humans: one outcome in plain words, as told to a teammate at standup. " +
+          "No file paths, no commit ids, no library names unless the outcome is the library.",
+      ),
+    detail: z
+      .string()
+      .min(1)
+      .max(MAX_DETAIL_CHARS)
+      .optional()
+      .describe("The specifics for agents: how, what exactly, caveats."),
     files: z
       .array(z.string().min(1))
       .max(MAX_FILES_PER_ITEM)
@@ -183,8 +209,12 @@ export type DoneItem = z.infer<typeof DoneItem>;
 /** Object shape of a Remaining item, before the `new` XOR `ref`+`rel` rule is applied. */
 export const RemainingItemObject = z
   .object({
-    text: z.string().min(1).max(MAX_TEXT_CHARS).describe("Imperative next action."),
-    why: z.string().min(1).max(MAX_TEXT_CHARS),
+    text: z
+      .string()
+      .min(1)
+      .max(MAX_REMAINING_TEXT_CHARS)
+      .describe("Imperative next action; one action per item, split rather than compound."),
+    why: z.string().min(1).max(MAX_WHY_CHARS),
     new: z.literal(true).optional(),
     ref: backlogId().optional(),
     rel: Rel.optional(),
@@ -255,6 +285,24 @@ export const Note = NoteObject.superRefine((note, ctx) => {
 });
 export type Note = z.infer<typeof Note>;
 
+/** One fact the session committed to a memory file (P8 amendment 11). */
+export const MemoryItem = z
+  .object({
+    text: z.string().min(1).max(MAX_MEMORY_TEXT_CHARS).describe("The fact, as written to the file."),
+    file: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("The memory file it went to, `~`-relative when under the home directory."),
+  })
+  .strict()
+  .describe(
+    "A fact saved to a memory file this span: Claude Code auto-memory, CLAUDE.md, MEMORY.md, or " +
+      "a project memory dir. The Stop hook may derive entries from Write/Edit tool inputs under " +
+      "those paths when the payload carries none.",
+  );
+export type MemoryItem = z.infer<typeof MemoryItem>;
+
 const section = <T extends z.ZodType>(item: T) =>
   z
     .array(item)
@@ -275,12 +323,15 @@ export const CheckpointPayload = z
     done: section(DoneItem),
     remaining: section(RemainingItem),
     notes: section(Note),
+    memory: section(MemoryItem),
   })
   .strict()
   .describe(
     "What the session's agent sends on stdin to `workledger checkpoint`. " +
-      "Frozen at P1 Wave 0 (2026-09-09). The zod schema in packages/core/src/schema.ts is the " +
-      "source; its export must reproduce this file byte for byte.",
+      "Frozen at P1 Wave 0 (2026-09-09); amended 2026-09-10 (P8 amendment 11: `done[].text` is " +
+      "a ≤ 140-char gist, `done[].detail`, tighter `remaining` caps, `memory[]`). The zod schema " +
+      "in packages/core/src/schema.ts is the source; its export must reproduce this file byte " +
+      "for byte.",
   );
 export type CheckpointPayload = z.infer<typeof CheckpointPayload>;
 

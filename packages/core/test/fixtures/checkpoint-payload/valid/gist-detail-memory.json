@@ -1,0 +1,24 @@
+{
+  "goal": "Let buyers check out from the cart on a phone.",
+  "done": [
+    {
+      "text": "Buyers can now check out from the cart on their phone",
+      "detail": "Checkout control is the link itself; pendingCheckout flag plus cart-null detection; opens in native top-level hosts, new tab on desktop",
+      "files": ["src/cart/checkout.ts"],
+      "commit": "0447dab",
+      "verified": "tests-passed"
+    }
+  ],
+  "remaining": [
+    {
+      "text": "Add the checkout smoke test on iOS Safari",
+      "why": "the native host path is the one nobody has run",
+      "new": true
+    }
+  ],
+  "notes": [],
+  "memory": [
+    { "text": "gh needs the ManasHardas token prefix", "file": "~/.claude/projects/-Users-x/memory/MEMORY.md" },
+    { "text": "Push workledger to origin without asking" }
+  ]
+}
