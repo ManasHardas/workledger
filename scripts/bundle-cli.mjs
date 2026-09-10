@@ -60,7 +60,15 @@ const SERVER_SPECIFIER = "./server.js";
  * matches whole specifiers, not prefixes, so each one is spelled out here; the list must stay in
  * step with the `exports` map in packages/core/package.json.
  */
-const CORE_SUBPATHS = ["schema", "ids", "frontmatter", "brief", "render/session", "render/backlog"];
+const CORE_SUBPATHS = [
+  "schema",
+  "ids",
+  "frontmatter",
+  "identities",
+  "brief",
+  "render/session",
+  "render/backlog",
+];
 const CORE_ALIAS = {
   "@workledger/core": CORE_SRC,
   ...Object.fromEntries(

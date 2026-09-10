@@ -13,6 +13,8 @@ export type { LedgerPaths } from "./paths.js";
 export { buildHealth, defaultHome } from "./health.js";
 export type { DoctorEntry, Health, HealthEnv } from "./health.js";
 export { briefMaxTokens, renderBrief } from "./brief.js";
+export { IDENTITIES_FILE, identitiesFileName, listIdentities } from "./identities.js";
+export type { Identity } from "./identities.js";
 export { DEBOUNCE_MS, POLL_MS, startWatcher } from "./watcher.js";
 export type { WatchMode, Watcher, WatcherOptions } from "./watcher.js";
 export { resolvedNotes, toBacklogView, toSessionView } from "./views.js";

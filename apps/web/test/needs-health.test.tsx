@@ -6,6 +6,8 @@ import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import {
   createSource,
   type Health,
+  type Identity,
+  type LedgerEvent,
   type LedgerSource,
   type NoteRef,
   type ParsedSession,
@@ -29,6 +31,7 @@ function stubSource(overrides: Partial<LedgerSource> = {}): LedgerSource {
     listNotes: (q) => fixture.listNotes(q),
     brief: (maxTokens) => fixture.brief(maxTokens),
     health: () => fixture.health(),
+    listIdentities: () => fixture.listIdentities(),
     accept: (id) => fixture.accept(id),
     discard: (id) => fixture.discard(id),
     done: (id) => fixture.done(id),
@@ -120,6 +123,75 @@ describe("Needs you", () => {
       ref: { session: SESSION.frontmatter.id, cp: 1, index: 1 },
       decision: "Treat a rename as a delete plus a create.",
     });
+  });
+
+  /**
+   * docs/contracts/p5/config-and-identities.md, through issue #64. A `NoteRef` carries only
+   * api.md's `by: "human" | "agent"` — a kind, not a person — so the address a note is attributed
+   * to is its session's `author`, which is what the map has a name for.
+   */
+  it("names the session author from identities.yaml, with the email as the tooltip", async () => {
+    const email = SESSION.frontmatter.author.email;
+    renderAt(
+      "#/needs-you",
+      stubSource({
+        listNotes: async () => NOTES,
+        getSession: async () => SESSION,
+        // Deliberately not the case the ledger records, so a pass proves the lookup is folded.
+        listIdentities: async () => [
+          { email: email.toUpperCase(), name: "Ada Lovelace", dome_user: null },
+        ],
+      }),
+    );
+
+    const named = await screen.findByTitle(email);
+    expect(named.textContent).toBe("Ada Lovelace");
+    // The goal is still its own text; the name is beside it, not spliced into it.
+    expect(screen.getByText(SESSION.goal!)).toBeDefined();
+  });
+
+  it("falls back to the email when the address is unmapped or the file is absent", async () => {
+    const email = SESSION.frontmatter.author.email;
+    const reads: Identity[][] = [[], [{ email: "grace@example.com", name: "Grace", dome_user: null }]];
+
+    for (const identities of reads) {
+      renderAt(
+        "#/needs-you",
+        stubSource({
+          listNotes: async () => NOTES,
+          getSession: async () => SESSION,
+          listIdentities: async () => identities,
+        }),
+      );
+      expect((await screen.findByTitle(email)).textContent).toBe(email);
+      // The ledger's own `name` is not the fallback: it is whatever git was configured with, and
+      // that is the value the file exists to override.
+      expect(screen.queryByText(SESSION.frontmatter.author.name)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("re-reads identities on health.changed", async () => {
+    const email = SESSION.frontmatter.author.email;
+    let identities: Identity[] = [];
+    const handlers = new Set<(event: LedgerEvent) => void>();
+    renderAt(
+      "#/needs-you",
+      stubSource({
+        listNotes: async () => NOTES,
+        getSession: async () => SESSION,
+        listIdentities: async () => identities,
+        subscribe: (handler) => {
+          handlers.add(handler);
+          return () => void handlers.delete(handler);
+        },
+      }),
+    );
+    expect((await screen.findByTitle(email)).textContent).toBe(email);
+
+    identities = [{ email, name: "Ada Lovelace", dome_user: null }];
+    for (const handler of [...handlers]) handler({ type: "health.changed" });
+    await waitFor(() => expect(screen.getByTitle(email).textContent).toBe("Ada Lovelace"));
   });
 
   it("disables resolving on a read-only source", async () => {

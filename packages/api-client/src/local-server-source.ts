@@ -18,6 +18,7 @@ import type {
   EditPatch,
   Excerpt,
   Health,
+  Identity,
   Job,
   LedgerEvent,
   LedgerSource,
@@ -155,6 +156,10 @@ export class LocalServerSource implements LedgerSource {
 
   health(): Promise<Health> {
     return this.#get<Health>("/api/health");
+  }
+
+  listIdentities(): Promise<Identity[]> {
+    return this.#get<Identity[]>("/api/identities");
   }
 
   accept(id: string): Promise<BacklogView> {

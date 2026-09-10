@@ -2,7 +2,10 @@
  * Every GET method of `LedgerSource` against a real `packages/server` over a temp copy of this
  * repo's `.workledger/` — the issue's acceptance criterion ("every method round-trips").
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { ApiClientError, createSource, normalizeBaseUrl, queryString } from "../src/index.js";
 import { startHarness } from "./helpers.js";
@@ -22,6 +25,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await harness.stop();
 });
+
+/** The harness's ledger directory. Read through a function because `harness` is set in `beforeAll`. */
+function harnessLedger(): string {
+  return harness.ledger;
+}
 
 describe("capabilities", () => {
   it("is the local server's triple from ledger-source.md", () => {
@@ -165,6 +173,42 @@ describe("brief and health", () => {
     expect(Array.isArray(health.harnesses)).toBe(true);
     expect(typeof health.index.bytes).toBe("number");
     expect(typeof health.config.valid).toBe("boolean");
+  });
+});
+
+/**
+ * `GET /api/identities` (docs/contracts/p5/config-and-identities.md), round-tripped through the
+ * real server the way every other read in this file is: the file is written into the harness's
+ * ledger, read back through the client, and removed again.
+ */
+describe("identities", () => {
+  /** A function, not a constant: `harness` is only set once `beforeAll` has run. */
+  const file = (): string => path.join(harnessLedger(), "identities.yaml");
+
+  afterEach(() => {
+    rmSync(file(), { force: true });
+  });
+
+  it("is empty for a repo with no identities file", async () => {
+    expect(await source.listIdentities()).toEqual([]);
+  });
+
+  it("round-trips every row of the file, by email", async () => {
+    writeFileSync(
+      file(),
+      [
+        "schema_version: 1",
+        "identities:",
+        "  - { email: Grace@Example.com, name: Grace Hopper, dome_user: u_grace }",
+        "  - { email: ada@example.com, name: Ada Lovelace, dome_user: null }",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    expect(await source.listIdentities()).toEqual([
+      { email: "ada@example.com", name: "Ada Lovelace", dome_user: null },
+      { email: "Grace@Example.com", name: "Grace Hopper", dome_user: "u_grace" },
+    ]);
   });
 });
 

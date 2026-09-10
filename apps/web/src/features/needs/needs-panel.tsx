@@ -4,9 +4,13 @@ import { AsyncPanel } from "../../components/async-panel.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
-import type { NoteRef } from "../../lib/ledger-source.js";
+import type { Actor, NoteRef } from "../../lib/ledger-source.js";
 import { useSource } from "../../lib/source-context.js";
+import { ActorName } from "../identity/actor-name.js";
+import { useIdentities } from "../identity/live.js";
 import { useLiveOpenNotes } from "./live.js";
+
+import type { IdentityMap } from "../identity/live.js";
 
 /**
  * Every open `blocker` and `question` across sessions, newest first, each resolvable in place
@@ -17,6 +21,8 @@ import { useLiveOpenNotes } from "./live.js";
  */
 export function NeedsPanel() {
   const { result, refresh } = useLiveOpenNotes();
+  // One read for the whole list rather than one per card: the map is the same for every note.
+  const identities = useIdentities();
 
   return (
     <AsyncPanel
@@ -28,7 +34,7 @@ export function NeedsPanel() {
         <ul className="flex flex-col gap-3">
           {list.map((note) => (
             <li key={`${note.session}-${note.cp}-${note.index}`}>
-              <NoteCard note={note} onResolved={refresh} />
+              <NoteCard note={note} onResolved={refresh} identities={identities} />
             </li>
           ))}
         </ul>
@@ -37,9 +43,17 @@ export function NeedsPanel() {
   );
 }
 
-function NoteCard({ note, onResolved }: { note: NoteRef; onResolved: () => void }) {
+function NoteCard({
+  note,
+  onResolved,
+  identities,
+}: {
+  note: NoteRef;
+  onResolved: () => void;
+  identities: IdentityMap;
+}) {
   const source = useSource();
-  const goal = useSessionGoal(note.session);
+  const { goal, author } = useSessionContext(note.session);
   const fieldId = useId();
   const [open, setOpen] = useState(false);
   const [decision, setDecision] = useState("");
@@ -80,7 +94,17 @@ function NoteCard({ note, onResolved }: { note: NoteRef; onResolved: () => void 
           </Badge>
         </div>
         <CardTitle>{note.text}</CardTitle>
-        <CardDescription>{goal ?? `session ${note.session}`}</CardDescription>
+        <CardDescription>
+          {/* The goal keeps an element of its own so the author beside it is a sibling rather
+              than text spliced into the middle of it. */}
+          <span>{goal ?? `session ${note.session}`}</span>
+          {author ? (
+            <>
+              {" — "}
+              <ActorName actor={author} identities={identities} />
+            </>
+          ) : null}
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {open ? (
@@ -136,27 +160,40 @@ function NoteCard({ note, onResolved }: { note: NoteRef; onResolved: () => void 
   );
 }
 
+/** What a note's own session contributes to its card: what it was for, and whose it was. */
+interface SessionContext {
+  goal: string | null;
+  /** The session's `author`, the one email a `NoteRef` can be attributed to. */
+  author: Actor | null;
+}
+
+const NO_CONTEXT: SessionContext = { goal: null, author: null };
+
 /**
- * The goal of the session a note came from, read lazily per card.
+ * The goal and author of the session a note came from, read lazily per card.
  *
  * It is context, not the note: a card that cannot get it falls back to showing the session ulid,
  * which still identifies the session and still resolves. Reading it per card rather than joining a
  * `listSessions()` page is what keeps that page's `limit` out of whether a note is resolvable.
+ *
+ * The author is here rather than on the `NoteRef` because api.md's `NoteLine.by` is the enum
+ * `"human" | "agent"` — a *kind*, not a person. The session's `author` is the address behind that
+ * kind, and it is what the identities map has a name for.
  */
-function useSessionGoal(ulid: string): string | null {
+function useSessionContext(ulid: string): SessionContext {
   const source = useSource();
-  const [goal, setGoal] = useState<string | null>(null);
+  const [context, setContext] = useState<SessionContext>(NO_CONTEXT);
 
   useEffect(() => {
     let live = true;
-    setGoal(null);
+    setContext(NO_CONTEXT);
     source.getSession(ulid).then(
       (session) => {
-        if (live) setGoal(session.goal);
+        if (live) setContext({ goal: session.goal, author: session.frontmatter.author });
       },
       () => {
         // Rendered as the ulid fallback above rather than swallowed: the card stays usable.
-        if (live) setGoal(null);
+        if (live) setContext(NO_CONTEXT);
       },
     );
     return () => {
@@ -164,7 +201,7 @@ function useSessionGoal(ulid: string): string | null {
     };
   }, [source, ulid]);
 
-  return goal;
+  return context;
 }
 
 function messageOf(error: unknown): string {

@@ -8,6 +8,7 @@ import type {
   Actor,
   BacklogStatus,
   BacklogView,
+  Identity,
   LedgerEvent,
   LedgerSource,
 } from "../src/lib/ledger-source.js";
@@ -69,7 +70,10 @@ type Call = [string, ...unknown[]];
 function spySource(over: Partial<LedgerSource> = {}) {
   const calls: Call[] = [];
   let items = ALL;
-  let emit: ((event: LedgerEvent) => void) | null = null;
+  let identities: Identity[] = [];
+  // A set, not one slot: the view subscribes once for the backlog and once for the identities
+  // map, and a single-handler stub would silently deliver events to whichever ran last.
+  const handlers = new Set<(event: LedgerEvent) => void>();
   const record =
     <T,>(name: string, result: (...args: never[]) => T) =>
     (...args: unknown[]): Promise<T> => {
@@ -91,6 +95,7 @@ function spySource(over: Partial<LedgerSource> = {}) {
     health: async () => {
       throw new Error("unused");
     },
+    listIdentities: record("listIdentities", () => identities),
     accept: record("accept", (id: string) => ({
       ...find(id),
       frontmatter: {
@@ -134,9 +139,9 @@ function spySource(over: Partial<LedgerSource> = {}) {
       throw new Error("unused");
     },
     subscribe: (handler) => {
-      emit = handler;
+      handlers.add(handler);
       return () => {
-        emit = null;
+        handlers.delete(handler);
       };
     },
     ...over,
@@ -149,12 +154,19 @@ function spySource(over: Partial<LedgerSource> = {}) {
     setItems: (next: BacklogView[]) => {
       items = next;
     },
-    emit: (event: LedgerEvent) => emit?.(event),
+    /** `.workledger/identities.yaml` as the next `listIdentities` will report it. */
+    setIdentities: (next: Identity[]) => {
+      identities = next;
+    },
+    emit: (event: LedgerEvent) => {
+      for (const handler of [...handlers]) handler(event);
+    },
   };
 }
 
-async function renderNext(over: Partial<LedgerSource> = {}) {
+async function renderNext(over: Partial<LedgerSource> = {}, identities: Identity[] = []) {
   const spy = spySource(over);
+  spy.setIdentities(identities);
   render(
     <SourceProvider source={spy.source}>
       <NextView />
@@ -212,6 +224,106 @@ describe("grouping and provenance", () => {
       /claude-code · session 01JBPX2M4H6E1TSA7VYJ0G8WQD · checkpoint 2/,
     );
     expect(provenance).toBeDefined();
+  });
+});
+
+/**
+ * docs/contracts/p5/config-and-identities.md, through issue #64: "any `Actor` or `HumanStamp`
+ * whose `email` matches (case-insensitively) is displayed with the mapped `name` … Missing file:
+ * emails display as before."
+ *
+ * Every assertion here comes in a pair — what the map does to the rendering, and what the *same*
+ * card shows with no file at all — because the second half is the promise that this is a display
+ * layer a repo which never wrote the file is unaffected by.
+ */
+describe("identities", () => {
+  const MAPPED: Identity[] = [
+    // Deliberately not the case the ledger records, so a pass proves the lookup is folded.
+    { email: "Manas.Hardas@GMAIL.com", name: "Manas Hardas (mapped)", dome_user: null },
+  ];
+  const HISTORIC = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7H", "Has a history", "accepted", 60, {
+    owner: AUTHOR,
+    confirmed_by: { ...AUTHOR, at: "2026-09-09T08:31:00Z" },
+    history: [
+      { at: "2026-09-09T08:00:00Z", by: AUTHOR, op: "status", diff: "proposed → accepted" },
+      // An agent-originated change is a `{ session, checkpoint }` and has no email at all, so
+      // there is nothing for the map to replace and nothing to hover.
+      {
+        at: "2026-09-09T08:30:00Z",
+        by: { session: "01JBPX2M4H6E1TSA7VYJ0G8WQD", checkpoint: 3 },
+        op: "edit",
+      },
+    ],
+  });
+
+  /** Every element whose `title` is `email` inside one card. */
+  const tooltipped = (title: string, email: string) =>
+    within(card(title))
+      .getAllByTitle(email)
+      .map((node) => node.textContent);
+
+  it("renders the mapped name for owner, confirmed_by and proposed_by.author", async () => {
+    await renderNext({}, MAPPED);
+    const shown = tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email);
+    // proposed_by.author, owner and confirmed_by — three actors, one name, one tooltip each.
+    expect(shown).toEqual([
+      "Manas Hardas (mapped)",
+      "Manas Hardas (mapped)",
+      "Manas Hardas (mapped)",
+    ]);
+  });
+
+  it("renders the mapped name for a history entry's `by`, and leaves a SessionRef alone", async () => {
+    const spy = spySource();
+    spy.setIdentities(MAPPED);
+    spy.setItems([HISTORIC]);
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText(HISTORIC.frontmatter.title);
+
+    const history = within(card(HISTORIC.frontmatter.title)).getByRole("list", { name: "History" });
+    const rows = within(history).getAllByRole("listitem");
+    expect(rows[0]!.textContent).toContain("Manas Hardas (mapped)");
+    expect(within(rows[0]!).getByTitle(AUTHOR.email)).toBeDefined();
+    // The agent row names its session instead; there is no email on it to hover.
+    expect(rows[1]!.textContent).toContain("session 01JBPX2M4H6E1TSA7VYJ0G8WQD");
+    expect(within(rows[1]!).queryByTitle(AUTHOR.email)).toBeNull();
+  });
+
+  it("falls back to the email when the address is unmapped or the file is absent", async () => {
+    // No file at all — the default `renderNext` identities.
+    await renderNext();
+    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
+      AUTHOR.email,
+      AUTHOR.email,
+      AUTHOR.email,
+    ]);
+    // The ledger's own `name` is not the fallback: it is whatever git happened to be configured
+    // with, which is the value the file exists to override.
+    expect(within(card(ACCEPTED.frontmatter.title)).queryByText(AUTHOR.name)).toBeNull();
+    cleanup();
+
+    // A file that maps somebody else leaves this address exactly where the missing file did.
+    await renderNext({}, [{ email: "grace@example.com", name: "Grace Hopper", dome_user: null }]);
+    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
+      AUTHOR.email,
+      AUTHOR.email,
+      AUTHOR.email,
+    ]);
+  });
+
+  it("re-reads the file on health.changed, so an edit lands without a reload", async () => {
+    const spy = await renderNext();
+    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)[0]).toBe(AUTHOR.email);
+
+    spy.setIdentities(MAPPED);
+    spy.emit({ type: "health.changed" });
+    await waitFor(() =>
+      expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)[0]).toBe("Manas Hardas (mapped)"),
+    );
   });
 });
 
