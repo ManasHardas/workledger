@@ -64,6 +64,7 @@ assert both repos initialized and backfilled, Home shows both.
 - [ ] Backfill runs with live progress while Home is usable; completion is shown; sessions appear per repo.
 - [ ] Home lists every enabled repo with live counts; Needs you and Jobs aggregate across repos.
 - [ ] Tests and coverage gate green; the hook allow-path timing unchanged.
+- [ ] **Operator walkthrough (2026-09-09 direction):** the operator runs the onboarding flow end to end from a fresh state (`WORKLEDGER_HOME=$(mktemp -d) workledger`) on this machine and judges it "up to the mark"; `p8-shipped` is tagged only after that verdict, and each defect found becomes a five-line issue in the same phase.
 
 ## Out of scope
 Cloud sync; the Dome card (P6, deferred); design polish (P7).
