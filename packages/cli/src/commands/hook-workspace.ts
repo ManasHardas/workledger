@@ -6,7 +6,8 @@
  * Such a session belongs to no repo at `SessionStart`: it is recorded against the workspace on
  * a row with `workspace = 1` (`0006_workspaces`) and no ledger file. At `Stop`, once a threshold
  * is crossed, the transcript's touched paths decide which enabled repos the session worked in —
- * at least five references to a root, or one write under it — and the block asks for one
+ * one write under a root, or at least five references with a path-tool input or `cd` among them
+ * (#110) — and the block asks for one
  * `workledger checkpoint --session <ulid> --repo <root>` per repo, most-touched first, each
  * against an ordinary session row and ledger file opened in that repo at that moment. Repos the
  * transcript never touched are never written to.
@@ -21,7 +22,7 @@ import { loadConfig } from "../config.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { workspaceCheckpointInstruction } from "../instruction.js";
 import { isEnabled, listOpenBacklogIds } from "../ledger-fs.js";
-import { meetsRule, scanTranscript } from "../onboarding/touched.js";
+import { attributes, emptyTally, scanTranscript, startedInRepo } from "../onboarding/touched.js";
 import { trackedReposUnder } from "./init-workspace.js";
 import { END_REASON_MAP, createSession, describe, firstCrossed, minutesSince, patchFrontmatter } from "./hook.js";
 import type { HookInput } from "../adapters/types.js";
@@ -41,11 +42,15 @@ function readCounts(row: SessionRow): Record<string, TouchTally> {
   }
 }
 
-/** The roots the accumulated counts attribute the session to, most-referenced first. */
-export function touchedRootsOf(counts: Record<string, TouchTally>): string[] {
+/**
+ * The roots the accumulated counts attribute the session to, most-referenced first. `inRepo` is
+ * `startedInRepo` for the workspace: false for a folder that holds its repos, whatever its
+ * ancestors; a write-only rule otherwise.
+ */
+export function touchedRootsOf(counts: Record<string, TouchTally>, inRepo = false): string[] {
   return Object.entries(counts)
-    .filter(([, tally]) => meetsRule(tally))
-    .sort(([a, ta], [b, tb]) => tb.refs - ta.refs || tb.writes - ta.writes || a.localeCompare(b))
+    .filter(([, tally]) => attributes(tally, inRepo))
+    .sort(([a, ta], [b, tb]) => tb.references - ta.references || tb.writes - ta.writes || a.localeCompare(b))
     .map(([root]) => root);
 }
 
@@ -173,7 +178,7 @@ async function stop(ctx: Context): Promise<number> {
     return block(ctx, targets, undefined);
   }
 
-  const targets = await openTargets(ctx, touchedRootsOf(readCounts(session)), size);
+  const targets = await openTargets(ctx, touchedRootsOf(readCounts(session), false), size);
   if (blocks === 1) {
     const rows = targets.map((target) => db.getSessionByUlid(target.sessionId)).filter((row): row is SessionRow => row !== undefined);
     const failed = rows.find((row) => row.last_attempt_at !== null && (row.last_attempt_exit ?? 0) !== 0);
@@ -219,8 +224,12 @@ async function scan(ctx: Context, session: SessionRow, transcript: string | unde
       if (size > session.scan_offset) {
         const result = await scanTranscript(transcript, roots, { homeDir: ctx.io.homeDir, cwd: ctx.root, start: session.scan_offset });
         for (const [root, tally] of result.roots) {
-          const entry = counts[root] ?? { refs: 0, writes: 0 };
-          counts[root] = { refs: entry.refs + tally.refs, writes: entry.writes + tally.writes };
+          const entry = counts[root] ?? emptyTally();
+          counts[root] = {
+            references: entry.references + tally.references,
+            writes: entry.writes + tally.writes,
+            pathInputs: entry.pathInputs + tally.pathInputs,
+          };
         }
         ctx.db.updateSession(session.ulid, { scan_offset: size, scan_counts: JSON.stringify(counts) });
       }
@@ -228,7 +237,7 @@ async function scan(ctx: Context, session: SessionRow, transcript: string | unde
       ctx.io.stderr(`workledger: hook Stop: transcript scan skipped (${describe(error)})`);
     }
   }
-  return touchedRootsOf(counts).filter((root) => roots.includes(root));
+  return touchedRootsOf(counts, startedInRepo(ctx.root, roots)).filter((root) => roots.includes(root));
 }
 
 /** One session row and ledger file per touched repo, opened on first use. */

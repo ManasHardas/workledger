@@ -183,20 +183,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0007_workspaces.sql` is the latest.
-    expect(row?.value).toBe("7");
+    // Bumped by every migration that lands; `0008_touch_path_inputs.sql` is the latest.
+    expect(row?.value).toBe("8");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0009_ninth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0008_eighth.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0010_tenth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0009_ninth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0008_eighth.sql", "0009_ninth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(9);
+    expect(migrate(db.connection, dir)).toEqual(["0009_ninth.sql", "0010_tenth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(10);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -219,7 +219,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql", "0007_workspaces.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql", "0007_workspaces.sql", "0008_touch_path_inputs.sql"]);
   });
 });
 
@@ -377,7 +377,7 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
     opened.pop();
 
     const migrated = open();
-    expect(schemaVersion(migrated.connection)).toBe(7);
+    expect(schemaVersion(migrated.connection)).toBe(8);
     expect(columnsOf(migrated, "sessions")).toEqual(SESSION_COLUMNS);
     expect(migrated.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toMatchObject({
       repo_path: "/tmp/old",
@@ -397,14 +397,14 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
     const db = open();
     const stamp = { mtimeMs: 1_700_000_000_000, size: 4096 };
     db.replaceTranscriptTouches("/t/a.jsonl", stamp, [
-      { root: "/repos/b", refs: 7, writes: 1 },
-      { root: "/repos/a", refs: 0, writes: 0 },
+      { root: "/repos/b", references: 7, writes: 1, pathInputs: 3 },
+      { root: "/repos/a", references: 0, writes: 0, pathInputs: 0 },
     ]);
     expect(db.listTranscriptTouches("/t/a.jsonl")).toEqual([
-      { transcript_path: "/t/a.jsonl", root: "/repos/a", refs: 0, writes: 0, mtime_ms: stamp.mtimeMs, size: 4096 },
-      { transcript_path: "/t/a.jsonl", root: "/repos/b", refs: 7, writes: 1, mtime_ms: stamp.mtimeMs, size: 4096 },
+      { transcript_path: "/t/a.jsonl", root: "/repos/a", references: 0, writes: 0, pathInputs: 0, mtime_ms: stamp.mtimeMs, size: 4096 },
+      { transcript_path: "/t/a.jsonl", root: "/repos/b", references: 7, writes: 1, pathInputs: 3, mtime_ms: stamp.mtimeMs, size: 4096 },
     ]);
-    db.replaceTranscriptTouches("/t/a.jsonl", { mtimeMs: 1, size: 2 }, [{ root: "/repos/c", refs: 2, writes: 0 }]);
+    db.replaceTranscriptTouches("/t/a.jsonl", { mtimeMs: 1, size: 2 }, [{ root: "/repos/c", references: 2, writes: 0, pathInputs: 1 }]);
     expect(db.listTranscriptTouches("/t/a.jsonl").map((row) => [row.root, row.size])).toEqual([["/repos/c", 2]]);
     expect(db.listTranscriptTouches("/t/none.jsonl")).toEqual([]);
   });

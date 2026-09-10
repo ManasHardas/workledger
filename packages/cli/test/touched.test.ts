@@ -1,8 +1,8 @@
 /**
- * The touched-path scanner — docs/contracts/p8/daemon-and-api.md amendment 8: "a session is
- * attributed to every enabled or candidate repo whose root appears in its transcript's tool
- * inputs … a transcript counts for a repo when it references that root at least 5 times or has
- * one write under it".
+ * The touched-path scanner — docs/contracts/p8/daemon-and-api.md amendment 8 as tightened by
+ * #110: a transcript counts for a repo when it has one write under that root, or references it
+ * at least 5 times of which at least one is a non-Bash path tool input or a Bash `cd` into it;
+ * Bash command text alone never attributes.
  *
  * Fixtures are built here rather than committed: a workspace folder that is not a repo, three
  * repos under it, and one transcript per harness whose tool calls touch them — `alpha` with a
@@ -129,12 +129,13 @@ describe("scanTranscript", () => {
 
     expect(scan.cwd).toBe(ws);
     // alpha: Read (relative), cd alpha, src/a.ts after the cd, Edit (absolute) — the Edit writes —
-    // then the second cd and the bare `src` that exists.
-    expect(scan.roots.get(alpha)).toEqual({ refs: 6, writes: 1 });
-    // beta: ls, Read, Grep path, Glob pattern — four reads, no write.
-    expect(scan.roots.get(beta)).toEqual({ refs: 4, writes: 0 });
-    // gamma: the cd, and `git commit` after it writes where the shell is.
-    expect(scan.roots.get(gamma)).toEqual({ refs: 1, writes: 1 });
+    // then the second cd and the bare `src` that exists. Path inputs: the Read, both cds, the Edit.
+    expect(scan.roots.get(alpha)).toEqual({ references: 6, writes: 1, pathInputs: 4 });
+    // beta: ls, Read, Grep path, Glob pattern — four reads, no write; the Read and the Grep `path`
+    // are path inputs, the Bash `ls` and the Glob pattern are not.
+    expect(scan.roots.get(beta)).toEqual({ references: 4, writes: 0, pathInputs: 2 });
+    // gamma: the cd (a path input), and `git commit` after it writes where the shell is.
+    expect(scan.roots.get(gamma)).toEqual({ references: 1, writes: 1, pathInputs: 1 });
   });
 
   it("counts a Codex rollout the same way from its own record shapes", async () => {
@@ -144,20 +145,44 @@ describe("scanTranscript", () => {
     const scan = await scanTranscript(file, [alpha, beta, gamma], { homeDir: home });
 
     expect(scan.cwd).toBe(ws);
-    // alpha: exec cat, shell cd + sed, apply_patch (a write).
-    expect(scan.roots.get(alpha)).toEqual({ refs: 4, writes: 1 });
-    // beta: three reads; the tool *output* naming it three more times is not an input.
-    expect(scan.roots.get(beta)).toEqual({ refs: 3, writes: 0 });
+    // alpha: exec cat, shell cd + sed, apply_patch (a write); the cd and the patch are path inputs.
+    expect(scan.roots.get(alpha)).toEqual({ references: 4, writes: 1, pathInputs: 2 });
+    // beta: three shell reads, none a path input; the tool *output* naming it three more times is
+    // not an input.
+    expect(scan.roots.get(beta)).toEqual({ references: 3, writes: 0, pathInputs: 0 });
     // gamma: a `git commit` with the call's workdir there.
-    expect(scan.roots.get(gamma)).toEqual({ refs: 0, writes: 1 });
+    expect(scan.roots.get(gamma)).toEqual({ references: 0, writes: 1, pathInputs: 0 });
   });
 
-  it("applies the attribution rule: five references, or one write", () => {
+  it("applies the attribution rule: one write, or five references with at least one path input (#110)", () => {
     expect(MIN_REFERENCES).toBe(5);
-    expect(meetsRule({ refs: 5, writes: 0 })).toBe(true);
-    expect(meetsRule({ refs: 4, writes: 0 })).toBe(false);
-    expect(meetsRule({ refs: 0, writes: 1 })).toBe(true);
-    expect(meetsRule({ refs: 0, writes: 0 })).toBe(false);
+    expect(meetsRule({ references: 5, writes: 0, pathInputs: 1 })).toBe(true);
+    expect(meetsRule({ references: 4, writes: 0, pathInputs: 4 })).toBe(false);
+    // Bash text alone: twenty mentions, no path input, no write — never attributed.
+    expect(meetsRule({ references: 20, writes: 0, pathInputs: 0 })).toBe(false);
+    expect(meetsRule({ references: 0, writes: 1, pathInputs: 0 })).toBe(true);
+    expect(meetsRule({ references: 0, writes: 0, pathInputs: 0 })).toBe(false);
+  });
+
+  it("does not attribute a transcript whose only references are Bash command text, however many", async () => {
+    const file = path.join(dir, "bash-only.jsonl");
+    const commands = Array.from({ length: 20 }, (_, i) => toolUse("Bash", { command: `grep -n foo ${gamma}/src/file${i}.ts` })).join("");
+    writeFileSync(file, commands, "utf8");
+    const scan = await scanTranscript(file, [gamma], { homeDir: home });
+    expect(scan.roots.get(gamma)).toEqual({ references: 20, writes: 0, pathInputs: 0 });
+    expect(meetsRule(scan.roots.get(gamma)!)).toBe(false);
+
+    // One `cd` into the root among them is the path input the rule asks for.
+    writeFileSync(file, commands + toolUse("Bash", { command: `cd ${gamma} && git status` }), "utf8");
+    const withCd = await scanTranscript(file, [gamma], { homeDir: home });
+    expect(withCd.roots.get(gamma)).toEqual({ references: 21, writes: 0, pathInputs: 1 });
+    expect(meetsRule(withCd.roots.get(gamma)!)).toBe(true);
+
+    // So is one Read of a file under it.
+    writeFileSync(file, commands + toolUse("Read", { file_path: `${gamma}/README.md` }), "utf8");
+    const withRead = await scanTranscript(file, [gamma], { homeDir: home });
+    expect(withRead.roots.get(gamma)).toEqual({ references: 21, writes: 0, pathInputs: 1 });
+    expect(meetsRule(withRead.roots.get(gamma)!)).toBe(true);
   });
 
   it("counts tool inputs only: a tool result or assistant text naming a root twenty times is not a reference", async () => {
@@ -176,7 +201,7 @@ describe("scanTranscript", () => {
       "utf8",
     );
     const scan = await scanTranscript(file, [gamma], { homeDir: home });
-    expect(scan.roots.get(gamma)).toEqual({ refs: 0, writes: 0 });
+    expect(scan.roots.get(gamma)).toEqual({ references: 0, writes: 0, pathInputs: 0 });
     expect(meetsRule(scan.roots.get(gamma)!)).toBe(false);
   });
 
@@ -184,8 +209,8 @@ describe("scanTranscript", () => {
     const file = path.join(dir, "nested.jsonl");
     writeFileSync(file, toolUse("Read", { file_path: path.join(alpha, "src", "a.ts") }), "utf8");
     const scan = await scanTranscript(file, [ws, alpha], { homeDir: home });
-    expect(scan.roots.get(alpha)).toEqual({ refs: 1, writes: 0 });
-    expect(scan.roots.get(ws)).toEqual({ refs: 0, writes: 0 });
+    expect(scan.roots.get(alpha)).toEqual({ references: 1, writes: 0, pathInputs: 1 });
+    expect(scan.roots.get(ws)).toEqual({ references: 0, writes: 0, pathInputs: 0 });
   });
 
   it("yields zero counts for a file it cannot parse, and reads no cwd from it", async () => {
@@ -193,7 +218,7 @@ describe("scanTranscript", () => {
     writeFileSync(file, "not json\n{\"type\":\"assistant\"}\n", "utf8");
     const scan = await scanTranscript(file, [alpha], { homeDir: home });
     expect(scan.cwd).toBeUndefined();
-    expect(scan.roots.get(alpha)).toEqual({ refs: 0, writes: 0 });
+    expect(scan.roots.get(alpha)).toEqual({ references: 0, writes: 0, pathInputs: 0 });
   });
 });
 
@@ -216,12 +241,12 @@ describe("touchedRoots (the index cache)", () => {
 
     const first = await touchedRoots(db, file, [alpha, beta], { cwd: ws, homeDir: home });
     expect([...first.entries()]).toEqual([
-      [alpha, { refs: 6, writes: 1 }],
-      [beta, { refs: 4, writes: 0 }],
+      [alpha, { references: 6, writes: 1, pathInputs: 4 }],
+      [beta, { references: 4, writes: 0, pathInputs: 2 }],
     ]);
-    expect(db.listTranscriptTouches(file).map((row) => [row.root, row.refs, row.writes])).toEqual([
-      [alpha, 6, 1],
-      [beta, 4, 0],
+    expect(db.listTranscriptTouches(file).map((row) => [row.root, row.references, row.writes, row.pathInputs])).toEqual([
+      [alpha, 6, 1, 4],
+      [beta, 4, 0, 2],
     ]);
 
     // Same size, same mtime, different bytes: the cache answers, the file is not read.
@@ -233,21 +258,21 @@ describe("touchedRoots (the index cache)", () => {
     // A root the cache has not seen is scanned — against the file as it is now — and the
     // cached rows for the others are kept.
     const widened = await touchedRoots(db, file, [alpha, gamma], { cwd: ws, homeDir: home });
-    expect(widened.get(alpha)).toEqual({ refs: 6, writes: 1 });
-    expect(widened.get(gamma)).toEqual({ refs: 0, writes: 0 });
+    expect(widened.get(alpha)).toEqual({ references: 6, writes: 1, pathInputs: 4 });
+    expect(widened.get(gamma)).toEqual({ references: 0, writes: 0, pathInputs: 0 });
     expect(db.listTranscriptTouches(file).map((row) => row.root)).toEqual([alpha, beta, gamma]);
 
     // A changed file is rescanned for every root asked.
     writeFileSync(file, claudeTranscript(), "utf8");
     const again = await touchedRoots(db, file, [gamma], { cwd: ws, homeDir: home });
-    expect(again.get(gamma)).toEqual({ refs: 1, writes: 1 });
+    expect(again.get(gamma)).toEqual({ references: 1, writes: 1, pathInputs: 1 });
     expect(db.listTranscriptTouches(file).map((row) => row.root)).toEqual([gamma]);
   });
 
   it("returns zero counts and caches nothing for a transcript that is gone", async () => {
     const missing = path.join(dir, "gone.jsonl");
     const result = await touchedRoots(db, missing, [alpha], { cwd: ws, homeDir: home });
-    expect(result.get(alpha)).toEqual({ refs: 0, writes: 0 });
+    expect(result.get(alpha)).toEqual({ references: 0, writes: 0, pathInputs: 0 });
     expect(db.listTranscriptTouches(missing)).toEqual([]);
   });
 });

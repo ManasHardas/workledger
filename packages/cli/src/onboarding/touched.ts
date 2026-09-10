@@ -5,9 +5,12 @@
  * its work in the repos below it, and nothing about where it *started* says which. What does say
  * is the transcript's tool inputs: every `Read`, `Edit`, `Bash` and `cd` names a path. This
  * module reads a transcript once, front to back, and counts — per candidate root — how many tool
- * inputs named a path under it and how many of those wrote there. The rule that turns the counts
- * into an attribution is {@link meetsRule}: at least {@link MIN_REFERENCES} references, or one
- * write.
+ * inputs named a path under it, how many of those wrote there, and how many were *path inputs*:
+ * a non-Bash tool's `file_path`/`path`/`notebook_path`, or a Bash `cd` into the root. The rule
+ * that turns the counts into an attribution is {@link meetsRule}: one write, or at least
+ * {@link MIN_REFERENCES} references of which at least one is a path input (#110). Bash command
+ * text alone — a `grep` that names the root twenty times — never attributes: the orchestrator's
+ * own session in `~/Projects` was attributed to a card repo that way.
  *
  * Two constraints shape the reading:
  *
@@ -28,20 +31,60 @@ import { createInterface } from "node:readline";
 
 import type { IndexDb, TouchCount } from "../index/db.js";
 
-/** A transcript counts for a root at this many references (amendment 8), or at one write. */
+/**
+ * A transcript counts for a root at this many references when one of them is a path input
+ * (amendment 8, #110), or at one write.
+ */
 export const MIN_REFERENCES = 5;
 
 /** What one transcript did under one root. */
 export interface TouchTally {
   /** Tool inputs naming a path under the root. */
-  refs: number;
+  references: number;
   /** Of those, the ones that wrote under it. */
   writes: number;
+  /** Of those, the non-Bash path inputs (`file_path`/`path`/`notebook_path`) and the `cd`s into it. */
+  pathInputs: number;
 }
 
-/** The rule: "references that root at least 5 times or has one write under it". */
+/** A tally of nothing. */
+export function emptyTally(): TouchTally {
+  return { references: 0, writes: 0, pathInputs: 0 };
+}
+
+/**
+ * The rule: one write under the root, or at least {@link MIN_REFERENCES} references of which at
+ * least one is a path input. Bash text mentions alone never attribute.
+ */
 export function meetsRule(tally: TouchTally): boolean {
-  return tally.refs >= MIN_REFERENCES || tally.writes >= 1;
+  return tally.writes >= 1 || (tally.references >= MIN_REFERENCES && tally.pathInputs >= 1);
+}
+
+/**
+ * Whether a session that started in `cwd` started inside a repo, for {@link attributes}: `cwd`
+ * is a repo root itself (its own `.git`), or lies below one of `roots` — the candidate and
+ * enabled repos — while holding none of them. A start directory with no `.git` of its own that
+ * holds a candidate is a workspace folder, outside any repo whatever its git ancestors:
+ * `~/Projects/dome_workspace` under a `~/Projects` that is itself a repo is where its sessions
+ * work, not a corner of `~/Projects`. This is the workspace rule of `discover.ts`, and the one
+ * place discover, history, backfill and the workspace Stop hook decide it.
+ */
+export function startedInRepo(cwd: string, roots: readonly string[]): boolean {
+  const start = path.resolve(cwd);
+  if (existsSync(path.join(start, ".git"))) return true;
+  const below = (dir: string, parent: string): boolean => dir !== parent && dir.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
+  if (roots.some((root) => below(path.resolve(root), start))) return false;
+  return roots.some((root) => below(start, path.resolve(root)));
+}
+
+/**
+ * Whether a tally attributes the session to a root other than the one it started in. The
+ * reference rule ({@link meetsRule}) is for sessions started outside any repo — a workspace
+ * folder — or inside the repo itself; a session started inside another repo counts here only
+ * with a write, because reading or `cd`-ing into a sibling project is routine (#110).
+ */
+export function attributes(tally: TouchTally, inRepo: boolean): boolean {
+  return inRepo ? tally.writes >= 1 : meetsRule(tally);
 }
 
 /** What {@link scanTranscript} needs beyond the file. */
@@ -111,24 +154,26 @@ class Tallies {
 
   constructor(roots: readonly string[], homeDir: string) {
     this.keys = roots.map((root) => path.resolve(root));
-    this.roots = new Map(roots.map((root) => [root, { refs: 0, writes: 0 }]));
+    this.roots = new Map(roots.map((root) => [root, emptyTally()]));
     this.homeDir = homeDir;
   }
 
   /**
    * Count one path, resolved against `cwd`. Returns the root it landed in, if any. With
    * `mustExist`, only a path that is on disk counts — the rule for a bare word in a shell
-   * command (`ls card-a`), which is a path only when something by that name is there.
+   * command (`ls card-a`), which is a path only when something by that name is there. A
+   * `pathInput` is a path the agent named outside shell text: a path-tool input or a `cd`.
    */
-  touch(given: string, cwd: string, write: boolean, mustExist = false): string | undefined {
+  touch(given: string, cwd: string, write: boolean, mustExist = false, pathInput = false): string | undefined {
     const absolute = resolvePath(given, cwd, this.homeDir);
     const key = rootOf(absolute, this.keys);
     if (key === undefined) return undefined;
     if (mustExist && !existsSync(absolute)) return undefined;
     const root = [...this.roots.keys()][this.keys.indexOf(key)] as string;
     const tally = this.roots.get(root) as TouchTally;
-    tally.refs += 1;
+    tally.references += 1;
     if (write) tally.writes += 1;
+    if (pathInput) tally.pathInputs += 1;
     return root;
   }
 
@@ -142,8 +187,9 @@ class Tallies {
 
   /**
    * One shell command: every word that looks like a path is a reference, a `cd` moves the
-   * working directory for the words after it, and a writing segment marks its paths — or, with
-   * none, its working directory — as written. Returns the working directory the shell ended in.
+   * working directory for the words after it and is the one shell word that counts as a path
+   * input, and a writing segment marks its paths — or, with none, its working directory — as
+   * written. Returns the working directory the shell ended in.
    */
   shell(command: string, cwd: string): string {
     let current = cwd;
@@ -161,7 +207,7 @@ class Tallies {
         const target = words[start + 1];
         if (target === undefined || target === "~") current = this.homeDir;
         else if (target !== "-") {
-          this.touch(target, current, false);
+          this.touch(target, current, false, false, true);
           current = resolvePath(target, current, this.homeDir);
         }
         continue;
@@ -183,12 +229,15 @@ class Tallies {
     return current;
   }
 
-  /** One tool call by its harness-neutral shape: a tool name and its input object. */
+  /**
+   * One tool call by its harness-neutral shape: a tool name and its input object. A path key is
+   * a path input; a `pattern`'s literal prefix and a `command`'s words are references only.
+   */
   toolCall(name: string, input: Record<string, unknown>, cwd: string): void {
     const write = WRITE_TOOLS.has(name);
     for (const key of PATH_KEYS) {
       const value = input[key];
-      if (typeof value === "string" && value !== "") this.touch(value, cwd, write);
+      if (typeof value === "string" && value !== "") this.touch(value, cwd, write, false, true);
     }
     const pattern = input["pattern"];
     if (typeof pattern === "string" && pattern.startsWith("/")) {
@@ -200,10 +249,10 @@ class Tallies {
     if (typeof command === "string" && command !== "") this.shell(command, cwd);
   }
 
-  /** A Codex `apply_patch` body: `*** Update File: <path>` and its siblings are writes. */
+  /** A Codex `apply_patch` body: `*** Update File: <path>` and its siblings are writes, and path inputs. */
   patch(text: string, cwd: string): void {
     for (const match of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) {
-      this.touch((match[1] as string).trim(), cwd, true);
+      this.touch((match[1] as string).trim(), cwd, true, false, true);
     }
   }
 }
@@ -376,7 +425,7 @@ export async function touchedRoots(
   roots: readonly string[],
   options: ScanOptions,
 ): Promise<Map<string, TouchTally>> {
-  const result = new Map<string, TouchTally>(roots.map((root) => [root, { refs: 0, writes: 0 }]));
+  const result = new Map<string, TouchTally>(roots.map((root) => [root, emptyTally()]));
   let stamp: { mtimeMs: number; size: number };
   try {
     const stat = statSync(file);
@@ -392,7 +441,7 @@ export async function touchedRoots(
   const missing = roots.filter((root) => !cached.has(root));
   if (missing.length > 0) {
     const scan = await scanTranscript(file, missing, options);
-    const rows: TouchCount[] = kept.map((row) => ({ root: row.root, refs: row.refs, writes: row.writes }));
+    const rows: TouchCount[] = kept.map((row) => ({ root: row.root, references: row.references, writes: row.writes, pathInputs: row.pathInputs }));
     for (const [root, tally] of scan.roots) {
       rows.push({ root, ...tally });
       cached.set(root, { transcript_path: file, root, ...tally, mtime_ms: stamp.mtimeMs, size: stamp.size });
@@ -401,7 +450,7 @@ export async function touchedRoots(
   }
   for (const root of roots) {
     const row = cached.get(root);
-    if (row !== undefined) result.set(root, { refs: row.refs, writes: row.writes });
+    if (row !== undefined) result.set(root, { references: row.references, writes: row.writes, pathInputs: row.pathInputs });
   }
   return result;
 }

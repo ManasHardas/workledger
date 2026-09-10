@@ -733,12 +733,13 @@ describe("touched-path attribution (amendment 8, #105)", () => {
     const claudeAt = new Date(NOW.getTime() - 2 * DAY_MS);
     utimesSync(claudeFile, claudeAt, claudeAt);
 
-    // A Codex rollout started there too: five reads of card-a (enough), three of card-b (not).
+    // A Codex rollout started there too: five references to card-a, one of them a `cd` into it
+    // (enough, #110), three shell mentions of card-b (not).
     codexFile = path.join(home, CODEX_STORE, "2026", "09", "08", "rollout-ws.jsonl");
     writeFileSync(
       codexFile,
       `${JSON.stringify({ timestamp: "2026-09-08T10:00:00.000Z", type: "session_meta", payload: { id: CODEX_WS_ID, cwd: ws, timestamp: "2026-09-08T10:00:00.000Z" } })}\n` +
-        ["cat card-a/src/a.ts", "ls card-a", "rg x card-a/src", "wc -l card-a/src/a.ts", "head card-a/README.md"].map(exec).join("") +
+        ["cat card-a/src/a.ts", "ls card-a", "rg x card-a/src", "wc -l card-a/src/a.ts", "cd card-a && head README.md"].map(exec).join("") +
         ["ls card-b", "cat card-b/README.md", "rg y card-b"].map(exec).join(""),
       "utf8",
     );
@@ -770,6 +771,28 @@ describe("touched-path attribution (amendment 8, #105)", () => {
     expect(result.known.find((c) => c.path === ws)).toMatchObject({ hasGit: false, suggested: false, startedIn: [], touchedSessions: 0 });
     // The other repos' sessions started inside them and are not touched sessions.
     expect(result.known.find((c) => c.path === repoA)).toMatchObject({ startedIn: [], touchedSessions: 0 });
+  });
+
+  it("attributes a session started inside another repo only by a write, never by reads or cds", async () => {
+    // Started in repo-c: ten Reads and cds into card-a — routine sibling browsing, not work there.
+    const file = path.join(home, CLAUDE_STORE, projectSlug(repoC), "hs-c.jsonl");
+    mkdirSync(path.dirname(file), { recursive: true });
+    const record = (name: string, input: Record<string, unknown>): string =>
+      `${JSON.stringify({ type: "assistant", timestamp: "2026-09-08T10:00:00.000Z", cwd: repoC, message: { role: "assistant", content: [{ type: "tool_use", id: "t", name, input }] } })}\n`;
+    const browsing =
+      `${JSON.stringify({ type: "user", timestamp: "2026-09-08T09:59:00.000Z", cwd: repoC, message: { role: "user", content: "go" } })}\n` +
+      Array.from({ length: 5 }, (_, i) => record("Read", { file_path: path.join(cardA, "src", `${i}.ts`) })).join("") +
+      Array.from({ length: 5 }, () => record("Bash", { command: `cd ${cardA} && git log -1` })).join("");
+    writeFileSync(file, browsing, "utf8");
+    utimesSync(file, NOW, NOW);
+
+    const before = await discoverRepos({}, io);
+    expect(before.known.find((c) => c.path === cardA)).toMatchObject({ startedIn: [ws], touchedSessions: 2 });
+
+    writeFileSync(file, browsing + record("Write", { file_path: path.join(cardA, "notes.md"), content: "x" }), "utf8");
+    utimesSync(file, NOW, NOW);
+    const after = await discoverRepos({}, io);
+    expect(after.known.find((c) => c.path === cardA)).toMatchObject({ startedIn: [repoC, ws].sort(), touchedSessions: 3 });
   });
 
   it("history counts the touched session once per repo it touched", async () => {
