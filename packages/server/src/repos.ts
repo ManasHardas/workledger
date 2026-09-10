@@ -119,7 +119,10 @@ export class RepoRegistry {
 
   /**
    * Start serving `root`: load its ledger, watch it, and (with job ops) poll its jobs.
-   * Idempotent — a root already held is returned as it stands rather than watched twice.
+   * Idempotent — a root already held is returned as it stands rather than watched twice, and
+   * only a root that was not held announces itself with `repos.changed` (#94): the wizard's
+   * `init` and the daemon's index re-read both land here, and Home re-reads `/api/repos` on the
+   * frame instead of on a reload.
    */
   add(root: string): RepoContext {
     const resolved = path.resolve(root);
@@ -185,15 +188,17 @@ export class RepoRegistry {
       },
     };
     this.#repos.set(id, context);
+    bus.emit({ event: "repos.changed", data: { repo: id } });
     return context;
   }
 
-  /** Stop serving one repo. @returns `false` when the id was not held. */
+  /** Stop serving one repo, announced the same way. @returns `false` when the id was not held. */
   remove(id: string): boolean {
     const context = this.#repos.get(id);
     if (context === undefined) return false;
     context.close();
     this.#repos.delete(id);
+    this.#options.bus.emit({ event: "repos.changed", data: { repo: id } });
     return true;
   }
 

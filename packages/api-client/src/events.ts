@@ -63,7 +63,8 @@ export interface SubscribeOptions {
 
 /**
  * api.md §SSE names the events; `ping` is the keep-alive and carries nothing for the UI.
- * `job.changed` is P3's addition (docs/contracts/p3/api.md).
+ * `job.changed` is P3's addition (docs/contracts/p3/api.md); `repos.changed` is P8's
+ * (daemon-and-api.md amendment 4).
  */
 const EVENT_NAMES = [
   "session.changed",
@@ -71,6 +72,7 @@ const EVENT_NAMES = [
   "notes.changed",
   "health.changed",
   "job.changed",
+  "repos.changed",
 ];
 
 /** Parse one frame into a `LedgerEvent`, or `undefined` if it is not one. */
@@ -102,7 +104,9 @@ export function toLedgerEvent(name: string, data: string): LedgerEvent | undefin
       ? { type: "job.changed", id, status, ...stamp }
       : undefined;
   }
-  return name === "notes.changed" ? { type: "notes.changed", ...stamp } : { type: "health.changed", ...stamp };
+  if (name === "notes.changed") return { type: "notes.changed", ...stamp };
+  if (name === "repos.changed") return { type: "repos.changed", ...stamp };
+  return { type: "health.changed", ...stamp };
 }
 
 /**

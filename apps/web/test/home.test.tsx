@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { formatRelative } from "../src/features/home/format.js";
-import { REPOS_REFRESH_MS } from "../src/features/home/live.js";
+import { REPOS_REFRESH_MS, announceReposChanged } from "../src/features/home/live.js";
 import { FIXTURE_REPOS } from "../src/lib/fixtures.js";
 import { createSource, type AppSource, type LedgerEvent, type Repo } from "../src/lib/ledger-source.js";
 import { repoHref } from "../src/lib/router.js";
@@ -154,6 +154,39 @@ describe("Home", () => {
     });
     expect(live.reads).toBe(2);
     expect(within(card()).getByText("sessions · 7d").nextElementSibling?.textContent).toBe("4");
+    vi.useRealTimers();
+  });
+
+  it("adds a card on repos.changed, and on the wizard's in-tab announcement (#94)", async () => {
+    vi.useFakeTimers();
+    let repos: Repo[] = [WORKLEDGER];
+    const live = machine(() => repos);
+    renderHome(live.source);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const list = () => screen.getByRole("list", { name: "Projects" });
+    expect(within(list()).queryByRole("link", { name: DASHERO.name })).toBeNull();
+    expect(live.reads).toBe(1);
+
+    // The daemon's frame for a repo `init` just enabled: the new card appears without a reload.
+    repos = [WORKLEDGER, DASHERO];
+    await act(async () => {
+      live.emit({ type: "repos.changed", repo: DASHERO.id });
+      await vi.advanceTimersByTimeAsync(REPOS_REFRESH_MS + 1);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(live.reads).toBe(2);
+    expect(within(list()).getByRole("link", { name: DASHERO.name })).toBeDefined();
+
+    // The wizard's belt-and-braces refresh from inside the tab schedules the same read.
+    await act(async () => {
+      announceReposChanged();
+      await vi.advanceTimersByTimeAsync(REPOS_REFRESH_MS + 1);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(live.reads).toBe(3);
     vi.useRealTimers();
   });
 });
