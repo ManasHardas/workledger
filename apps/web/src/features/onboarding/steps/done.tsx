@@ -11,15 +11,12 @@ import { plural } from "../format.js";
 import type { WizardState } from "../state.js";
 import { StepActions, StepFrame } from "../wizard.js";
 
-/** Both "no backfill" exits say the same thing, so it is one string, also asserted by the tests. */
-export const NOTHING_BACKFILLED = "Nothing was backfilled; new sessions will be recorded from now on.";
-
 /**
  * Step 5 — what happened (plans/feature-p8-onboarding-home.md step 6).
  *
  * A run reads `status` once more for the final totals and points at Jobs for any failure. The
- * two exits that ran nothing — `none` on the history step, Skip on the method step — say so in
- * one sentence, because "done" after choosing nothing must not read as "backfilled".
+ * two exits that ran nothing — `none` on the history step, Skip on the method step — lead with
+ * "Nothing was backfilled", because "done" after choosing nothing must not read as "backfilled".
  */
 export function DoneStep({ state, source }: { state: WizardState; source: AppSource }) {
   const ran = state.since !== undefined && state.since !== "none" && state.method !== undefined && state.method !== "none";
@@ -27,13 +24,28 @@ export function DoneStep({ state, source }: { state: WizardState; source: AppSou
 
   if (!ran) {
     return (
-      <StepFrame title="All set" lead={`${plural(repos, "repo")} enabled.`}>
-        <p className="text-sm">{NOTHING_BACKFILLED}</p>
+      <StepFrame
+        title="Nothing was backfilled"
+        lead={`${plural(repos, "repo")} enabled; new sessions will be recorded from now on.`}
+      >
         <Exit />
       </StepFrame>
     );
   }
   return <RunSummary source={source} repos={repos} />;
+}
+
+/**
+ * The outcome in one line, shared with the Home banner so both say the same thing:
+ * "Backfilled N sessions across M repos", "Backfilled N of T sessions; K failed", or
+ * "Nothing was backfilled".
+ */
+export function outcomeLine(status: Pick<OnboardingStatus, "done" | "failed" | "total">, repos: number): string {
+  if (status.done === 0) return "Nothing was backfilled";
+  if (status.failed > 0) {
+    return `Backfilled ${String(status.done)} of ${plural(status.total, "session")}; ${String(status.failed)} failed`;
+  }
+  return `Backfilled ${plural(status.done, "session")} across ${plural(repos, "repo")}`;
 }
 
 function RunSummary({ source, repos }: { source: AppSource; repos: number }) {
@@ -45,35 +57,42 @@ function RunSummary({ source, repos }: { source: AppSource; repos: number }) {
       return value;
     }, [source]),
   );
+  if (status.state !== "ready") {
+    return (
+      <StepFrame title="Backfill" lead="Reading the outcome…">
+        <AsyncPanel result={status} empty="">
+          {() => null}
+        </AsyncPanel>
+        <Exit />
+      </StepFrame>
+    );
+  }
+  const value = status.value;
   return (
-    <StepFrame title="Backfill finished" lead={`${plural(repos, "repo")} enabled and their history digested.`}>
-      <AsyncPanel result={status} empty="">
-        {(value) => <Totals status={value} repos={repos} />}
-      </AsyncPanel>
-      <Exit />
-    </StepFrame>
-  );
-}
-
-function Totals({ status, repos }: { status: OnboardingStatus; repos: number }) {
-  if (status.total === 0) return <p className="text-sm">{NOTHING_BACKFILLED}</p>;
-  return (
-    <div className="flex flex-col gap-2 text-sm">
-      <p>
-        <span className="font-semibold tabular-nums">{plural(status.done, "session")}</span> across{" "}
-        {plural(repos, "repo")} now have a checkpoint.
-        {!status.complete ? ` ${String(status.running)} still running; Home shows the finish.` : ""}
-      </p>
-      {status.failed > 0 ? (
-        <p role="alert" className="text-destructive">
-          {plural(status.failed, "session")} could not be digested.{" "}
+    <StepFrame
+      title={outcomeLine(value, repos)}
+      lead={
+        value.done === 0
+          ? `${plural(repos, "repo")} enabled; new sessions will be recorded from now on.`
+          : `${plural(repos, "repo")} enabled. Each backfilled session now has a summary in its repo's ledger.`
+      }
+    >
+      {value.failed > 0 ? (
+        <p role="alert" className="text-sm text-destructive">
+          {plural(value.failed, "session")} could not be summarized.{" "}
           <a href={machineHref("jobs")} className="underline underline-offset-2">
             See the failed jobs
           </a>{" "}
           for the log and a retry.
         </p>
       ) : null}
-    </div>
+      {!value.complete ? (
+        <p className="text-sm text-muted-foreground">
+          {String(value.running)} still running; Home announces the finish.
+        </p>
+      ) : null}
+      <Exit />
+    </StepFrame>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AsyncPanel } from "../../../components/async-panel.js";
 import { Badge } from "../../../components/ui/badge.js";
@@ -31,11 +31,19 @@ const LIST_SEP = "\u0000";
 export function ProjectsStep({ state, source }: { state: WizardState; source: AppSource }) {
   // The list's identity is its contents: the array itself is a new object on every hash read.
   const rootsKey = state.roots.join(LIST_SEP);
+  // The daemon's own roots (`~/Projects`), learned from a `discover` with none named. An added
+  // folder is walked *beside* them, never instead — `?roots=` replaces the default on the wire.
+  const defaults = useRef<string[] | null>(null);
   const discovered = useAsync(
-    useCallback(
-      () => source.discover(rootsKey === "" ? undefined : rootsKey.split(LIST_SEP)),
-      [source, rootsKey],
-    ),
+    useCallback(async () => {
+      const added = rootsKey === "" ? [] : rootsKey.split(LIST_SEP);
+      if (defaults.current === null) {
+        const first = await source.discover();
+        defaults.current = first.roots;
+        if (added.length === 0) return first;
+      }
+      return source.discover([...new Set([...defaults.current, ...added])]);
+    }, [source, rootsKey]),
   );
   const init = useAction(useCallback((repos: string[]) => source.initRepos({ repos }), [source]));
 
@@ -68,10 +76,20 @@ export function ProjectsStep({ state, source }: { state: WizardState; source: Ap
   );
 }
 
-/** The selection: the checked paths, or the daemon's suggestion when nothing was touched yet. */
+/** Whether the box can be ticked at all: not already tracked, and a git repo `init` will accept. */
+export function tickable(repo: RepoCandidate): boolean {
+  return !repo.enabled && repo.hasGit;
+}
+
+/**
+ * The selection: the checked paths, or the daemon's suggestion when nothing was touched yet.
+ * Always narrowed to what can be ticked, so a path a stale URL names never reaches `init` —
+ * one non-git path fails the whole batch with 400 `invalid-repo`.
+ */
 export function selectedRepos(found: DiscoverResult, state: WizardState): string[] {
-  if (state.repos !== undefined) return state.repos;
-  return found.known.filter((repo) => !repo.enabled && isSuggested(repo)).map((repo) => repo.path);
+  const allowed = new Set([...found.known, ...found.found].filter(tickable).map((repo) => repo.path));
+  if (state.repos !== undefined) return state.repos.filter((path) => allowed.has(path));
+  return found.known.filter((repo) => tickable(repo) && isSuggested(repo)).map((repo) => repo.path);
 }
 
 function RepoPicker({
@@ -172,7 +190,7 @@ function RepoGroup({
                 repo={repo}
                 hint={isSuggested(repo) ? null : unsuggestedHint(repo, all)}
                 checked={repo.enabled || selected.includes(repo.path)}
-                disabled={disabled || repo.enabled}
+                disabled={disabled || !tickable(repo)}
                 onToggle={(on) => onToggle(repo.path, on)}
                 now={now}
               />
@@ -261,8 +279,8 @@ function AddFolder({ state, disabled }: { state: WizardState; disabled: boolean 
         Add folder
       </label>
       <p className="text-xs text-muted-foreground">
-        Another folder to look in for git repos (up to three levels deep). Its repos join the second
-        list.
+        Another folder to look in for git repos (up to three levels deep), beside the ones already
+        listed. Its repos join the second list.
       </p>
       <div className="flex min-w-0 gap-2">
         <Input

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 
-import { Button } from "../../../components/ui/button.js";
+import { buttonVariants } from "../../../components/ui/button.js";
+import { cn } from "../../../lib/cn.js";
 import type { AppSource, OnboardingStatus } from "../../../lib/ledger-source.js";
 import { HOME_HREF } from "../../../lib/router.js";
 import { finishBackfillRun, readBackfillRun } from "../flags.js";
 import { plural } from "../format.js";
-import { goTo, replaceWith, type WizardState } from "../state.js";
+import { replaceWith, type WizardState } from "../state.js";
 import { useBackfillProgress, type RepoProgress } from "../use-backfill-progress.js";
 import { StepActions, StepFrame } from "../wizard.js";
 
@@ -23,7 +24,6 @@ export function RunningStep({ state, source }: { state: WizardState; source: App
 
   // Nothing still ahead: record the finish and move on. Both are idempotent, so re-running on a
   // later poll or hash read is harmless — and the move unmounts this step anyway.
-  const complete = status.state === "ready" && status.value.complete;
   useEffect(() => {
     if (status.state !== "ready" || !status.value.complete) return;
     finishBackfillRun(status.value);
@@ -51,15 +51,13 @@ export function RunningStep({ state, source }: { state: WizardState; source: App
         <Progress status={status.value} perRepo={perRepo} />
       )}
       <StepActions>
-        <a
-          href={HOME_HREF}
-          className="rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Go to home — the backfill keeps running
+        <p className="text-sm text-muted-foreground">
+          Stay and watch — this page moves on by itself when the last job lands — or leave; the
+          backfill keeps running and Home announces the finish.
+        </p>
+        <a href={HOME_HREF} className={cn(buttonVariants({ variant: "outline" }), "ml-auto")}>
+          Go to home
         </a>
-        <Button className="ml-auto" variant="outline" onClick={() => goTo({ ...state, step: "done" })} disabled={!complete}>
-          Continue
-        </Button>
       </StepActions>
     </StepFrame>
   );
@@ -111,9 +109,18 @@ function Progress({ status, perRepo }: { status: OnboardingStatus; perRepo: Repo
                 <td className="max-w-0 truncate py-1 font-mono text-xs" title={repo.path}>
                   {repo.path.split("/").pop()}
                 </td>
-                <td className="py-1 text-right tabular-nums">{String(repo.done)}</td>
-                <td className="py-1 text-right tabular-nums">{String(repo.failed)}</td>
-                <td className="py-1 text-right tabular-nums">{String(repo.total)}</td>
+                {repo.total === 0 ? (
+                  // A repo with nothing to do is not a stalled one.
+                  <td colSpan={3} className="py-1 text-right text-xs text-muted-foreground">
+                    no sessions in this window
+                  </td>
+                ) : (
+                  <>
+                    <td className="py-1 text-right tabular-nums">{String(repo.done)}</td>
+                    <td className="py-1 text-right tabular-nums">{String(repo.failed)}</td>
+                    <td className="py-1 text-right tabular-nums">{String(repo.total)}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

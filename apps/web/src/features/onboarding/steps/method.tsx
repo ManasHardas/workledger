@@ -24,30 +24,52 @@ const LIST_SEP = "\u0000";
  * and it is the only place in the wizard that spends anything.
  */
 export function MethodStep({ state, source }: { state: WizardState; source: AppSource }) {
-  if (state.method === undefined) return <ResumeQuestion state={state} />;
+  if (state.method === undefined) return <ResumeQuestion state={state} source={source} />;
   return <Plan state={state} source={source} method={state.method === "extract" ? "extract" : "resume"} />;
 }
 
-function ResumeQuestion({ state }: { state: WizardState }) {
+/** The question, in plain words. */
+export const RESUME_QUESTION =
+  "Let workledger replay each past session in Claude Code or Codex to write its summary? This uses your existing subscription and needs no API key.";
+
+/**
+ * The alternative, with its numbers already on the question — the extraction plan is asked for
+ * here so "No" is a choice made against a price, not a surprise on the next screen.
+ */
+function extractionLine(plan: PlanResult): string {
+  const estimate = plan.estimate as ExtractionEstimate | null;
+  if (estimate === null) return "Otherwise workledger can summarize the transcripts with the Anthropic API.";
+  return `Otherwise workledger can summarize the transcripts with the Anthropic API: about ${formatCount(estimate.tokens)} tokens, about ${formatUsd(estimate.usd)}, needs ANTHROPIC_API_KEY${estimate.needsApiKey ? " (not set on the daemon)" : ""}.`;
+}
+
+function ResumeQuestion({ state, source }: { state: WizardState; source: AppSource }) {
+  const repos = state.repos ?? [];
+  const since = state.since ?? "7d";
+  const reposKey = repos.join(LIST_SEP);
+  const extraction = useAsync(
+    useCallback(
+      () => source.plan({ repos: reposKey === "" ? [] : reposKey.split(LIST_SEP), since, method: "extract" }),
+      [source, reposKey, since],
+    ),
+  );
   return (
     <StepFrame
       title="How should past sessions be digested?"
-      lead={`${WINDOW_LABELS[state.since ?? "7d"]}, across ${plural((state.repos ?? []).length, "repo")}. The checkpoint for each past session is written by an agent reading that session's transcript; the question is which agent.`}
+      lead={`${WINDOW_LABELS[since]}, across ${plural(repos.length, "repo")}. Each past session gets a written summary in its repo's ledger; the question is who writes it.`}
     >
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-        <p className="text-sm font-semibold">
-          Allow workledger to resume each past session headlessly in your own harness to write its
-          checkpoint? Uses your subscription, no API key.
-        </p>
+        <p className="text-sm font-semibold">{RESUME_QUESTION}</p>
         <p className="text-xs text-muted-foreground">
-          Yes: each session is re-opened with <code>claude --resume</code> in the background, asked for
-          its digest, and closed. No: an extraction model reads the transcripts instead, billed to an{" "}
-          <code>ANTHROPIC_API_KEY</code> on the daemon — you will see the estimate before anything runs.
+          {extraction.state === "ready"
+            ? extractionLine(extraction.value)
+            : extraction.state === "loading"
+              ? "Otherwise workledger can summarize the transcripts with the Anthropic API — estimating what that would cost…"
+              : "Otherwise workledger can summarize the transcripts with the Anthropic API; the next screen shows what that would cost."}
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => goTo({ ...state, method: "resume" })}>Yes, resume in my harness</Button>
+          <Button onClick={() => goTo({ ...state, method: "resume" })}>Yes, replay my sessions</Button>
           <Button variant="outline" onClick={() => goTo({ ...state, method: "extract" })}>
-            No, show the extraction estimate
+            No, use the Anthropic API instead
           </Button>
         </div>
       </div>

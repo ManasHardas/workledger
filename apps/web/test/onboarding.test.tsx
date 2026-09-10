@@ -14,8 +14,8 @@ import { BackfillBanner } from "../src/features/onboarding/banner.js";
 import { BACKFILL_RUN_KEY, readBackfillRun, startBackfillRun } from "../src/features/onboarding/flags.js";
 import { unsuggestedHint } from "../src/features/onboarding/format.js";
 import { INITIAL_STATE, parseWizardHash, wizardHref } from "../src/features/onboarding/state.js";
-import { NOTHING_BACKFILLED } from "../src/features/onboarding/steps/done.js";
-import { explainRunFailure } from "../src/features/onboarding/steps/method.js";
+import { outcomeLine } from "../src/features/onboarding/steps/done.js";
+import { RESUME_QUESTION, explainRunFailure } from "../src/features/onboarding/steps/method.js";
 import { jobsOfRun, progressByRepo } from "../src/features/onboarding/use-backfill-progress.js";
 import { OnboardingWizard, reachableStep } from "../src/features/onboarding/wizard.js";
 import { FIXTURE_DISCOVER, FIXTURE_HISTORY, FIXTURE_REPOS, FIXTURE_TRUST_STEP } from "../src/lib/fixtures.js";
@@ -174,7 +174,7 @@ describe("projects step", () => {
     const { source, calls } = stubSource();
     renderWizard(source);
     await screen.findByRole("heading", { name: "Choose the repos to track" });
-    expect(calls).toEqual(["discover:[null]"]);
+    expect(calls).toEqual(["discover:[]"]);
 
     const known = screen.getByRole("group", { name: "Repos with agent sessions" });
     const found = screen.getByRole("group", { name: `Other git repos under ${FIXTURE_DISCOVER.roots[0]!}` });
@@ -192,10 +192,13 @@ describe("projects step", () => {
     expect(within(known).getByText("Codex · 5 sessions")).toBeDefined();
     expect(within(known).getAllByText(/last session .* ago/).length).toBeGreaterThan(0);
 
-    // Amendment 2: a known repo the daemon does not suggest is unchecked, with the ancestor hint.
+    // Amendment 2: a known repo the daemon does not suggest is unchecked, with the ancestor hint;
+    // and one without `.git` cannot be ticked at all — `init` would refuse the whole batch.
     const projects = within(known).getByRole("checkbox", { name: "Projects" }) as HTMLInputElement;
     expect(projects.checked).toBe(false);
+    expect(projects.disabled).toBe(true);
     expect(within(known).getByText("contains other repos")).toBeDefined();
+    expect(within(known).getByText("not a git repo")).toBeDefined();
 
     for (const box of within(found).getAllByRole("checkbox")) expect((box as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText("2 repos selected · 1 repo already tracked")).toBeDefined();
@@ -237,14 +240,35 @@ describe("projects step", () => {
     fireEvent.change(input, { target: { value: "code" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(screen.getByRole("alert").textContent).toMatch(/absolute path/);
-    expect(calls).toEqual(["discover:[null]"]);
+    expect(calls).toEqual(["discover:[]"]);
 
+    // The daemon's default root keeps being walked beside the added one.
     fireEvent.change(input, { target: { value: "/Users/me/code/" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    await waitFor(() => expect(calls).toContain('discover:[["/Users/me/code"]]'));
+    await waitFor(() => expect(calls).toContain('discover:[["/Users/me/Projects","/Users/me/code"]]'));
     expect(state().roots).toEqual(["/Users/me/code"]);
-    expect(await screen.findByRole("group", { name: "Other git repos under /Users/me/code" })).toBeDefined();
+    expect(
+      await screen.findByRole("group", { name: "Other git repos under /Users/me/Projects, /Users/me/code" }),
+    ).toBeDefined();
+    expect(screen.getByRole("checkbox", { name: "mentat" })).toBeDefined();
     expect(within(screen.getByRole("list", { name: "Added folders" })).getByText("/Users/me/code")).toBeDefined();
+  });
+
+  it("reloaded with a root in the URL, learns the default root first and walks both", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source, `${ONBOARDING_HREF}?roots=${encodeURIComponent("/Users/me/code")}`);
+    await screen.findByRole("group", { name: "Other git repos under /Users/me/Projects, /Users/me/code" });
+    expect(calls).toEqual(["discover:[]", 'discover:[["/Users/me/Projects","/Users/me/code"]]']);
+  });
+
+  it("drops a non-git path a stale URL selects before it reaches init", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source, wizardHref({ ...INITIAL_STATE, repos: [FIXTURE_DISCOVER.roots[0]!, DASHERO] }));
+    await screen.findByRole("heading", { name: "Choose the repos to track" });
+    expect(screen.getByText("1 repo selected · 1 repo already tracked")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Repos enabled" });
+    expect(calls).toContain(`initRepos:[{"repos":${JSON.stringify([DASHERO])}}]`);
   });
 
   it("shows what discover refused", async () => {
@@ -323,8 +347,8 @@ describe("history step", () => {
     await screen.findByRole("heading", { name: "How much history to backfill" });
 
     fireEvent.click(screen.getByRole("button", { name: /No backfill/ }));
-    await screen.findByRole("heading", { name: "All set" });
-    expect(screen.getByText(NOTHING_BACKFILLED)).toBeDefined();
+    await screen.findByRole("heading", { name: "Nothing was backfilled" });
+    expect(screen.getByText("2 repos enabled; new sessions will be recorded from now on.")).toBeDefined();
     expect(readBackfillRun()).toBeNull();
   });
 });
@@ -337,15 +361,17 @@ describe("method step", () => {
       run: async () => ({ jobs: [job({ id: "j1" }), job({ id: "j2", repo_path: KUBERA })] }),
     });
     renderWizard(source, AT_METHOD);
+    expect(await screen.findByText(RESUME_QUESTION)).toBeDefined();
+    // The alternative is priced on the question itself.
     expect(
       await screen.findByText(
-        "Allow workledger to resume each past session headlessly in your own harness to write its checkpoint? Uses your subscription, no API key.",
+        "Otherwise workledger can summarize the transcripts with the Anthropic API: about 1,900,000 tokens, about $6.84, needs ANTHROPIC_API_KEY (not set on the daemon).",
       ),
     ).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Yes, resume in my harness" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, replay my sessions" }));
 
     await screen.findByRole("heading", { name: "Resume in your harness" });
-    expect(calls).toEqual([`plan:[{"repos":${JSON.stringify([DASHERO, KUBERA])},"since":"30d","method":"resume"}]`]);
+    expect(calls).toContain(`plan:[{"repos":${JSON.stringify([DASHERO, KUBERA])},"since":"30d","method":"resume"}]`);
     expect(screen.getByText("27")).toBeDefined();
     expect(screen.getByText("about 20m 15s")).toBeDefined();
 
@@ -362,7 +388,7 @@ describe("method step", () => {
   it("No shows the extraction estimate; without a key Run is disabled and explained, Skip backfills nothing", async () => {
     const { source, calls } = stubSource();
     renderWizard(source, AT_METHOD);
-    fireEvent.click(await screen.findByRole("button", { name: "No, show the extraction estimate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "No, use the Anthropic API instead" }));
 
     await screen.findByRole("heading", { name: "Extract with an API key" });
     expect(calls.at(-1)).toBe(`plan:[{"repos":${JSON.stringify([DASHERO, KUBERA])},"since":"30d","method":"extract"}]`);
@@ -376,8 +402,7 @@ describe("method step", () => {
     expect(screen.getByText(/Run extraction is disabled because the daemon has no/)).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Skip backfill" }));
-    await screen.findByRole("heading", { name: "All set" });
-    expect(screen.getByText(NOTHING_BACKFILLED)).toBeDefined();
+    await screen.findByRole("heading", { name: "Nothing was backfilled" });
     expect(state()).toMatchObject({ step: "done", method: "none" });
     expect(calls.some((call) => call.startsWith("run:"))).toBe(false);
   });
@@ -414,8 +439,7 @@ describe("method step", () => {
     const { source, calls } = stubSource({ plan: async () => ({ sessions: 0, estimate: { seconds: 0 } }) });
     renderWizard(source, wizardHref({ ...parseWizardHash(AT_METHOD), method: "resume" }));
     fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
-    await screen.findByRole("heading", { name: "Backfill finished" });
-    expect(await screen.findByText(NOTHING_BACKFILLED)).toBeDefined();
+    await screen.findByRole("heading", { name: "Nothing was backfilled" });
     expect(calls.some((call) => call.startsWith("run:"))).toBe(false);
   });
 });
@@ -445,8 +469,16 @@ describe("running step", () => {
     expect(jobsOfRun(jobs, { ...lost, startedAt: "2026-09-09T10:00:00.000Z" })).toEqual([]);
   });
 
+  it("leads with the outcome in one line, shared with the banner", () => {
+    expect(outcomeLine({ done: 3, failed: 0, total: 3 }, 2)).toBe("Backfilled 3 sessions across 2 repos");
+    expect(outcomeLine({ done: 2, failed: 1, total: 3 }, 2)).toBe("Backfilled 2 of 3 sessions; 1 failed");
+    expect(outcomeLine({ done: 0, failed: 2, total: 2 }, 2)).toBe("Nothing was backfilled");
+    expect(outcomeLine({ done: 0, failed: 0, total: 0 }, 2)).toBe("Nothing was backfilled");
+  });
+
   it("follows status on job.changed, shows progress per repo, and moves to done when complete", async () => {
-    startBackfillRun([DASHERO, KUBERA], [job({ id: "a" }), job({ id: "b", repo_path: KUBERA })]);
+    // Three repos in the run; mentat had no session in the window, so it queued nothing.
+    startBackfillRun([DASHERO, KUBERA, MENTAT], [job({ id: "a" }), job({ id: "b", repo_path: KUBERA })]);
     let statuses: OnboardingStatus[] = [
       { total: 2, done: 0, failed: 0, running: 2, complete: false },
       { total: 2, done: 1, failed: 1, running: 0, complete: true },
@@ -466,9 +498,10 @@ describe("running step", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("0");
     expect(bar.getAttribute("aria-valuemax")).toBe("2");
     const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
-    expect(rows.map((row) => row.textContent)).toEqual(["dashero001", "kubera001"]);
-    // Leaving is a plain link: the page never blocks on this step.
-    expect(screen.getByRole("link", { name: /Go to home/ }).getAttribute("href")).toBe("#/");
+    expect(rows.map((row) => row.textContent)).toEqual(["dashero001", "kubera001", "mentatno sessions in this window"]);
+    // Leaving is a plain link, and there is no Continue: the step moves on by itself.
+    expect(screen.getByRole("link", { name: "Go to home" }).getAttribute("href")).toBe("#/");
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
 
     jobs = [
       { ...job({ id: "a", status: "done" }), repo: FIXTURE_REPOS[0]! },
@@ -476,11 +509,10 @@ describe("running step", () => {
     ];
     act(() => emit({ type: "job.changed", id: "a", status: "done", repo: "0123456789ab" }));
 
-    await screen.findByRole("heading", { name: "Backfill finished" });
+    await screen.findByRole("heading", { name: "Backfilled 1 of 2 sessions; 1 failed" });
     expect(state().step).toBe("done");
     expect(readBackfillRun()?.finished).toMatchObject({ done: 1, failed: 1, total: 2 });
-    expect(await screen.findByText("1 session")).toBeDefined();
-    expect(screen.getByRole("alert").textContent).toContain("1 session could not be digested.");
+    expect(screen.getByRole("alert").textContent).toContain("1 session could not be summarized.");
     expect(screen.getByRole("link", { name: "See the failed jobs" }).getAttribute("href")).toBe("#/jobs");
     expect(screen.getByRole("link", { name: "Go to home" }).getAttribute("href")).toBe("#/");
     statuses = [];
@@ -520,7 +552,7 @@ describe("Home", () => {
     window.location.hash = "#/";
     render(<App source={machine(FIXTURE_REPOS)} />);
     const banner = await screen.findByRole("status");
-    expect(banner.textContent).toContain("Backfill finished: 3 sessions across 2 repos.");
+    expect(banner.textContent).toContain("Backfilled 3 sessions across 2 repos.");
     fireEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByText(/Backfill finished/)).toBeNull());
     expect(window.localStorage.getItem(BACKFILL_RUN_KEY)).toBeNull();
@@ -539,6 +571,27 @@ describe("Home", () => {
       </MachineProvider>,
     );
     expect(screen.queryByRole("status")).toBeNull();
-    expect((await screen.findByRole("status")).textContent).toContain("Backfill finished: 1 session across 1 repo.");
+    expect((await screen.findByRole("status")).textContent).toContain("Backfilled 1 session across 1 repo.");
+  });
+
+  it("says what failed, in a warning tone, with the way to Jobs", async () => {
+    window.localStorage.setItem(
+      BACKFILL_RUN_KEY,
+      JSON.stringify({
+        repos: [DASHERO, KUBERA],
+        jobIds: ["a", "b", "c"],
+        startedAt: "2026-09-09T09:00:00.000Z",
+        finished: { done: 2, failed: 1, total: 3, at: "2026-09-09T09:05:00.000Z" },
+      }),
+    );
+    render(
+      <MachineProvider source={stubSource().source}>
+        <BackfillBanner />
+      </MachineProvider>,
+    );
+    const banner = await screen.findByRole("status");
+    expect(banner.textContent).toBe("Backfilled 2 of 3 sessions; 1 failed — see Jobs.Dismiss");
+    expect(banner.className).toContain("bg-warning");
+    expect(within(banner).getByRole("link", { name: "see Jobs" }).getAttribute("href")).toBe("#/jobs");
   });
 });

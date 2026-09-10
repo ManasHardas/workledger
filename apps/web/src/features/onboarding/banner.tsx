@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button.js";
+import { cn } from "../../lib/cn.js";
 import type { Repo } from "../../lib/ledger-source.js";
 import { ONBOARDING_HREF, machineHref, replaceHash } from "../../lib/router.js";
 import { useMachine } from "../../lib/source-context.js";
 import type { Async } from "../../lib/use-async.js";
 import { BACKFILL_RUN_EVENT, clearBackfillRun, finishBackfillRun, readBackfillRun, type BackfillRun } from "./flags.js";
-import { plural } from "./format.js";
+import { outcomeLine } from "./steps/done.js";
 import { PROGRESS_POLL_MS } from "./use-backfill-progress.js";
 
 /**
@@ -54,24 +55,27 @@ export function BackfillBanner({ pollMs = PROGRESS_POLL_MS }: { pollMs?: number 
   }, [source, pending, pollMs]);
 
   if (run === null || run.finished === null) return null;
-  const { done, failed } = run.finished;
+  const { failed } = run.finished;
   return (
     <div
       role="status"
-      className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-accent p-3 text-sm text-accent-foreground"
+      className={cn(
+        "mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3 text-sm",
+        // Same words as the Done step; a warning tone the moment anything failed.
+        failed > 0 ? "border-warning bg-warning/20 text-foreground" : "border-border bg-accent text-accent-foreground",
+      )}
     >
       <p className="m-0">
-        Backfill finished: {plural(done, "session")} across {plural(run.repos.length, "repo")}.
+        {outcomeLine(run.finished, run.repos.length)}
         {failed > 0 ? (
           <>
-            {" "}
-            {plural(failed, "session")} failed —{" "}
+            {" — "}
             <a href={machineHref("jobs")} className="underline underline-offset-2">
               see Jobs
             </a>
-            .
           </>
         ) : null}
+        .
       </p>
       <Button variant="ghost" size="sm" className="ml-auto" onClick={clearBackfillRun}>
         Dismiss

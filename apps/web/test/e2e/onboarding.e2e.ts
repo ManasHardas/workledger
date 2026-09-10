@@ -111,7 +111,7 @@ async function startDaemon(): Promise<Daemon> {
   const candidate = (root: string, sessions: Record<string, number>, suggested = true) => ({
     path: root,
     name: root.split("/").pop(),
-    hasGit: true,
+    hasGit: suggested,
     enabled: enabled.has(root),
     suggested,
     harnessSessions: sessions,
@@ -253,13 +253,17 @@ test.describe("onboarding wizard", () => {
     await expect(page.getByRole("checkbox", { name: "gamma" })).not.toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Projects" })).not.toBeChecked();
     await expect(page.getByText("contains other repos")).toBeVisible();
+    // The projects folder itself has no `.git`: shown, never tickable.
+    await expect(page.getByRole("checkbox", { name: "Projects" })).toBeDisabled();
     await shot(page, "onboarding-projects-1280");
 
     // Add folder re-discovers with the extra root and lists what it found.
     await page.getByLabel("Add folder").fill("/Users/op/code");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "delta" })).toBeVisible();
-    expect(daemon.requests).toContain(`GET /api/onboarding/discover?roots=${encodeURIComponent("/Users/op/code")}`);
+    // The default root is still walked beside the added one: gamma stays listed.
+    await expect(page.getByRole("checkbox", { name: "gamma" })).toBeVisible();
+    expect(daemon.requests).toContain(`GET /api/onboarding/discover?roots=${encodeURIComponent(`${PROJECTS},/Users/op/code`)}`);
 
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByRole("heading", { name: "Repos enabled" })).toBeVisible();
@@ -279,7 +283,7 @@ test.describe("onboarding wizard", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: "How should past sessions be digested?" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Yes, resume in my harness" }).click();
+    await page.getByRole("button", { name: "Yes, replay my sessions" }).click();
     await expect(page.getByRole("heading", { name: "Resume in your harness" })).toBeVisible();
     await expect(page.getByText("about 2m 15s")).toBeVisible();
     await page.getByRole("button", { name: "Start backfill (3 sessions)" }).click();
@@ -288,30 +292,29 @@ test.describe("onboarding wizard", () => {
     await expect(page.getByRole("progressbar")).toBeVisible();
     await expect(page.getByRole("link", { name: /Go to home/ })).toBeVisible();
     // The stream and the poll both feed the count; three jobs land at 400 ms each.
-    await expect(page.getByRole("heading", { name: "Backfill finished" })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("3 sessions", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Backfilled 3 sessions across 2 repos" })).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("link", { name: "Go to home" }).click();
     await expect(page.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
     await expect(page.getByRole("link", { name: "alpha" })).toBeVisible();
     await expect(page.getByRole("link", { name: "beta" })).toBeVisible();
-    const banner = page.getByRole("status").filter({ hasText: "Backfill finished" });
-    await expect(banner).toContainText("Backfill finished: 3 sessions across 2 repos.");
+    const banner = page.getByRole("status").filter({ hasText: "Backfilled" });
+    await expect(banner).toContainText("Backfilled 3 sessions across 2 repos.");
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toHaveCount(0);
     await page.reload();
-    await expect(page.getByRole("status").filter({ hasText: "Backfill finished" })).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Backfilled" })).toHaveCount(0);
   });
 
   test("declining the extraction backfills nothing", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${daemon.url}/#/onboarding?step=method&repos=${encodeURIComponent(ALPHA)}&since=7d`);
-    await page.getByRole("button", { name: "No, show the extraction estimate" }).click();
+    await page.getByRole("button", { name: "No, use the Anthropic API instead" }).click();
     await expect(page.getByRole("heading", { name: "Extract with an API key" })).toBeVisible();
     await expect(page.getByText("$0.96")).toBeVisible();
     await expect(page.getByRole("button", { name: "Run extraction" })).toBeDisabled();
     await page.getByRole("button", { name: "Skip backfill" }).click();
-    await expect(page.getByText("Nothing was backfilled; new sessions will be recorded from now on.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Nothing was backfilled" })).toBeVisible();
     expect(daemon.requests.some((r) => r.startsWith("POST /api/onboarding/run"))).toBe(false);
   });
 
@@ -327,7 +330,7 @@ test.describe("onboarding wizard", () => {
     await noSidewaysScroll(page);
     await shot(page, "onboarding-method-375");
 
-    await page.getByRole("button", { name: "No, show the extraction estimate" }).click();
+    await page.getByRole("button", { name: "No, use the Anthropic API instead" }).click();
     await expect(page.getByRole("heading", { name: "Extract with an API key" })).toBeVisible();
     await noSidewaysScroll(page);
   });
