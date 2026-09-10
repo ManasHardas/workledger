@@ -568,22 +568,38 @@ describe("workledger onboard --json", () => {
     expect(report.status).toEqual(await onboardingStatus(io));
   });
 
-  it("stops after the plan without --yes and reports run and status as null", async () => {
+  it("without a terminal and without --select prints the discovery, writes nothing, and exits 0", async () => {
+    const discovered = JSON.parse(JSON.stringify(discoverRepos({}, io))) as DiscoverResult;
     const tty = terminal();
-    await runOnboard({ json: true, select: repoA, since: "90d", method: "resume" }, tty);
-    const report = JSON.parse(tty.out[0] as string) as OnboardReport;
-    expect(report.plan).toEqual({ sessions: 3, estimate: { seconds: 45 + 23 } });
-    expect(report.run).toBeNull();
-    expect(report.status).toBeNull();
+    expect(await runOnboard({ json: true }, tty)).toBe(EXIT_OK);
+    expect(tty.out).toHaveLength(1);
+    expect(JSON.parse(tty.out[0] as string)).toEqual(discovered);
+    expect(err.at(-1)).toBe("workledger onboard: no repos selected; pass --select <paths> (and --yes to skip confirmation)");
+
+    const plain = terminal();
+    expect(await runOnboard({}, plain)).toBe(EXIT_OK);
+    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 2 claude-code · 1 codex)`);
+    expect(plain.out.join("\n")).toContain(`[3] ${repoC}  (found; no agent sessions)`);
+
+    for (const repo of [repoA, repoB, repoC]) expect(existsSync(path.join(repo, ".workledger"))).toBe(false);
+    expect(listJobsAll()).toEqual([]);
+  });
+
+  it("without a terminal refuses --select without --yes as a usage error, writing nothing", async () => {
+    const tty = terminal();
+    expect(await runOnboard({ json: true, select: repoA, since: "90d", method: "resume" }, tty)).toBe(EXIT_USAGE);
+    expect(tty.out).toEqual([]);
+    expect(err.at(-1)).toContain("pass --select <paths> (and --yes to skip confirmation)");
+    expect(existsSync(path.join(repoA, ".workledger"))).toBe(false);
     expect(listJobsAll()).toEqual([]);
   });
 
   it("rejects a window or method it does not know, and an empty selection", async () => {
-    expect(await runOnboard({ json: true, select: repoA, since: "1y" }, terminal())).toBe(EXIT_USAGE);
-    expect(await runOnboard({ json: true, select: repoA, since: "7d", method: "magic" }, terminal())).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, select: repoA, since: "1y", yes: true }, terminal())).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, select: repoA, since: "7d", method: "magic", yes: true }, terminal())).toBe(EXIT_USAGE);
     const empty = path.join(dir, "empty");
     mkdirSync(empty);
-    expect(await runOnboard({ json: true, roots: empty }, { ...terminal(), homeDir: empty })).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, roots: empty, yes: true }, { ...terminal(), homeDir: empty })).toBe(EXIT_USAGE);
     expect(err.join("\n")).toContain("no repos selected");
   });
 
@@ -601,18 +617,22 @@ describe("workledger onboard --json", () => {
 
   it("narrates the steps on a terminal and asks the missing questions", async () => {
     const asked: string[] = [];
+    const defaults: string[] = [];
     const answers = ["1", "7d", "none"];
     const tty: OnboardIo & { out: string[] } = {
       ...terminal(),
       interactive: true,
-      ask: async (question) => {
+      ask: async (question, fallback) => {
         asked.push(question);
+        defaults.push(fallback);
         return answers.shift() as string;
       },
     };
 
     expect(await runOnboard({}, tty)).toBe(EXIT_OK);
     expect(asked.map((q) => q.split(" ")[0])).toEqual(["Select", "since", "method"]);
+    // Both known repos are suggested, so both are pre-checked.
+    expect(defaults[0]).toBe("1,2");
     expect(tty.out.join("\n")).toContain(`[1] ${repoA}`);
     expect(tty.out.join("\n")).toContain("not started");
     expect(existsSync(path.join(repoA, ".workledger"))).toBe(true);

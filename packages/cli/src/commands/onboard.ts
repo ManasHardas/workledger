@@ -5,9 +5,11 @@
  *
  * The same six calls the web wizard makes, in the same order, against the same functions
  * (`src/onboarding/`): discover, select, history, init, plan, consent, run, status. On a terminal
- * with a flag missing it asks; with `--json`, `--yes`, or no terminal it takes the flag or the
- * default and never asks. `--json` prints one object whose six members are exactly what the six
- * endpoints return, which is what the parity test compares.
+ * with a flag missing it asks; with `--json`, `--yes`, or no terminal it never asks. Where it
+ * cannot ask, nothing is written without `--yes`: with no `--select` it prints the discovery
+ * and stops (exit 0), with `--select` alone it refuses (exit 2). `--yes` takes every default.
+ * `--json` prints one object whose six members are exactly what the six endpoints return,
+ * which is what the parity test compares.
  *
  * Plain `readline` for the prompts: the CLI bundle carries no dependency but `better-sqlite3`.
  */
@@ -108,6 +110,20 @@ function sessionsLabel(candidate: RepoCandidate): string {
   return parts.length === 0 ? "no agent sessions" : parts.join(" · ");
 }
 
+/** The numbered list the operator picks from: `known` first, then `found`. */
+function listCandidates(discover: DiscoverResult, io: OnboardIo): RepoCandidate[] {
+  const all = [...discover.known, ...discover.found];
+  io.stdout("Projects:");
+  all.forEach((candidate, index) => {
+    const mark = candidate.enabled ? "enabled" : index < discover.known.length ? "known" : "found";
+    io.stdout(`  [${index + 1}] ${candidate.path}  (${mark}; ${sessionsLabel(candidate)})`);
+  });
+  return all;
+}
+
+/** What to tell an operator who ran without a terminal and without saying what to enable. */
+const SELECT_HINT = "pass --select <paths> (and --yes to skip confirmation)";
+
 /**
  * Which repos to enable.
  *
@@ -123,16 +139,11 @@ async function selectRepos(
 ): Promise<string[] | undefined> {
   const selected = csv(options.select);
   if (selected.length > 0) return selected;
-  const all = [...discover.known, ...discover.found];
   const preselected = discover.known.map((candidate, index) => [candidate, index + 1] as const).filter(([c]) => c.suggested);
   const fallback = preselected.map(([candidate]) => candidate.path);
   if (!ask) return fallback.length > 0 ? fallback : undefined;
 
-  io.stdout("Projects:");
-  all.forEach((candidate, index) => {
-    const mark = candidate.enabled ? "enabled" : index < discover.known.length ? "known" : "found";
-    io.stdout(`  [${index + 1}] ${candidate.path}  (${mark}; ${sessionsLabel(candidate)})`);
-  });
+  const all = listCandidates(discover, io);
   if (all.length === 0) return undefined;
   const answer = await io.ask(
     "Select repos to track (numbers, comma-separated)",
@@ -205,10 +216,21 @@ async function onboard(options: OnboardOptions, io: OnboardIo): Promise<number> 
   const discover = discoverRepos(roots.length === 0 ? {} : { roots }, io);
   say(`workledger onboard: ${discover.known.length} repo(s) with agent sessions, ${discover.found.length} more under ${discover.roots.join(", ")}`);
 
-  // 2. Select.
+  // 2. Select. Where nothing can be asked, nothing is written without `--yes`: a cron job or a
+  // CI step that ran this by accident gets the discovery and a hint, not four initialized repos.
+  if (!ask && options.yes !== true) {
+    if (csv(options.select).length === 0) {
+      if (json) io.stdout(JSON.stringify(discover));
+      else listCandidates(discover, io);
+      io.stderr(`workledger onboard: no repos selected; ${SELECT_HINT}`);
+      return EXIT_OK;
+    }
+    io.stderr(`workledger onboard: not confirming without a terminal; ${SELECT_HINT}`);
+    return EXIT_USAGE;
+  }
   const repos = await selectRepos(discover, options, io, ask);
   if (repos === undefined || repos.length === 0) {
-    io.stderr("workledger onboard: no repos selected; pass --select <paths> or --roots <dirs>");
+    io.stderr(`workledger onboard: no repos selected; ${SELECT_HINT}`);
     return EXIT_USAGE;
   }
 
