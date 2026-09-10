@@ -12,7 +12,7 @@
  * The drain is never started here: a `resume` would spawn `claude`. What is asserted is the half
  * the wizard is built on — that the rows exist, are tagged, and are what `status` counts.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,8 @@ let indexHome: string;
 let repoA: string;
 let repoB: string;
 let repoC: string;
+/** The test's own "OS temp dir", reached through a symlink so the realpath comparison is exercised. */
+let tempDir: string;
 let err: string[];
 let io: OnboardingIo;
 
@@ -84,7 +86,8 @@ function writeTranscript(file: string, id: string, cwd: string, at: Date): void 
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "workledger-onboard-"));
+  // Resolved: on macOS `os.tmpdir()` is itself a symlink, and discovery reports resolved paths.
+  dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "workledger-onboard-")));
   home = path.join(dir, "home");
   indexHome = path.join(dir, "wlhome");
   const projects = path.join(home, "Projects");
@@ -97,6 +100,10 @@ beforeEach(() => {
   makeRepo(path.join(projects, ".hidden", "secret"));
   // Too deep: `Projects/1/2/3/deep` is four levels down, the walk stops at three.
   makeRepo(path.join(projects, "1", "2", "3", "deep"));
+  // Everything here is under the real `os.tmpdir()`, so the temp filter is pointed elsewhere.
+  tempDir = path.join(dir, "tmp");
+  mkdirSync(tempDir, { recursive: true });
+  symlinkSync(tempDir, path.join(dir, "tmp-link"));
 
   for (const { id, repo, ageDays } of LAYOUT) {
     const cwd = repo === "a" ? repoA : repoB;
@@ -129,6 +136,7 @@ beforeEach(() => {
     stderr: (line) => void err.push(line),
     now: () => NOW,
     indexHome,
+    tempDirs: [path.join(dir, "tmp-link")],
   };
 });
 
@@ -189,13 +197,50 @@ describe("discoverRepos", () => {
       name: "repo-a",
       hasGit: true,
       enabled: false,
+      suggested: true,
       // The Codex session in `repo-a/packages` counts for the repo above it.
       harnessSessions: { "claude-code": 2, codex: 1 },
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
     });
     expect(result.known[1]?.harnessSessions).toEqual({ "claude-code": 1 });
     expect(result.found.map((c) => c.path)).toEqual([repoC]);
-    expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, harnessSessions: {}, lastSessionAt: null });
+    expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, suggested: true, harnessSessions: {}, lastSessionAt: null });
+  });
+
+  it("walks a root that is itself a repo, lists it unsuggested, and still does not enter nested repos", () => {
+    const mono = path.join(dir, "mono");
+    const one = path.join(mono, "one");
+    const two = path.join(mono, "lib", "two");
+    for (const repo of [mono, one, two, path.join(one, "inner")]) makeRepo(repo);
+    const result = discoverRepos({ roots: [mono] }, io);
+
+    expect(result.found.map((c) => [c.path, c.suggested])).toEqual([
+      [mono, false],
+      [two, true],
+      [one, true],
+    ]);
+  });
+
+  it("resolves and dedupes roots, so a trailing slash or a symlink never repeats a known repo", () => {
+    const projects = path.join(home, "Projects");
+    const link = path.join(dir, "projects-link");
+    symlinkSync(projects, link);
+    const result = discoverRepos({ roots: [`${projects}/`, link, projects] }, io);
+
+    expect(result.roots).toEqual([projects]);
+    expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
+    expect(result.found.map((c) => [c.path, c.suggested])).toEqual([[repoC, true]]);
+  });
+
+  it("drops a store cwd under the temp dir from known, resolved through symlinks", () => {
+    const scratch = path.join(tempDir, "scratch");
+    makeRepo(scratch);
+    writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(scratch), "hs-gamma.jsonl"), "hs-gamma", scratch, NOW);
+    const result = discoverRepos({}, io);
+
+    expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
+    // Named as a root it is still found, and still not worth pre-checking.
+    expect(discoverRepos({ roots: [tempDir] }, io).found).toMatchObject([{ path: scratch, suggested: false }]);
   });
 
   it("refuses a root that is relative, missing, or not a directory", () => {
@@ -482,7 +527,11 @@ describe("the injected OnboardingOps", () => {
       (repos, method) => void drained.push([repos, method]),
     );
 
-    expect((await ops.discover()).known.map((c) => c.path)).toEqual([repoA, repoB]);
+    // Built from serve's io, the temp filter is the real one and this whole fixture is under
+    // `os.tmpdir()`: the stores' repos are dropped from `known`, and the walk lists them unsuggested.
+    const discovered = await ops.discover();
+    expect(discovered.known).toEqual([]);
+    expect(discovered.found.map((c) => [c.path, c.suggested])).toEqual([[repoB, false], [repoA, false], [repoC, false]]);
     expect((await ops.history([repoA])).windows["90d"].sessions).toBe(3);
     expect((await ops.init({ repos: [repoA] })).results[0]?.ok).toBe(true);
     expect((await ops.plan({ repos: [repoA], since: "7d", method: "resume" })).sessions).toBe(2);
@@ -531,22 +580,38 @@ describe("workledger onboard --json", () => {
     expect(report.status).toEqual(await onboardingStatus(io));
   });
 
-  it("stops after the plan without --yes and reports run and status as null", async () => {
+  it("without a terminal and without --select prints the discovery, writes nothing, and exits 0", async () => {
+    const discovered = JSON.parse(JSON.stringify(discoverRepos({}, io))) as DiscoverResult;
     const tty = terminal();
-    await runOnboard({ json: true, select: repoA, since: "90d", method: "resume" }, tty);
-    const report = JSON.parse(tty.out[0] as string) as OnboardReport;
-    expect(report.plan).toEqual({ sessions: 3, estimate: { seconds: 45 + 23 } });
-    expect(report.run).toBeNull();
-    expect(report.status).toBeNull();
+    expect(await runOnboard({ json: true }, tty)).toBe(EXIT_OK);
+    expect(tty.out).toHaveLength(1);
+    expect(JSON.parse(tty.out[0] as string)).toEqual(discovered);
+    expect(err.at(-1)).toBe("workledger onboard: no repos selected; pass --select <paths> (and --yes to skip confirmation)");
+
+    const plain = terminal();
+    expect(await runOnboard({}, plain)).toBe(EXIT_OK);
+    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 2 claude-code · 1 codex)`);
+    expect(plain.out.join("\n")).toContain(`[3] ${repoC}  (found; no agent sessions)`);
+
+    for (const repo of [repoA, repoB, repoC]) expect(existsSync(path.join(repo, ".workledger"))).toBe(false);
+    expect(listJobsAll()).toEqual([]);
+  });
+
+  it("without a terminal refuses --select without --yes as a usage error, writing nothing", async () => {
+    const tty = terminal();
+    expect(await runOnboard({ json: true, select: repoA, since: "90d", method: "resume" }, tty)).toBe(EXIT_USAGE);
+    expect(tty.out).toEqual([]);
+    expect(err.at(-1)).toContain("pass --select <paths> (and --yes to skip confirmation)");
+    expect(existsSync(path.join(repoA, ".workledger"))).toBe(false);
     expect(listJobsAll()).toEqual([]);
   });
 
   it("rejects a window or method it does not know, and an empty selection", async () => {
-    expect(await runOnboard({ json: true, select: repoA, since: "1y" }, terminal())).toBe(EXIT_USAGE);
-    expect(await runOnboard({ json: true, select: repoA, since: "7d", method: "magic" }, terminal())).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, select: repoA, since: "1y", yes: true }, terminal())).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, select: repoA, since: "7d", method: "magic", yes: true }, terminal())).toBe(EXIT_USAGE);
     const empty = path.join(dir, "empty");
     mkdirSync(empty);
-    expect(await runOnboard({ json: true, roots: empty }, { ...terminal(), homeDir: empty })).toBe(EXIT_USAGE);
+    expect(await runOnboard({ json: true, roots: empty, yes: true }, { ...terminal(), homeDir: empty })).toBe(EXIT_USAGE);
     expect(err.join("\n")).toContain("no repos selected");
   });
 
@@ -564,18 +629,22 @@ describe("workledger onboard --json", () => {
 
   it("narrates the steps on a terminal and asks the missing questions", async () => {
     const asked: string[] = [];
+    const defaults: string[] = [];
     const answers = ["1", "7d", "none"];
     const tty: OnboardIo & { out: string[] } = {
       ...terminal(),
       interactive: true,
-      ask: async (question) => {
+      ask: async (question, fallback) => {
         asked.push(question);
+        defaults.push(fallback);
         return answers.shift() as string;
       },
     };
 
     expect(await runOnboard({}, tty)).toBe(EXIT_OK);
     expect(asked.map((q) => q.split(" ")[0])).toEqual(["Select", "since", "method"]);
+    // Both known repos are suggested, so both are pre-checked.
+    expect(defaults[0]).toBe("1,2");
     expect(tty.out.join("\n")).toContain(`[1] ${repoA}`);
     expect(tty.out.join("\n")).toContain("not started");
     expect(existsSync(path.join(repoA, ".workledger"))).toBe(true);
