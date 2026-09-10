@@ -17,6 +17,16 @@ import type { ExcerptSpan, Job, JobOps, RepairInput, ScanSummary } from "../src/
 /** `<repo>/.workledger`, four directories up from this file. */
 export const DOGFOOD_LEDGER = fileURLToPath(new URL("../../../.workledger", import.meta.url));
 
+/**
+ * The frozen ledger these tests own (`test/fixtures/ledger/`).
+ *
+ * Anything that pins a count, an index or a note array reads *this*, not {@link DOGFOOD_LEDGER}:
+ * this repo is an enabled repo (CLAUDE.md, DL-14) so its own `.workledger/` gains a session file
+ * every session, and a test that pinned the dogfood ledger's contents turned `main` red with no
+ * code change (#121). The dogfood ledger keeps one narrow smoke — that it still *parses*.
+ */
+export const FIXTURE_LEDGER = fileURLToPath(new URL("./fixtures/ledger", import.meta.url));
+
 /** A temp repo plus its cleanup. */
 export interface TempRepo {
   root: string;
@@ -27,10 +37,10 @@ export interface TempRepo {
 }
 
 /** Copy the dogfood ledger into a fresh temp directory. */
-export function seedRepo(): TempRepo {
+export function seedRepo(source: string = DOGFOOD_LEDGER): TempRepo {
   const root = mkdtempSync(path.join(os.tmpdir(), "workledger-server-"));
   const ledger = path.join(root, ".workledger");
-  cpSync(DOGFOOD_LEDGER, ledger, { recursive: true });
+  cpSync(source, ledger, { recursive: true });
   return {
     root,
     ledger,
@@ -38,6 +48,11 @@ export function seedRepo(): TempRepo {
     backlog: path.join(ledger, "backlog"),
     cleanup: () => void rmSync(root, { recursive: true, force: true }),
   };
+}
+
+/** Copy {@link FIXTURE_LEDGER} into a fresh temp directory. */
+export function seedFixture(): TempRepo {
+  return seedRepo(FIXTURE_LEDGER);
 }
 
 /** A temp static asset directory with an `index.html` and one real file. */

@@ -1,5 +1,5 @@
 /**
- * End-to-end (#41): `workledger serve` over a temp copy of this repo's ledger, driven in Chromium.
+ * End-to-end (#41): `workledger serve` over a temp copy of the fixture ledger, driven in Chromium.
  *
  * What makes this the E2E and not a bigger integration test: nothing here is faked. A real
  * `packages/cli/bin/workledger serve` process serves a real temp git repo through the real bundled
@@ -30,6 +30,13 @@ const BIN = path.join(REPO_ROOT, "packages", "cli", "bin", "workledger");
 /** The bundle the shim imports, and the built UI next to it. Both are `pnpm build` output. */
 const BUNDLE = path.join(REPO_ROOT, "packages", "cli", "dist", "main.js");
 const WEB_INDEX = path.join(REPO_ROOT, "packages", "cli", "dist", "web", "index.html");
+/**
+ * The ledger this test serves: the frozen fixture the server tests own, not `<repo>/.workledger`.
+ *
+ * This repo is an enabled repo (CLAUDE.md, DL-14), so its own ledger gains a session file every
+ * session — serving it made "the three sessions" wrong the moment a fourth was recorded (#121).
+ */
+const FIXTURE_LEDGER = path.join(REPO_ROOT, "packages", "server", "test", "fixtures", "ledger");
 
 /** The git identity the temp repo is given, which is what every human history stamp must say. */
 const GIT_NAME = "Workledger E2E";
@@ -67,10 +74,10 @@ const MOBILE_WIDTH = 375;
 const LONG_PATH = 90;
 
 /**
- * A throwaway git repo holding a copy of this repo's own ledger.
+ * A throwaway git repo holding a copy of the fixture ledger.
  *
- * A copy rather than the repo itself because the test *writes*: it accepts and renames a backlog
- * item, and the ledger it does that to must not be one anybody is keeping.
+ * A copy rather than the fixture itself because the test *writes*: it accepts and renames a
+ * backlog item, and the fixture on disk has to come out of the run unchanged.
  *
  * The path is padded to at least `LONG_PATH` characters so the Health view is served a repo path
  * that has to wrap at 375 px (#89) — a bare `tmpdir()` is shorter than that on macOS and Linux.
@@ -83,7 +90,7 @@ function makeRepo(): string {
   git(repo, "init", "--quiet", "--initial-branch=main", ".");
   git(repo, "config", "user.name", GIT_NAME);
   git(repo, "config", "user.email", GIT_EMAIL);
-  cpSync(path.join(REPO_ROOT, ".workledger"), path.join(repo, ".workledger"), { recursive: true });
+  cpSync(FIXTURE_LEDGER, path.join(repo, ".workledger"), { recursive: true });
   return repo;
 }
 
@@ -168,11 +175,15 @@ function backlogFiles(repo: string): { id: string; file: string; text: string }[
     });
 }
 
+/** Every session file in the served repo. */
+function sessionFiles(repo: string): string[] {
+  return readdirSync(path.join(repo, ".workledger", "sessions")).filter((name) => name.endsWith(".md"));
+}
+
 /** The `## Goal` lines of every session file, `- [cp N] ` prefix stripped. */
 function sessionGoals(repo: string): string[] {
   const dir = path.join(repo, ".workledger", "sessions");
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".md"))
+  return sessionFiles(repo)
     .map((name) => readFileSync(path.join(dir, name), "utf8"))
     .map((text) => /^## Goal\n(?:- \[cp \d+\] )(.*)$/m.exec(text)?.[1] ?? "")
     .filter((goal) => goal !== "");
@@ -264,18 +275,23 @@ test.describe("workledger serve, end to end", () => {
     expect(errors, "no console errors on Home").toEqual([]);
   });
 
-  test("Ledger lists the three sessions with their goals", async ({ page }) => {
+  test("Ledger lists every session in the fixture, with its goal", async ({ page }) => {
     const errors = watchConsole(page);
     await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
 
     // "Open" is the default tab and every copied session has ended, so the scope has to be All.
     await page.getByRole("tab", { name: "All" }).click();
 
+    // Counted off the copied fixture rather than written down: a fixture that grows a session
+    // must not make this test wrong (#121).
+    const expected = sessionFiles(serving.repo).length;
+    expect(expected, "the fixture ledger has sessions to list").toBeGreaterThan(0);
+
     const cards = page.getByRole("list", { name: "Sessions, newest first" }).getByRole("listitem");
-    await expect(cards).toHaveCount(3);
+    await expect(cards).toHaveCount(expected);
 
     const goals = sessionGoals(serving.repo);
-    expect(goals, "three session files, three goals").toHaveLength(3);
+    expect(goals, "one goal per session file").toHaveLength(expected);
     for (const goal of goals) {
       await expect(page.getByRole("heading", { name: goal, exact: true })).toBeVisible();
     }
