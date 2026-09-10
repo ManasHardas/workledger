@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { backlogActions } from "./backlog-actions.js";
-import { GROUP_LABELS, canRun, flatten, groupByStatus } from "./backlog-model.js";
+import { GROUP_LABELS, canRun, compareItems, flatten, groupByStatus, reorder } from "./backlog-model.js";
 import { useBacklog } from "./use-backlog.js";
 import { Badge } from "../../components/ui/badge.js";
 import { useSource } from "../../lib/source-context.js";
@@ -86,15 +86,23 @@ export function NextView() {
   }, [onKey]);
 
   /**
-   * Drop-to-reorder: the dragged item takes the rank of the item it landed on, which is what the
-   * `rank` command means by a manual order — the server re-spaces the group around it.
+   * Drop-to-reorder.
+   *
+   * `rankItem` stores exactly the number it is given and re-spaces nothing, so handing the dragged
+   * item its target's rank would only tie the two and leave the order to the `updated` tiebreak.
+   * The view therefore writes the whole sequence: the group is re-ordered here and every item whose
+   * position changed is ranked to its new index, low to high.
    */
   const onDrop = (target: BacklogView) => {
     const dragged = items.find((item) => item.frontmatter.id === draggingId);
     setDraggingId(null);
     if (!dragged || dragged.frontmatter.id === target.frontmatter.id) return;
     if (dragged.frontmatter.status !== target.frontmatter.status) return;
-    actions.rank(dragged, target.frontmatter.rank);
+    const group = items.filter((item) => item.frontmatter.status === target.frontmatter.status);
+    const before = [...group].sort(compareItems);
+    reorder(group, dragged.frontmatter.id, target.frontmatter.id).forEach((item, index) => {
+      if (before[index]?.frontmatter.id !== item.frontmatter.id) actions.rank(item, index);
+    });
   };
 
   return (

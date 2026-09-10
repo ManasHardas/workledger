@@ -108,3 +108,22 @@ export function messageOf(error: unknown): string {
   if (typeof error === "object" && error !== null && "code" in error) return String(error.code);
   return String(error);
 }
+
+/**
+ * The group re-ordered by dropping `draggedId` onto `targetId`, in the sorted order it renders in.
+ *
+ * A downward drag lands the item in the slot it was dropped on (everything between shifts up); an
+ * upward drag lands it directly above. Callers turn the result into `rank` calls — `rankItem` sets
+ * exactly the number it is given and re-spaces nothing, so the whole group's sequence is the
+ * caller's to write.
+ */
+export function reorder(group: BacklogView[], draggedId: string, targetId: string): BacklogView[] {
+  const sorted = [...group].sort(compareItems);
+  const from = sorted.findIndex((item) => item.frontmatter.id === draggedId);
+  const to = sorted.findIndex((item) => item.frontmatter.id === targetId);
+  if (from < 0 || to < 0 || from === to) return sorted;
+  const rest = sorted.filter((item) => item.frontmatter.id !== draggedId);
+  const at = rest.findIndex((item) => item.frontmatter.id === targetId) + (from < to ? 1 : 0);
+  rest.splice(at, 0, sorted[from]!);
+  return rest;
+}

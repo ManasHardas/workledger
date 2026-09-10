@@ -313,19 +313,51 @@ describe("assign, rank and merge", () => {
     expect(spy.calls).toContainEqual(["assign", ACCEPTED.frontmatter.id, null]);
   });
 
-  it("ranks a dragged item onto the rank of the item it is dropped on", async () => {
-    const second = item("WL-01JBQ50R6TT4YB8H2ZC3D9KQ7H", "Second proposal", "proposed", 15);
+  /** Four proposed items, ranked 0..3, so a drag has somewhere to go in both directions. */
+  async function renderQueue() {
+    const queue = ["Alpha", "Bravo", "Charlie", "Delta"].map((title, i) =>
+      item(`WL-01JBQ50R6TT4YB8H2ZC3D9KQ${i}Z`, title, "proposed", i * 10),
+    );
     const spy = spySource();
-    spy.setItems([PROPOSED, second]);
+    spy.setItems(queue);
     render(
       <SourceProvider source={spy.source}>
         <NextView />
       </SourceProvider>,
     );
-    await screen.findByText("Second proposal");
-    fireEvent.dragStart(card("Second proposal"));
-    fireEvent.drop(card(PROPOSED.frontmatter.title));
-    expect(spy.calls).toContainEqual(["rank", second.frontmatter.id, PROPOSED.frontmatter.rank]);
+    await screen.findByText("Delta");
+    return { spy, queue };
+  }
+
+  const drag = (from: string, onto: string) => {
+    fireEvent.dragStart(card(from));
+    fireEvent.drop(card(onto));
+  };
+
+  const rankCalls = (calls: Call[]) => calls.filter(([name]) => name === "rank");
+  const id = (queue: BacklogView[], title: string) =>
+    queue.find((i) => i.frontmatter.title === title)!.frontmatter.id;
+
+  it("re-ranks the whole group on a downward drag, index by index", async () => {
+    const { spy, queue } = await renderQueue();
+    // Alpha lands in Charlie's slot: Bravo, Charlie, Alpha, Delta.
+    drag("Alpha", "Charlie");
+    expect(rankCalls(spy.calls)).toEqual([
+      ["rank", id(queue, "Bravo"), 0],
+      ["rank", id(queue, "Charlie"), 1],
+      ["rank", id(queue, "Alpha"), 2],
+    ]);
+  });
+
+  it("re-ranks the whole group on an upward drag, index by index", async () => {
+    const { spy, queue } = await renderQueue();
+    // Delta lands directly above Bravo: Alpha, Delta, Bravo, Charlie.
+    drag("Delta", "Bravo");
+    expect(rankCalls(spy.calls)).toEqual([
+      ["rank", id(queue, "Delta"), 1],
+      ["rank", id(queue, "Bravo"), 2],
+      ["rank", id(queue, "Charlie"), 3],
+    ]);
   });
 
   it("merges an item into another one", async () => {
