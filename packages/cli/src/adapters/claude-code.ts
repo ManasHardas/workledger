@@ -40,6 +40,14 @@ export const CLAUDE_BIN_ENV = "WORKLEDGER_CLAUDE_BIN";
  */
 export const MAX_RESUME_OUTPUT = 16_000;
 
+/**
+ * How long `close` is waited for after `exit` before the result is settled anyway.
+ *
+ * Long enough for the pipes of a child that exited normally to drain, short enough that a
+ * grandchild still holding them cannot turn the repair timeout into an indefinite wait.
+ */
+export const EXIT_GRACE_MS = 250;
+
 /** `source` values Claude Code sends on `SessionStart`. */
 const START_SOURCES: readonly StartSource[] = ["startup", "resume", "clear", "compact", "fork"];
 
@@ -196,6 +204,17 @@ async function resumeHeadless(sessionId: string, options: ResumeOptions): Promis
 
     child.on("error", (error: Error) => {
       settle({ exitCode: null, timedOut, output, spawnError: error.message });
+    });
+
+    // `close` fires when the child has exited *and* its pipes are closed; it is the event that
+    // guarantees every byte has arrived, so it is the one this resolves on. But the pipes are
+    // inherited by whatever the harness spawned, and a SIGKILLed `claude` can leave a tool
+    // subprocess holding them open — which would make the timeout a hang instead of a kill. So
+    // `exit` starts a short grace period and settles with what has been collected if `close`
+    // does not follow.
+    child.on("exit", (code) => {
+      const grace = setTimeout(() => settle({ exitCode: code, timedOut, output }), EXIT_GRACE_MS);
+      grace.unref?.();
     });
     child.on("close", (code) => {
       settle({ exitCode: code, timedOut, output });
