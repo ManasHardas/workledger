@@ -38,8 +38,10 @@ export default defineConfig({
       // against the root config's directory, so `src/**/*.ts` matched nothing and
       // packages/core/src was silently absent from lcov.info — which would have let
       // scripts/coverage-gate.mjs score every change to core as "no executable lines".
-      // scripts/coverage-gate.mjs mirrors this list; the two must not drift.
-      include: ["packages/*/src/**/*.ts", "scripts/*.ts"],
+      // scripts/coverage-gate.mjs mirrors this list; the two must not drift — and they had:
+      // the gate's SCOPE has always carried `apps/<name>/src/**`, this list did not, so a pure
+      // `apps/web` branch scored "0 executable changed lines — pass" and was gated by nothing.
+      include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.{ts,tsx}", "scripts/*.ts"],
       all: true,
     },
   },

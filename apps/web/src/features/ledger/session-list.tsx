@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
+import { RepairSheet } from "../jobs/repair-sheet.js";
+import { useSource } from "../../lib/source-context.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
 import { detailHref } from "./detail-route.js";
 import { SessionCard } from "./session-card.js";
+
+/**
+ * A session the recovery queue has something to offer: its harness died before it checkpointed,
+ * or a previous scan already flagged it. `repaired` is deliberately absent — that one is done.
+ */
+export function needsRepair(session: ParsedSession): boolean {
+  return session.frontmatter.status === "crashed" || session.frontmatter.needs_repair;
+}
 
 /** True when the keystroke belongs to whatever the user is typing in, not to the list. */
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -20,6 +30,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * search box or a filter has focus, so typing a `j` into search stays a `j`.
  */
 export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
+  const source = useSource();
   const [cursor, setCursor] = useState(-1);
   const cards = useRef<(HTMLAnchorElement | null)[]>([]);
   const cursorRef = useRef(cursor);
@@ -61,7 +72,7 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
   return (
     <ul className="flex flex-col gap-3" aria-label="Sessions, newest first">
       {sessions.map((session, index) => (
-        <li key={session.frontmatter.id}>
+        <li key={session.frontmatter.id} className="flex flex-col gap-2">
           <SessionCard
             session={session}
             active={index === cursor}
@@ -70,6 +81,14 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
               cards.current[index] = node;
             }}
           />
+          {/*
+            The repair control sits beside the card and never inside it: the card is one anchor,
+            and a button nested in a link is neither clickable nor reachable by keyboard in the way
+            either element promises. It appears only where there is something to repair.
+          */}
+          {source.capabilities.write && needsRepair(session) ? (
+            <RepairSheet session={session.frontmatter.id} label="Repair session…" />
+          ) : null}
         </li>
       ))}
     </ul>
