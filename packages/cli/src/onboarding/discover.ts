@@ -2,15 +2,21 @@
  * `discoverRepos` — the wizard's "Projects" step (docs/contracts/p8/daemon-and-api.md
  * §Onboarding endpoints, `GET /api/onboarding/discover`).
  *
- * Two lists. `known` is every repo a harness store has sessions for — the ones an operator has
- * actually worked in with an agent, pre-checked by the wizard. `found` is every `.git` under the
- * roots the stores do not mention, so a repo with no agent history yet can still be picked. A
+ * Two lists. `known` is every repo a harness store has sessions *about* — the ones an operator
+ * has actually worked in with an agent, pre-checked by the wizard. `found` is every `.git` under
+ * the roots with no such session, so a repo with no agent history yet can still be picked. A
  * path is in one list or the other, never both.
  *
- * A session recorded in a subdirectory counts for the repo above it: Claude Code slugs the
- * working directory, not the repo, and `packages/cli` is not a project of its own. A session
- * whose directory is gone or under the OS temp dir counts for nothing (amendment 2): a test
- * fixture that ran an agent is not a project either.
+ * Which sessions a repo has is the inference of amendment 10 (`./attribution.ts`): a session
+ * counts for every repo its transcript's tool inputs qualify, wherever it was started, and for
+ * the repo containing its start directory only when nothing qualifies. The candidates the
+ * inference scores are the repos sessions were started in — the nearest git repo or enabled
+ * ledger at or above each start directory, a start directory inside no repo being nobody's
+ * candidate — and every `.git` under the roots. A session whose start directory is gone or
+ * under the OS temp dir counts for nothing (amendment 2): a test fixture that ran an agent is not
+ * a project either. `startedIn` says where a repo's sessions began when that was not inside it,
+ * `touchedSessions` how many began elsewhere, and `about` how many the content qualified against
+ * how many are the fallback.
  *
  * `suggested` is what the wizard pre-checks: a git repo outside the temp dirs that holds no other
  * candidate. A `~/Projects` with its own `.git` is walked *and* listed, unsuggested.
@@ -18,12 +24,6 @@
  * Paths are compared resolved: roots are realpath'd and deduplicated once they are known to
  * exist, and a candidate is one candidate however it was spelled (`~/Projects/`, a symlink to
  * it). A `known` path is reported as the harness recorded it, the way `findRepoRoot` keeps it.
- *
- * A second attribution runs over the candidates once both lists exist (amendment 8, #105): a
- * transcript started somewhere else — a workspace folder above the repos, another repo — counts
- * for every candidate its tool inputs touched (`./attribution.ts`), and a `found` repo that gains
- * a session that way moves to `known`. `startedIn` says where those sessions began and
- * `touchedSessions` how many there were; `harnessSessions` counts them with the rest.
  */
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -33,8 +33,9 @@ import { configFile } from "../config.js";
 import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
-import { isDirectory, sessionRepoOf } from "./session-cwd.js";
+import { isDirectory } from "./session-cwd.js";
 import { claudeProjects, codexSessions } from "./stores.js";
+import { repoAbove } from "./touched.js";
 import type { OnboardingIo } from "./io.js";
 import type { DiscoverResult, RepoCandidate, WorkspaceCandidate } from "@workledger/server";
 
@@ -71,16 +72,13 @@ function candidate(repo: string): RepoCandidate {
     lastSessionAt: null,
     startedIn: [],
     touchedSessions: 0,
+    about: { content: 0, fallback: 0 },
   };
 }
 
-/**
- * The repo a session's working directory belongs to, or the directory itself; `undefined` for a
- * directory that is gone or under one of `tempDirs`.
- */
-function repoOf(cwd: string, tempDirs: readonly string[]): string | undefined {
-  if (!isDirectory(cwd) || underTempDir(cwd, tempDirs)) return undefined;
-  return sessionRepoOf(cwd);
+/** A start directory that still exists and is not scratch (amendment 2). */
+function usableStart(cwd: string, tempDirs: readonly string[]): boolean {
+  return isDirectory(cwd) && !underTempDir(cwd, tempDirs);
 }
 
 /**
@@ -127,72 +125,63 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
   const roots = [...new Set(given.map(realOr))];
   const tempDirs = io.tempDirs ?? OS_TEMP_DIRS;
 
-  // Both maps are keyed by resolved path; `known` keeps the first spelling a store recorded.
-  const known = new Map<string, RepoCandidate>();
-  const count = (entry: RepoCandidate, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
-    entry.harnessSessions[harness] = (entry.harnessSessions[harness] ?? 0) + sessions;
-    if (newestMs > 0) {
-      const at = new Date(newestMs).toISOString();
-      if (entry.lastSessionAt === null || at > entry.lastSessionAt) entry.lastSessionAt = at;
-    }
-  };
-  const bump = (repo: string, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
+  // The candidates, keyed by resolved path; a start directory's repo keeps the first spelling a
+  // store recorded, a walked repo is resolved already (the walk follows no symlink).
+  const candidates = new Map<string, RepoCandidate>();
+  const consider = (repo: string): void => {
     const key = realOr(repo);
-    const entry = known.get(key) ?? candidate(repo);
-    count(entry, harness, sessions, newestMs);
-    known.set(key, entry);
+    if (!candidates.has(key)) candidates.set(key, candidate(repo));
   };
 
   // Start directories that are not repo roots themselves (amendment 8): candidates for
   // `init --workspace`. "Not a repo root" is the directory's own `.git`, not an ancestor's: a
   // `~/Projects/dome_workspace` under a `~/Projects` that is itself a git repo is still the
   // folder its sessions start in, and `findRepoRoot` would resolve it to the ancestor.
+  // The repo a start directory is inside — the nearest git repo or enabled ledger at or above
+  // it — is a candidate; a `~` or a workspace folder is where sessions start, never something
+  // they are about (amendment 10): a session that wrote its harness's memory file under `~` is
+  // not a session about `~`.
   const starts = new Set<string>();
   const startedIn = (cwd: string): void => {
     const start = path.resolve(cwd);
     if (!existsSync(path.join(start, ".git"))) starts.add(realOr(start));
+    const repo = repoAbove(start);
+    if (repo !== undefined) consider(repo);
   };
 
   for (const project of claudeProjects(io.homeDir)) {
-    if (project.cwd === undefined || project.sessions === 0) continue;
-    const repo = repoOf(project.cwd, tempDirs);
-    if (repo === undefined) continue;
-    bump(repo, "claude-code", project.sessions, project.newestMs);
+    if (project.cwd === undefined || project.sessions === 0 || !usableStart(project.cwd, tempDirs)) continue;
     startedIn(project.cwd);
   }
   for (const session of codexSessions(io.homeDir)) {
-    if (session.cwd === null) continue;
-    const repo = repoOf(session.cwd, tempDirs);
-    if (repo === undefined) continue;
-    bump(repo, "codex", 1, session.mtimeMs);
+    if (session.cwd === null || !usableStart(session.cwd, tempDirs)) continue;
     startedIn(session.cwd);
   }
+  for (const root of roots) walkRoot(root, consider);
 
-  // The walk follows no symlink and starts from a resolved root, so what it yields is resolved.
+  // The inference, over every candidate at once (amendment 10): a transcript is scanned once
+  // through the index cache whatever its start directory, and counts for each repo it is about.
+  const about = await withIndex(io, (db) => attributeTranscripts(io.homeDir, [...candidates.keys()], db, { tempDirs }));
+  const known = new Map<string, RepoCandidate>();
   const found = new Map<string, RepoCandidate>();
-  for (const root of roots) {
-    walkRoot(root, (repo) => {
-      if (!known.has(repo) && !found.has(repo)) found.set(repo, candidate(repo));
-    });
-  }
-
-  // The touched-path rule, over every candidate from both lists. A transcript is scanned once
-  // through the index cache whatever its cwd; a `found` repo it touched is a `known` one after all.
-  const touched = await withIndex(io, (db) =>
-    attributeTranscripts(io.homeDir, [...known.keys(), ...found.keys()], db, { tempDirs }),
-  );
-  for (const [key, attribution] of touched) {
-    const sessions = [...attribution.claude.map((s) => ["claude-code", s] as const), ...attribution.codex.map((s) => ["codex", s] as const)];
-    if (sessions.length === 0) continue;
-    let entry = known.get(key);
-    if (entry === undefined) {
-      entry = found.get(key) as RepoCandidate;
-      found.delete(key);
-      known.set(key, entry);
+  for (const [key, entry] of candidates) {
+    const attribution = about.get(key);
+    const sessions = [...(attribution?.claude.map((s) => ["claude-code", s] as const) ?? []), ...(attribution?.codex.map((s) => ["codex", s] as const) ?? [])];
+    if (sessions.length === 0) {
+      // No session is about it: a walked repo stays offered; a start directory whose sessions
+      // were all about other repos — a workspace folder, `~` — is not a project at all.
+      if (entry.hasGit && roots.some((root) => key === root || key.startsWith(`${root}${path.sep}`))) found.set(key, entry);
+      continue;
     }
-    for (const [harness, session] of sessions) count(entry, harness, 1, session.mtimeMs);
-    entry.touchedSessions += sessions.length;
-    entry.startedIn = attribution.startedIn;
+    for (const [harness, session] of sessions) {
+      entry.harnessSessions[harness] = (entry.harnessSessions[harness] ?? 0) + 1;
+      const at = new Date(session.mtimeMs).toISOString();
+      if (entry.lastSessionAt === null || at > entry.lastSessionAt) entry.lastSessionAt = at;
+    }
+    entry.startedIn = attribution?.startedIn ?? [];
+    entry.about = attribution?.about ?? { content: 0, fallback: 0 };
+    entry.touchedSessions = sessions.filter(([, session]) => session.cwd !== null && entry.startedIn.includes(session.cwd)).length;
+    known.set(key, entry);
   }
 
   const all = [...known.entries(), ...found.entries()];

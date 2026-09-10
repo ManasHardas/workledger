@@ -23,13 +23,13 @@ import { parseSessionText } from "@workledger/core";
 
 import { EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
 import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
+import { attributeTranscripts } from "../src/onboarding/attribution.js";
 import { openIndex } from "../src/index/db.js";
 import { cancelJob, listJobs, retryJob } from "../src/jobs/queue.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
 import {
   CLAUDE_STORE,
   backfillTimeoutS,
-  enumerateStore,
   filterSince,
   formatDuration,
   planBackfill,
@@ -38,7 +38,7 @@ import {
   summaryLine,
 } from "../src/commands/backfill.js";
 import { sessionFile, writeFileAtomic } from "../src/ledger-fs.js";
-import type { BackfillIo } from "../src/commands/backfill.js";
+import type { BackfillIo, StoreSession } from "../src/commands/backfill.js";
 import type { HarnessAdapter, ResumeOptions, ResumeResult } from "../src/adapters/types.js";
 import type { IndexDb } from "../src/index/db.js";
 
@@ -128,6 +128,14 @@ function checkpointingAdapter(options: { failFor?: Set<string>; onResume?: () =>
   };
 }
 
+/**
+ * The Claude Code sessions the inference files into `root` (amendment 10) — what `runBackfill`
+ * plans from; `enumerateStore`'s successor, so the store tests read through the same rule.
+ */
+async function sessionsAbout(root: string = repo): Promise<StoreSession[]> {
+  return (await attributeTranscripts(fakeHome, [root], db)).get(root)?.claude ?? [];
+}
+
 function backfillIo(adapter: HarnessAdapter, overrides: Partial<BackfillIo> = {}): BackfillIo {
   return {
     db,
@@ -173,8 +181,8 @@ afterEach(() => {
 });
 
 describe("store enumeration", () => {
-  it("reads the slug directory's transcripts, newest first, from metadata only", () => {
-    const found = enumerateStore(fakeHome, repo);
+  it("reads the slug directory's transcripts, newest first, and files them by content", async () => {
+    const found = await sessionsAbout();
 
     expect(found.map((session) => session.harnessSessionId)).toEqual([
       "hs-gamma",
@@ -188,29 +196,35 @@ describe("store enumeration", () => {
     expect(alpha?.file.endsWith(path.join(projectSlug(repo), "hs-alpha.jsonl"))).toBe(true);
   });
 
-  it("ignores a transcript whose first record names another repo, and non-transcripts", () => {
+  it("ignores a transcript whose start directory is gone, and non-transcripts", async () => {
     const store = path.join(fakeHome, CLAUDE_STORE, projectSlug(repo));
+    // Started somewhere that no longer exists: nowhere to resume it, whatever it wrote (#114).
+    const gone = path.join(fakeHome, CLAUDE_STORE, projectSlug(path.join(dir, "gone")));
+    mkdirSync(gone, { recursive: true });
     writeFileSync(
-      path.join(store, "hs-elsewhere.jsonl"),
-      `${JSON.stringify({ type: "user", cwd: "/somewhere/else", message: { role: "user", content: "hi" } })}\n`,
+      path.join(gone, "hs-elsewhere.jsonl"),
+      `${JSON.stringify({ type: "user", cwd: path.join(dir, "gone"), message: { role: "user", content: "hi" } })}\n` +
+        `${JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Write", input: { file_path: path.join(repo, "x.md"), content: "x" } }] } })}\n`,
       "utf8",
     );
     writeFileSync(path.join(store, "notes.md"), "not a transcript", "utf8");
     writeFileSync(path.join(store, "hs-empty.jsonl"), "", "utf8");
 
-    const found = enumerateStore(fakeHome, repo).map((session) => session.harnessSessionId);
+    const found = (await sessionsAbout()).map((session) => session.harnessSessionId);
     expect(found).toEqual(["hs-gamma", "hs-beta", "hs-alpha"]);
   });
 
-  it("is empty for a repo the store has never seen", () => {
-    expect(enumerateStore(fakeHome, path.join(dir, "other-repo"))).toEqual([]);
+  it("is empty for a repo the store has never seen", async () => {
+    const other = path.join(dir, "other-repo");
+    mkdirSync(path.join(other, ".git"), { recursive: true });
+    expect(await sessionsAbout(other)).toEqual([]);
   });
 
   // The 2026-09-10 store: a transcript opens with `last-prompt` and `mode` records that carry
   // no cwd and no timestamp, and the first `user` record — the one that says where the session
   // started — comes third. Reading the first line alone recorded `cwd: null`, and the resume
   // then ran in the repo root, where the harness could not find the session (#114).
-  it("takes the start directory from the first record that carries one, else from the slug (#114)", () => {
+  it("takes the start directory from the first record that carries one, else from the slug (#114)", async () => {
     const sub = path.join(repo, "src");
     mkdirSync(sub, { recursive: true });
     const store = path.join(fakeHome, CLAUDE_STORE, projectSlug(sub));
@@ -233,10 +247,12 @@ describe("store enumeration", () => {
     // No record carries a cwd at all: the slug, inverted, is the only word on where it started.
     writeFileSync(path.join(store, "hs-mute.jsonl"), `${preamble.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
 
-    const found = enumerateStore(fakeHome, repo);
+    // Neither transcript names a path: both are the repo's by the fallback of amendment 10.
+    const found = await sessionsAbout();
     expect(found.find((session) => session.harnessSessionId === "hs-late")).toMatchObject({
       cwd: sub,
       startedIso: "2026-09-08T09:00:00.000Z",
+      context: [{ root: repo, fallback: true }],
     });
     expect(found.find((session) => session.harnessSessionId === "hs-mute")).toMatchObject({ cwd: sub, startedIso: null });
   });
@@ -247,8 +263,8 @@ describe("store enumeration", () => {
 });
 
 describe("--since filtering and the plan", () => {
-  it("keeps only the sessions inside the window, by file mtime", () => {
-    const found = enumerateStore(fakeHome, repo);
+  it("keeps only the sessions inside the window, by file mtime", async () => {
+    const found = await sessionsAbout();
 
     const names = (since: string): string[] =>
       filterSince(found, since, NOW).map((session) => session.harnessSessionId);
@@ -275,7 +291,7 @@ describe("--since filtering and the plan", () => {
     mkdirSync(otherStore, { recursive: true });
     writeFileSync(path.join(otherStore, "hs-other.jsonl"), readFileSync(path.join(FIXTURES, "hs-gamma.jsonl"), "utf8").replaceAll("__CWD__", other), "utf8");
 
-    const found = enumerateStore(fakeHome, repo).map((session) => [session.harnessSessionId, session.cwd]);
+    const found = (await sessionsAbout()).map((session) => [session.harnessSessionId, session.cwd]);
     expect(found).toContainEqual(["hs-sub", sub]);
     expect(found.map(([id]) => id)).not.toContain("hs-other");
 
@@ -284,7 +300,7 @@ describe("--since filtering and the plan", () => {
     expect(out).toContain("sessions   2");
   });
 
-  it("splits the window into fresh and already-indexed, and prices the fresh half", () => {
+  it("splits the window into fresh and already-indexed, and prices the fresh half", async () => {
     db.insertSession({
       ulid: "01JBQK0000000000000000000A",
       repo_path: repo,
@@ -293,7 +309,7 @@ describe("--since filtering and the plan", () => {
       status: "ended",
     });
 
-    const plan = planBackfill(enumerateStore(fakeHome, repo), {
+    const plan = planBackfill(await sessionsAbout(), {
       repoPath: repo,
       db,
       harness: "claude-code",

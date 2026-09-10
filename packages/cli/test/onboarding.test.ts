@@ -37,7 +37,9 @@ import {
 import { discoverRepos } from "../src/onboarding/discover.js";
 import { historyWindows } from "../src/onboarding/history.js";
 import { initRepos } from "../src/onboarding/init.js";
-import { CODEX_STORE, claudeProjects, claudeTranscripts, codexSessions, enumerateCodexStore, slugToPath } from "../src/onboarding/stores.js";
+import { attributeTranscripts } from "../src/onboarding/attribution.js";
+import { withIndex } from "../src/onboarding/io.js";
+import { CODEX_STORE, claudeProjects, claudeTranscripts, codexSessions, slugToPath } from "../src/onboarding/stores.js";
 import { SETTINGS_PATH } from "../src/settings-merge.js";
 import type { OnboardIo } from "../src/commands/onboard.js";
 import type { OnboardingIo } from "../src/onboarding/io.js";
@@ -179,9 +181,11 @@ describe("the harness stores", () => {
     ]);
   });
 
-  it("enumerates a repo's Codex rollouts as store sessions, subdirectory sessions included", () => {
+  it("files a repo's Codex rollouts as store sessions, subdirectory sessions included", async () => {
     const rollout = path.join(home, CODEX_STORE, "2026", "09", "08", "rollout-a.jsonl");
-    expect(enumerateCodexStore(home, repoA)).toEqual([
+    const about = await withIndex(io, (db) => attributeTranscripts(home, [repoA, repoB], db));
+    // A rollout with only its `session_meta` names no path: repo A's by the fallback (amendment 10).
+    expect(about.get(repoA)?.codex).toEqual([
       {
         harnessSessionId: CODEX_ID,
         file: rollout,
@@ -189,10 +193,11 @@ describe("the harness stores", () => {
         mtimeMs: NOW.getTime() - 1 * DAY_MS,
         startedIso: "2026-09-08T10:00:00.000Z",
         cwd: path.join(repoA, "packages"),
+        context: [{ root: repoA, writes: 0, pathInputs: 0, references: 0, fallback: true }],
       },
     ]);
     // The rollout naming a gone directory counts for no repo, and repo B has none.
-    expect(enumerateCodexStore(home, repoB)).toEqual([]);
+    expect(about.get(repoB)?.codex).toEqual([]);
   });
 });
 
@@ -214,8 +219,11 @@ describe("discoverRepos", () => {
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
       startedIn: [],
       touchedSessions: 0,
+      // Three transcripts write under the repo; the Codex rollout names no path and is the
+      // repo's only because it started inside it (amendment 10).
+      about: { content: 3, fallback: 1 },
     });
-    expect(result.known[1]?.harnessSessions).toEqual({ "claude-code": 2 });
+    expect(result.known[1]).toMatchObject({ harnessSessions: { "claude-code": 2 }, about: { content: 2, fallback: 0 } });
     expect(result.workspaces).toEqual([]);
     expect(result.found.map((c) => c.path)).toEqual([repoC]);
     expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, suggested: true, harnessSessions: {}, lastSessionAt: null });
@@ -470,8 +478,14 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
       Array.from({ length: 5 }, () => ["repair", "queued", ONBOARDING_SOURCE]),
     );
     expect(queued.jobs.filter((job) => job.repo_path === repoA)).toHaveLength(4);
-    // The subdirectory session is repo A's row, with its own cwd kept.
-    expect(withDb((db) => db.getSessionByHarnessId("claude-code", "hs-sub", repoA))).toMatchObject({ repo_path: repoA, cwd: path.join(repoA, "src") });
+    // The subdirectory session is repo A's row, with its own start directory kept and the
+    // inference that filed it there (amendment 10).
+    const sub = withDb((db) => db.getSessionByHarnessId("claude-code", "hs-sub", repoA));
+    expect(sub).toMatchObject({ repo_path: repoA, start_dir: path.join(repoA, "src") });
+    expect(JSON.parse(sub?.context_repos as string)).toEqual([{ root: repoA, writes: 1, pathInputs: 1, references: 1 }]);
+    const file = readFileSync(path.join(repoA, ".workledger", "sessions", `${sub?.ulid}.md`), "utf8");
+    expect(file).toContain(`started_in: ${path.join(repoA, "src")}`);
+    expect(file).toContain(`about:\n  - ${repoA}`);
     // The ledger side of each row: a `source: backfill` session file, as `workledger backfill` writes.
     for (const job of queued.jobs) {
       expect(readFileSync(path.join(job.repo_path, ".workledger", "sessions", `${job.session_ulid}.md`), "utf8")).toContain("source: backfill");
@@ -762,19 +776,21 @@ describe("touched-path attribution (amendment 8, #105)", () => {
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
       startedIn: [ws],
       touchedSessions: 2,
+      about: { content: 2, fallback: 0 },
     });
     expect(b).toMatchObject({ harnessSessions: { "claude-code": 1 }, startedIn: [ws], touchedSessions: 1 });
     expect(result.found.map((c) => c.path)).toEqual([repoC]);
-    // The workspace itself is where the sessions started, so the cwd rule lists it as it always
-    // has — a directory with no `.git`, never suggested; amendment 8's `workspaces` is the sibling
-    // slot's. Its sessions are not touched sessions.
-    expect(result.known.find((c) => c.path === ws)).toMatchObject({ hasGit: false, suggested: false, startedIn: [], touchedSessions: 0 });
+    // The workspace is where the sessions started and nothing more (amendment 10): no session
+    // is about it, so it is not a project; it is the `workspaces` slot's.
+    expect(result.known.find((c) => c.path === ws)).toBeUndefined();
+    expect(result.workspaces.map((w) => w.path)).toEqual([ws]);
     // The other repos' sessions started inside them and are not touched sessions.
     expect(result.known.find((c) => c.path === repoA)).toMatchObject({ startedIn: [], touchedSessions: 0 });
   });
 
-  it("attributes a session started inside another repo only by a write, never by reads or cds", async () => {
-    // Started in repo-c: ten Reads and cds into card-a — routine sibling browsing, not work there.
+  it("files a session started in one repo into the repo it wrote in, and into its own only as the fallback (amendment 10)", async () => {
+    // Started in repo-c: ten Reads and cds into card-a — routine sibling browsing, not work
+    // there. Nothing qualifies, so the session is repo-c's by the fallback alone.
     const file = path.join(home, CLAUDE_STORE, projectSlug(repoC), "hs-c.jsonl");
     mkdirSync(path.dirname(file), { recursive: true });
     const record = (name: string, input: Record<string, unknown>): string =>
@@ -788,11 +804,28 @@ describe("touched-path attribution (amendment 8, #105)", () => {
 
     const before = await discoverRepos({}, io);
     expect(before.known.find((c) => c.path === cardA)).toMatchObject({ startedIn: [ws], touchedSessions: 2 });
+    expect(before.known.find((c) => c.path === repoC)).toMatchObject({ harnessSessions: { "claude-code": 1 }, about: { content: 0, fallback: 1 } });
+    expect((await historyWindows([repoC], io)).windows.all.sessions).toBe(1);
 
+    // One write under card-a: the session is about card-a, and not about repo-c at all — the
+    // start directory is where the transcript lives, not where the digest goes.
     writeFileSync(file, browsing + record("Write", { file_path: path.join(cardA, "notes.md"), content: "x" }), "utf8");
     utimesSync(file, NOW, NOW);
     const after = await discoverRepos({}, io);
-    expect(after.known.find((c) => c.path === cardA)).toMatchObject({ startedIn: [repoC, ws].sort(), touchedSessions: 3 });
+    expect(after.known.find((c) => c.path === cardA)).toMatchObject({ startedIn: [repoC, ws].sort(), touchedSessions: 3, about: { content: 3, fallback: 0 } });
+    expect(after.known.find((c) => c.path === repoC)).toBeUndefined();
+    expect(after.found.map((c) => c.path)).toEqual([repoC]);
+    expect((await historyWindows([repoC], io)).windows.all.sessions).toBe(0);
+    expect((await historyWindows([cardA], io)).windows.all.sessions).toBe(3);
+
+    // Backfilled into card-a with its start directory and the inference on the row.
+    await initRepos({ repos: [cardA] }, io);
+    const queued = await queueOnboardingBackfill({ repos: [cardA], since: "7d", method: "resume", consent: true }, io);
+    const row = withDb((db) => db.getSessionByHarnessId("claude-code", "hs-c", cardA));
+    expect(queued.jobs.map((job) => job.session_ulid)).toContain(row?.ulid);
+    expect(row).toMatchObject({ repo_path: cardA, start_dir: repoC });
+    expect(JSON.parse(row?.context_repos as string)).toEqual([{ root: cardA, writes: 1, pathInputs: 11, references: 11 }]);
+    expect(withDb((db) => db.getSessionByHarnessId("claude-code", "hs-c", repoC))).toBeUndefined();
   });
 
   it("history counts the touched session once per repo it touched", async () => {
@@ -806,7 +839,7 @@ describe("touched-path attribution (amendment 8, #105)", () => {
     expect((await historyWindows([cardA, cardB], io)).windows["90d"]).toEqual(windows["90d"]);
   });
 
-  it("run queues one repair job per (session, repo), each row carrying the session's own cwd", async () => {
+  it("run queues one repair job per (session, repo), each row carrying the session's own start directory", async () => {
     await initRepos({ repos: [cardA, cardB] }, io);
     expect((await backfillPlan({ repos: [cardA, cardB], since: "7d", method: "resume" }, io)).sessions).toBe(3);
 
@@ -821,10 +854,11 @@ describe("touched-path attribution (amendment 8, #105)", () => {
     const forA = withDb((db) => db.getSessionByHarnessId("claude-code", CLAUDE_ID, cardA));
     const forB = withDb((db) => db.getSessionByHarnessId("claude-code", CLAUDE_ID, cardB));
     const codexA = withDb((db) => db.getSessionByHarnessId("codex", CODEX_WS_ID, cardA));
-    expect(forA).toMatchObject({ repo_path: cardA, cwd: ws, transcript_path: claudeFile, status: "ended" });
-    expect(forB).toMatchObject({ repo_path: cardB, cwd: ws, transcript_path: claudeFile });
+    expect(forA).toMatchObject({ repo_path: cardA, start_dir: ws, transcript_path: claudeFile, status: "ended" });
+    expect(forB).toMatchObject({ repo_path: cardB, start_dir: ws, transcript_path: claudeFile });
     expect(forA?.ulid).not.toBe(forB?.ulid);
-    expect(codexA).toMatchObject({ repo_path: cardA, cwd: ws, harness: "codex" });
+    expect(forA?.context_repos).toBe(forB?.context_repos);
+    expect(codexA).toMatchObject({ repo_path: cardA, start_dir: ws, harness: "codex" });
     expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_WS_ID, cardB))).toBeUndefined();
     expect(new Set(queued.jobs.map((job) => job.session_ulid))).toEqual(new Set([forA?.ulid, forB?.ulid, codexA?.ulid]));
     for (const job of queued.jobs) {

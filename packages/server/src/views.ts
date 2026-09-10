@@ -54,6 +54,13 @@ export interface SessionView {
   remaining: RemainingLine[];
   notes: NoteLine[];
   unparsed: UnparsedLine[];
+  /**
+   * Where the harness session was started — the frontmatter's `started_in` (P8 amendment 10),
+   * `null` for a session from before it was recorded.
+   */
+  startedIn: string | null;
+  /** The repos the session is about, best first — the frontmatter's `about`; empty when never inferred. */
+  about: string[];
 }
 
 /** `GET /api/backlog` element. */
@@ -138,6 +145,8 @@ export function toSessionView(parsed: CoreParsedSession): SessionView {
       };
     }),
     unparsed: parsed.unparsed.map((line) => ({ section: line.section, line: line.line })),
+    startedIn: parsed.frontmatter.started_in ?? null,
+    about: parsed.frontmatter.about ?? [],
   };
 }
 

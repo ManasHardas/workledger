@@ -318,7 +318,7 @@ export function jobOps(
      */
     backfill: (repoRoot, input) =>
       withDb(async (db): Promise<{ jobs: Job[]; estimate: BackfillEstimate }> => {
-        const [{ createBackfilledSession, enumerateStore, planBackfill }, { SINCE_WINDOWS, loadConfig }, { claudeCodeAdapter }, { newSessionId }, { attributeTranscripts }] =
+        const [{ createBackfilledSession, planBackfill }, { SINCE_WINDOWS, loadConfig }, { claudeCodeAdapter }, { newSessionId }, { attributeTranscripts }] =
           await Promise.all([
             import("./backfill.js"),
             import("../config.js"),
@@ -335,8 +335,8 @@ export function jobOps(
         const config = loadConfig(repoRoot);
         const concurrency = input.concurrency ?? config.backfill.concurrency;
         const homeDir = harnessStoreHome(io);
-        const touched = (await attributeTranscripts(homeDir, [repoRoot], db)).get(repoRoot);
-        const plan = planBackfill([...enumerateStore(homeDir, repoRoot), ...(touched?.claude ?? [])], {
+        const about = (await attributeTranscripts(homeDir, [repoRoot], db)).get(repoRoot);
+        const plan = planBackfill(about?.claude ?? [], {
           db,
           harness: claudeCodeAdapter.harness,
           repoPath: repoRoot,

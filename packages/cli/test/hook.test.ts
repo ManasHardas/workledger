@@ -308,6 +308,96 @@ describe("hook Stop thresholds", () => {
 // Stop — the block / ignored / retry / give-up rule
 // ---------------------------------------------------------------------------
 
+describe("hook Stop files by content (amendment 10, #116)", () => {
+  /** A Claude Code transcript line: one tool call, recorded in `cwd`. */
+  function toolLine(cwd: string, name: string, input: Record<string, unknown>): string {
+    return `${JSON.stringify({ type: "assistant", cwd, message: { role: "assistant", content: [{ type: "tool_use", id: "t", name, input }] } })}\n`;
+  }
+
+  /** A second enabled repo the index knows, beside the fixture's. */
+  function enabledSibling(fixture: Fixture, name: string): string {
+    const root = path.join(fixture.dir, name);
+    mkdirSync(path.join(root, ".workledger", "sessions"), { recursive: true });
+    mkdirSync(path.join(root, ".workledger", "backlog"), { recursive: true });
+    writeFileSync(path.join(root, ".workledger", "config.yaml"), readFileSync(path.join(fixture.root, ".workledger", "config.yaml")), "utf8");
+    withDb(fixture, (db) => db.upsertRepo(root));
+    return root;
+  }
+
+  it("a session about its own repo alone gets the P1 block, with the fallback recorded", async () => {
+    const fixture = setup();
+    const ulid = await start(fixture);
+    expect((row(fixture) as SessionRow).start_dir).toBe(fixture.root);
+    expect(readFileSync(sessionFile(fixture.root, ulid), "utf8")).toContain(`started_in: ${fixture.root}`);
+    grow(fixture, 100_000);
+
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
+
+    expect(fixture.stderr.join("\n")).toContain(`Run exactly one command: workledger checkpoint --session ${ulid} --payload '<json>'`);
+    expect(JSON.parse((row(fixture) as SessionRow).context_repos as string)).toEqual([{ root: fixture.root, writes: 0, pathInputs: 0, references: 0, fallback: true }]);
+    expect(readFileSync(sessionFile(fixture.root, ulid), "utf8")).toContain(`about:\n  - ${fixture.root}`);
+  });
+
+  it("a repo-started session whose content is about another repo blocks with --repo for that repo, and files there", async () => {
+    const fixture = setup();
+    const other = enabledSibling(fixture, "other");
+    const ulid = await start(fixture);
+    // Every path the session touched is under the sibling: it is about the sibling, not about
+    // the repo it was started in.
+    writeFileSync(fixture.transcript, toolLine(fixture.root, "Write", { file_path: path.join(other, "notes.md"), content: "x" }) + "x".repeat(100_000), "utf8");
+    fixture.stderr.length = 0;
+
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
+
+    const filed = row(fixture, HARNESS_ID);
+    const there = (() => {
+      const db = openIndex({ home: fixture.home });
+      try {
+        return db.getSessionByHarnessId("claude-code", HARNESS_ID, other);
+      } finally {
+        db.close();
+      }
+    })() as SessionRow;
+    expect(there).toMatchObject({ repo_path: other, start_dir: fixture.root, status: "open" });
+    const text = fixture.stderr.join("\n");
+    expect(text).toContain(`workledger checkpoint --session ${there.ulid} --repo ${other} --payload '<json>'`);
+    expect(text).not.toContain(`--session ${ulid}`);
+    expect(JSON.parse((filed as SessionRow).context_repos as string)).toEqual([{ root: other, writes: 1, pathInputs: 1, references: 1 }]);
+    expect(readFileSync(sessionFile(other, there.ulid), "utf8")).toContain(`about:\n  - ${other}`);
+    expect(sessionFiles(fixture)).toEqual([`${ulid}.md`]);
+
+    // The checkpoint lands on the sibling's row; the next Stop sees it and resets this row's window.
+    withDb(fixture, (db) => db.resetAfterCheckpoint(there.ulid, { offset: 0, at: fixture.clock.toISOString() }));
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_OK);
+    expect(row(fixture)).toMatchObject({ blocks_since_checkpoint: 0, turns_since_checkpoint: 0, turns_total: 2 });
+
+    // SessionEnd closes both rows and both files.
+    expect(await run(fixture, "SessionEnd", "session-end-prompt_input_exit")).toBe(EXIT_OK);
+    expect(row(fixture)?.status).toBe("ended");
+    expect(readFileSync(sessionFile(other, there.ulid), "utf8")).toContain("status: ended");
+  });
+
+  it("a failed attempt on the other repo's row raises the retry block with its errors", async () => {
+    const fixture = setup();
+    const other = enabledSibling(fixture, "other");
+    await start(fixture);
+    writeFileSync(fixture.transcript, toolLine(fixture.root, "Edit", { file_path: path.join(other, "a.ts"), old_string: "a", new_string: "b" }) + "x".repeat(100_000), "utf8");
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
+    const db = openIndex({ home: fixture.home });
+    try {
+      const there = db.getSessionByHarnessId("claude-code", HARNESS_ID, other) as SessionRow;
+      db.recordAttempt(there.ulid, { at: fixture.clock.toISOString(), exit: 1, errors: "done[0].text: too long" });
+    } finally {
+      db.close();
+    }
+    fixture.stderr.length = 0;
+
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
+    expect(fixture.stderr.join("\n")).toContain("done[0].text: too long");
+    expect((row(fixture) as SessionRow).blocks_since_checkpoint).toBe(2);
+  });
+});
+
 describe("hook Stop block state", () => {
   it("an ignored block never repeats", async () => {
     const fixture = setup();

@@ -1,16 +1,19 @@
 /**
- * The touched-path scanner — docs/contracts/p8/daemon-and-api.md amendment 8 (#105).
+ * The touched-path scanner and the context inference — docs/contracts/p8/daemon-and-api.md
+ * amendments 8 (#105) and 10 (#116, DL-20).
  *
- * A session started in a workspace folder (`~/Projects/dome_workspace`, itself not a repo) does
- * its work in the repos below it, and nothing about where it *started* says which. What does say
- * is the transcript's tool inputs: every `Read`, `Edit`, `Bash` and `cd` names a path. This
- * module reads a transcript once, front to back, and counts — per candidate root — how many tool
- * inputs named a path under it, how many of those wrote there, and how many were *path inputs*:
- * a non-Bash tool's `file_path`/`path`/`notebook_path`, or a Bash `cd` into the root. The rule
- * that turns the counts into an attribution is {@link meetsRule}: one write, or at least
- * {@link MIN_REFERENCES} references of which at least one is a path input (#110). Bash command
- * text alone — a `grep` that names the root twenty times — never attributes: the orchestrator's
- * own session in `~/Projects` was attributed to a card repo that way.
+ * Where a session was *started* says where its transcript is stored and where a resume must
+ * run, and nothing else: the session is about whatever its content is about, and that is what
+ * decides where its checkpoints are filed. What says it is the transcript's tool inputs: every
+ * `Read`, `Edit`, `Bash` and `cd` names a path. This module reads a transcript once, front to
+ * back, and counts — per candidate root — how many tool inputs named a path under it, how many
+ * of those wrote there, and how many were *path inputs*: a non-Bash tool's
+ * `file_path`/`path`/`notebook_path`, or a Bash `cd` into the root. The rule that turns the
+ * counts into a context repo is {@link meetsRule}: one write, or at least {@link MIN_REFERENCES}
+ * references of which at least one is a path input (#110). Bash command text alone — a `grep`
+ * that names the root twenty times — never qualifies: the orchestrator's own session in
+ * `~/Projects` was attributed to a card repo that way. {@link inferContext} is the one
+ * inference discovery, history, the backfill, the repair job and the Stop hook all apply.
  *
  * Two constraints shape the reading:
  *
@@ -25,10 +28,11 @@
  * {@link touchedRoots}), keyed by the file's mtime and size so an unchanged transcript is never
  * scanned twice. Transcript excerpts never enter the repo or the index (CLAUDE.md).
  */
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 
+import { configFile } from "../config.js";
 import type { IndexDb, TouchCount } from "../index/db.js";
 
 /**
@@ -60,31 +64,154 @@ export function meetsRule(tally: TouchTally): boolean {
   return tally.writes >= 1 || (tally.references >= MIN_REFERENCES && tally.pathInputs >= 1);
 }
 
-/**
- * Whether a session that started in `cwd` started inside a repo, for {@link attributes}: `cwd`
- * is a repo root itself (its own `.git`), or lies below one of `roots` — the candidate and
- * enabled repos — while holding none of them. A start directory with no `.git` of its own that
- * holds a candidate is a workspace folder, outside any repo whatever its git ancestors:
- * `~/Projects/dome_workspace` under a `~/Projects` that is itself a repo is where its sessions
- * work, not a corner of `~/Projects`. This is the workspace rule of `discover.ts`, and the one
- * place discover, history, backfill and the workspace Stop hook decide it.
- */
-export function startedInRepo(cwd: string, roots: readonly string[]): boolean {
-  const start = path.resolve(cwd);
-  if (existsSync(path.join(start, ".git"))) return true;
-  const below = (dir: string, parent: string): boolean => dir !== parent && dir.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
-  if (roots.some((root) => below(path.resolve(root), start))) return false;
-  return roots.some((root) => below(start, path.resolve(root)));
+/** `dir` is strictly below `parent`. Both must already be resolved. */
+function below(dir: string, parent: string): boolean {
+  return dir !== parent && dir.startsWith(parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`);
+}
+
+/** `file` with symlinks resolved, or as given when it cannot be. */
+function realOr(file: string): string {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+/** A git repo, or an enabled ledger — what a session can be about. */
+export function isRepoRoot(dir: string): boolean {
+  return existsSync(path.join(dir, ".git")) || existsSync(configFile(dir));
 }
 
 /**
- * Whether a tally attributes the session to a root other than the one it started in. The
- * reference rule ({@link meetsRule}) is for sessions started outside any repo — a workspace
- * folder — or inside the repo itself; a session started inside another repo counts here only
- * with a write, because reading or `cd`-ing into a sibling project is routine (#110).
+ * The nearest repo at or above `dir` ({@link isRepoRoot}), or `undefined`. Not `findRepoRoot`:
+ * that one also stops at a bare `.workledger/` directory, and `~/.workledger` is the index
+ * home, which would make `~` a repo every session started there is about.
  */
-export function attributes(tally: TouchTally, inRepo: boolean): boolean {
-  return inRepo ? tally.writes >= 1 : meetsRule(tally);
+export function repoAbove(dir: string): string | undefined {
+  let current = path.resolve(dir);
+  for (;;) {
+    if (isRepoRoot(current)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+/**
+ * The repo a session's start directory is inside — the fallback context of amendment 10 — or
+ * `undefined` for a start directory outside any repo. `startDir` is a repo root itself (its own
+ * `.git`), or lies below the nearest repo above it ({@link repoAbove}). A start directory with
+ * no `.git` of its own that holds one of `candidates` is a workspace folder, outside any repo
+ * whatever its git ancestors: `~/Projects/dome_workspace` under a `~/Projects` that is itself a
+ * repo is where its sessions start, not a corner of `~/Projects`. This is the workspace rule of
+ * `discover.ts`, and the one place discovery, the backfill and the Stop hook decide it.
+ */
+export function startRepoOf(startDir: string, candidates: readonly string[]): string | undefined {
+  const start = path.resolve(startDir);
+  if (existsSync(path.join(start, ".git"))) return start;
+  if (candidates.some((root) => below(path.resolve(root), start))) return undefined;
+  return repoAbove(start);
+}
+
+/** Whether a session that started in `cwd` started inside a repo — {@link startRepoOf} as a test. */
+export function startedInRepo(cwd: string, roots: readonly string[]): boolean {
+  return startRepoOf(cwd, roots) !== undefined;
+}
+
+/**
+ * Whether a tally qualifies a root as a context repo. The full rule ({@link meetsRule}) is for
+ * the repo the session started in and for every root of a session started outside any repo — a
+ * workspace folder; a root other than the start directory's own repo qualifies only with a
+ * write, because reading or `cd`-ing into a sibling project from inside another one is routine
+ * (#110; amendment 10: "the write rule stays for roots other than the fallback").
+ */
+export function attributes(tally: TouchTally, otherRepo: boolean): boolean {
+  return otherRepo ? tally.writes >= 1 : meetsRule(tally);
+}
+
+/** One context repo of a session: the root and the score that qualified it. */
+export interface ContextRepo extends TouchTally {
+  /** The candidate root, spelled as the caller gave it. */
+  root: string;
+  /**
+   * `true` when nothing qualified and this is the repo containing the start directory — a
+   * session that only talked (amendment 10). Absent for a root the content qualified.
+   */
+  fallback?: true;
+}
+
+/**
+ * The context repos a set of tallies implies, best first — the pure half of
+ * {@link inferContext}, shared with the Stop hook, which accumulates its tallies across Stops.
+ *
+ * `startRepo` is the repo containing the start directory as spelled among the tallies' roots,
+ * or `undefined` when it is not one of them; `inRepo` says whether the session started inside
+ * a repo at all (it did when `startRepo` is given, and may have when it is not: a repo the
+ * caller did not ask about). A root qualifies by {@link attributes}; the order is writes, then
+ * path inputs, then references — the score of amendment 10 — with the start directory's repo
+ * winning a tie and the path deciding the rest. When nothing qualifies, `startRepo` is the one
+ * context repo, marked `fallback`; a session with nothing qualifying and no `startRepo` among
+ * the roots has no context here at all.
+ */
+export function rankContext(
+  tallies: ReadonlyMap<string, TouchTally>,
+  startRepo: string | undefined,
+  inRepo: boolean = startRepo !== undefined,
+): ContextRepo[] {
+  const qualified: ContextRepo[] = [];
+  for (const [root, tally] of tallies) {
+    if (attributes(tally, inRepo && root !== startRepo)) qualified.push({ root, ...tally });
+  }
+  qualified.sort(
+    (a, b) =>
+      b.writes - a.writes ||
+      b.pathInputs - a.pathInputs ||
+      b.references - a.references ||
+      Number(b.root === startRepo) - Number(a.root === startRepo) ||
+      a.root.localeCompare(b.root),
+  );
+  if (qualified.length > 0 || startRepo === undefined) return qualified;
+  const own = tallies.get(startRepo);
+  return own === undefined ? [] : [{ root: startRepo, ...own, fallback: true }];
+}
+
+/** What {@link inferContext} found. */
+export interface ContextInference {
+  /** The start directory, as given. */
+  startDir: string;
+  /**
+   * The candidate the start directory is inside, spelled as the caller gave it, or `undefined`
+   * when the session started outside every candidate — a workspace folder, or a repo the caller
+   * did not ask about.
+   */
+  startRepo: string | undefined;
+  /** The context repos, best first; empty only for a workspace session with no evidence. */
+  contextRepos: ContextRepo[];
+  /** Every candidate's tally, whether or not it qualified. */
+  tallies: Map<string, TouchTally>;
+}
+
+/**
+ * The inference of amendment 10, for one transcript: which of `candidates` the session is about.
+ *
+ * The transcript is scored against every candidate through the index cache
+ * ({@link touchedRoots}), the repo containing `startDir` is found among the candidates by
+ * resolved path ({@link startRepoOf}), and {@link rankContext} turns the two into the context
+ * repos. Discovery, history, the backfill and the repair job call exactly this; the Stop hook
+ * scans incrementally and calls {@link rankContext} on what it has accumulated.
+ */
+export async function inferContext(
+  transcriptPath: string,
+  candidates: readonly string[],
+  startDir: string,
+  io: { db: IndexDb; homeDir: string },
+): Promise<ContextInference> {
+  const tallies = await touchedRoots(io.db, transcriptPath, candidates, { cwd: startDir, homeDir: io.homeDir });
+  const own = startRepoOf(startDir, candidates);
+  const ownKey = own === undefined ? undefined : realOr(own);
+  const startRepo = ownKey === undefined ? undefined : candidates.find((root) => realOr(root) === ownKey);
+  return { startDir, startRepo, contextRepos: rankContext(tallies, startRepo, own !== undefined), tallies };
 }
 
 /** What {@link scanTranscript} needs beyond the file. */
@@ -127,7 +254,8 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 /**
  * Where a path lands among the candidate roots: the deepest root it is under, or `undefined`.
  * Deepest, so a repo nested under another candidate (a `~/Projects` that is itself a git repo)
- * gets its own references rather than losing them upward.
+ * gets its own references rather than losing them upward. `roots` may carry two spellings of
+ * one root; the caller maps either back to the root.
  */
 function rootOf(absolute: string, roots: readonly string[]): string | undefined {
   let best: string | undefined;
@@ -137,6 +265,29 @@ function rootOf(absolute: string, roots: readonly string[]): string | undefined 
     }
   }
   return best;
+}
+
+/**
+ * `absolute` with symlinks resolved, remembering the answer: a path that is not on disk any
+ * more resolves through its directory, and one whose directory is gone too stays as given. The
+ * harness records paths as the shell spelled them (`/var/…` on macOS for `/private/var/…`),
+ * and a candidate root is compared resolved, so the two spellings must meet somewhere.
+ */
+function realpathMemo(absolute: string, memo: Map<string, string>): string {
+  const known = memo.get(absolute);
+  if (known !== undefined) return known;
+  let real: string;
+  try {
+    real = realpathSync(absolute);
+  } catch {
+    try {
+      real = path.join(realpathSync(path.dirname(absolute)), path.basename(absolute));
+    } catch {
+      real = absolute;
+    }
+  }
+  memo.set(absolute, real);
+  return real;
 }
 
 /** `~` and `~/x` expanded, a relative path resolved against `cwd`, everything normalized. */
@@ -149,13 +300,32 @@ function resolvePath(given: string, cwd: string, homeDir: string): string {
 /** The tallies, with one entry per root from the start so an untouched root reads as zero. */
 class Tallies {
   readonly roots: Map<string, TouchTally>;
-  private readonly keys: readonly string[];
+  /** Every spelling a root is matched by — resolved and realpath'd — to the root as given. */
+  private readonly keys: Map<string, string>;
+  private readonly keyList: readonly string[];
   private readonly homeDir: string;
+  private readonly real = new Map<string, string>();
 
   constructor(roots: readonly string[], homeDir: string) {
-    this.keys = roots.map((root) => path.resolve(root));
     this.roots = new Map(roots.map((root) => [root, emptyTally()]));
+    this.keys = new Map();
+    for (const root of roots) {
+      for (const spelling of [path.resolve(root), realOr(root)]) {
+        if (!this.keys.has(spelling)) this.keys.set(spelling, root);
+      }
+    }
+    this.keyList = [...this.keys.keys()];
     this.homeDir = homeDir;
+  }
+
+  /** The root `absolute` is under, as given, trying its spelling first and its realpath second. */
+  private rootFor(absolute: string): string | undefined {
+    const direct = rootOf(absolute, this.keyList);
+    if (direct !== undefined) return this.keys.get(direct);
+    const real = realpathMemo(absolute, this.real);
+    if (real === absolute) return undefined;
+    const resolved = rootOf(real, this.keyList);
+    return resolved === undefined ? undefined : this.keys.get(resolved);
   }
 
   /**
@@ -166,10 +336,9 @@ class Tallies {
    */
   touch(given: string, cwd: string, write: boolean, mustExist = false, pathInput = false): string | undefined {
     const absolute = resolvePath(given, cwd, this.homeDir);
-    const key = rootOf(absolute, this.keys);
-    if (key === undefined) return undefined;
+    const root = this.rootFor(absolute);
+    if (root === undefined) return undefined;
     if (mustExist && !existsSync(absolute)) return undefined;
-    const root = [...this.roots.keys()][this.keys.indexOf(key)] as string;
     const tally = this.roots.get(root) as TouchTally;
     tally.references += 1;
     if (write) tally.writes += 1;
@@ -179,9 +348,8 @@ class Tallies {
 
   /** A write with no path of its own — `git commit` — lands where the shell was. */
   writeAt(cwd: string): void {
-    const key = rootOf(path.resolve(cwd), this.keys);
-    if (key === undefined) return;
-    const root = [...this.roots.keys()][this.keys.indexOf(key)] as string;
+    const root = this.rootFor(path.resolve(cwd));
+    if (root === undefined) return;
     (this.roots.get(root) as TouchTally).writes += 1;
   }
 

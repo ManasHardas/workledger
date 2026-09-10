@@ -78,6 +78,10 @@ export interface ParsedSession {
   remaining: RemainingLine[];
   notes: NoteLine[];
   unparsed: UnparsedLine[];
+  /** Where the harness session was started (P8 amendment 10); `null` when not recorded. */
+  startedIn: string | null;
+  /** The repos the session is about, best first (P8 amendment 10); empty when never inferred. */
+  about: string[];
 }
 
 /** `GET /api/backlog` element. */
@@ -378,8 +382,14 @@ export interface RepoCandidate {
    * repo. Optional for a server from before the amendment; read it as `[]`.
    */
   startedIn?: string[];
-  /** Amendment 8: how many of `harnessSessions` were attributed by touched paths. */
+  /** Amendment 8: how many of `harnessSessions` were started outside the repo. */
   touchedSessions?: number;
+  /**
+   * Amendment 10: how many sessions the transcript content qualified for this repo, and how
+   * many are the fallback of a session started inside it that qualified nothing. Optional for
+   * a server from before the amendment.
+   */
+  about?: { content: number; fallback: number };
 }
 
 /** Amendment 8: a start directory that is not a repo but holds selected candidates. */

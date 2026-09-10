@@ -354,11 +354,27 @@ export const SessionFrontmatter = z
         "Times a block was followed by a failed checkpoint attempt and a retry that also failed.",
       ),
     checkpoints: z.array(Checkpoint),
+    started_in: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Where the harness session was started — the directory its transcript is stored under " +
+          "and a resume runs in (P8 amendment 10). Never where the session is filed.",
+      ),
+    about: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        "The repos the session is about, inferred from its transcript's tool inputs, best " +
+          "first (P8 amendment 10); this ledger's repo is one of them.",
+      ),
   })
   .loose()
   .describe(
     "YAML frontmatter of `.workledger/sessions/<ulid>.md`. Written only by the CLI. " +
-      "Frozen at P1 Wave 0 (2026-09-09).",
+      "Frozen at P1 Wave 0 (2026-09-09); `started_in` and `about` added, optional, by P8 " +
+      "amendment 10 (2026-09-10).",
   );
 export type SessionFrontmatter = z.infer<typeof SessionFrontmatter>;
 

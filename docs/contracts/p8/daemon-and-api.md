@@ -158,6 +158,14 @@ rows, resumes in `startDir`, and files into each context repo. Session views sho
 and "about". Supersedes the cwd clauses of amendment 8 and the cross-repo write rule of #111
 where they conflict; the write rule stays for roots other than the fallback.
 
+Wire (#116): `SessionView` gains `startedIn: string | null` and `about: string[]` (the
+frontmatter's `started_in` and `about`, optional fields added to the P1 session schema);
+`RepoCandidate` gains `about: { content: number; fallback: number }` — how many of its sessions
+the content qualified, and how many are the fallback — while its `startedIn` and
+`touchedSessions` now describe sessions about the repo that were started outside it. The
+`sessions` row's `cwd` (0006) is renamed `start_dir` and `context_repos` is added
+(`0009_context_repos`).
+
 ## Amendment 11 (2026-09-10) — human gists versus agent detail (operator UX direction)
 
 Payload (P1 schema, additive): `done[].text` is the **gist** for humans: an outcome in plain

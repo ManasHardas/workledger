@@ -10,8 +10,7 @@ import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { CLAUDE_STORE, firstRecord, readFirstLine } from "../commands/backfill.js";
-import { isDirectory, sessionRepoOf, slugToPath } from "./session-cwd.js";
-import type { StoreSession } from "../commands/backfill.js";
+import { isDirectory, slugToPath } from "./session-cwd.js";
 
 /** Where Codex keeps its rollouts, relative to the home directory (hooks-codex.md §Headless resume). */
 export const CODEX_STORE = path.join(".codex", "sessions");
@@ -98,8 +97,10 @@ export interface ClaudeTranscript {
   bytes: number;
   mtimeMs: number;
   /**
-   * Where the session was started: the project slug inverted against the filesystem, else the
-   * first record's `cwd`; `undefined` when neither names a directory that exists.
+   * Where the session was started: the first record that carries a `cwd` (#114), else the
+   * project slug inverted against the filesystem — a slug is ambiguous (`repo/src` and
+   * `repo-src` share one), so the record decides when it can; `undefined` when neither names a
+   * directory that exists.
    */
   cwd: string | undefined;
   /** The first record's `timestamp`, or `null`. */
@@ -142,7 +143,7 @@ export function claudeTranscripts(homeDir: string): ClaudeTranscript[] {
       }
       if (!stat.isFile() || stat.size === 0) continue;
       const first = firstRecord(file);
-      const cwd = fromSlug ?? (first.cwd !== null && isDirectory(first.cwd) ? first.cwd : undefined);
+      const cwd = first.cwd !== null && isDirectory(first.cwd) ? first.cwd : fromSlug;
       transcripts.push({
         harnessSessionId: name.slice(0, -".jsonl".length),
         file,
@@ -216,32 +217,4 @@ export function codexSessions(homeDir: string): CodexSession[] {
   };
   walk(path.join(homeDir, CODEX_STORE), 0);
   return found;
-}
-
-/**
- * Every Codex rollout that belongs to `repoPath`, newest first, in the shape the P3 backfill
- * plans and queues (`StoreSession`).
- *
- * Codex has no per-project directory, so the whole store is walked and each rollout's
- * `session_meta.cwd` decides: a session recorded anywhere inside the repo counts for it, the same
- * walk-up-to-`.git` rule the discovery step applies, and a cwd that no longer exists counts for
- * nothing. A rollout whose first record carries no `id` is dropped too — it is the id
- * `codex exec resume` is given, and a session that cannot be named cannot be resumed.
- */
-export function enumerateCodexStore(homeDir: string, repoPath: string): StoreSession[] {
-  const root = path.resolve(repoPath);
-  const sessions: StoreSession[] = [];
-  for (const session of codexSessions(homeDir)) {
-    if (session.cwd === null || session.id === null || !isDirectory(session.cwd)) continue;
-    if (sessionRepoOf(session.cwd) !== root) continue;
-    sessions.push({
-      harnessSessionId: session.id,
-      file: session.file,
-      bytes: session.bytes,
-      mtimeMs: session.mtimeMs,
-      startedIso: session.startedIso,
-      cwd: session.cwd,
-    });
-  }
-  return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }

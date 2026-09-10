@@ -39,7 +39,7 @@ Merged additively into `<repo>/.claude/settings.json`; existing hooks are preser
 | Event | Fields read | Ignored |
 |---|---|---|
 | `SessionStart` | `session_id`, `transcript_path`, `cwd`, `source` (`startup`, `resume`, `clear`, `compact`, `fork`), `model` (optional) | `permission_mode` |
-| `Stop` | `session_id`, `transcript_path`, `cwd`, `stop_hook_active` | `last_assistant_message`, `permission_mode` |
+| `Stop` | `session_id`, `transcript_path`, `cwd`, `stop_hook_active`; on the block path, the transcript's tool inputs (amendment 2026-09-10, #116) | `last_assistant_message`, `permission_mode` |
 | `SessionEnd` | `session_id`, `transcript_path`, `cwd`, `reason` (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`) | — |
 
 Adapter rule: unknown fields are ignored; a missing required field logs one stderr line and exits 0.
@@ -72,6 +72,22 @@ reuses the existing session record when the `session_id` is known, otherwise cre
 - **Loop guard**: docs define `stop_hook_active` as "Boolean indicating whether a Stop hook has
   already blocked this attempt to stop." When it is `true`, the hook always allows (exit 0). This
   is in addition to the index-based never-twice guard.
+- **Where the block files** (amendment 2026-09-10, #116; docs/contracts/p8/daemon-and-api.md
+  amendment 10): the Stop hook of every session — started in a repo or in a workspace folder —
+  runs one inference on its block path and never on its allow path. When a threshold is crossed,
+  the transcript's tool inputs since the last scan are tallied per enabled repo
+  (`sessions.scan_offset`, `scan_counts`) and ranked into the session's context repos
+  (`packages/cli/src/onboarding/touched.ts` `rankContext`: one write, or five references with a
+  path-tool input or `cd` among them; writes, then path inputs, then references; the start
+  directory's repo only as fallback and tiebreak, and only for a repo-started session). The block
+  asks for one `workledger checkpoint --session <ulid> --repo <root> --payload '<json>'` per
+  context repo, best first, each against a row and ledger file opened in that repo; a session
+  about its own repo alone gets the P1 text above, byte for byte, and a workspace-started
+  session about nothing is allowed. The counted row — the one keyed by the directory the hook
+  fired from — records `start_dir` and `context_repos`, starts a fresh window once every target
+  has its checkpoint, and `SessionEnd` closes every row of the harness session. A repo-started
+  session whose content is about another repo is filed there; its own ledger keeps a session
+  record with `started_in` and `about` and no checkpoint.
 - **Instruction v3** (amendment 2026-09-10, #97; `packages/cli/src/instruction.ts`, also the
   preamble-wrapped repair instruction of `docs/contracts/p3/cli.md`): the text prescribes
   `workledger checkpoint --session <ulid> --payload '<json>'` — one single-quoted argument — and

@@ -40,6 +40,11 @@ export function SessionDetail({ ulid }: { ulid: string }) {
   );
 }
 
+/** The last path segment: a session is about `card-shopify_store`, not about a whole absolute path. */
+function repoName(root: string): string {
+  return root.split("/").filter((part) => part !== "").at(-1) ?? root;
+}
+
 function SessionBody({ session }: { session: ParsedSession }) {
   const { frontmatter } = session;
   const source = useSource();
@@ -53,6 +58,13 @@ function SessionBody({ session }: { session: ParsedSession }) {
         <Badge variant="secondary">{frontmatter.harness}</Badge>
         <span className="text-xs text-muted-foreground">
           {frontmatter.author.name} · started {formatInstant(frontmatter.started)}
+          {/*
+            Two facts the ledger keeps apart (P8 amendment 10): where the harness was launched,
+            which only says where the transcript lives, and which repos the session is about,
+            which is why it is in this ledger. Older sessions recorded neither.
+          */}
+          {session.startedIn !== null ? ` · started in ${session.startedIn}` : ""}
+          {session.about.length > 0 ? ` · about ${session.about.map(repoName).join(", ")}` : ""}
         </span>
         {/*
           Repair is a write, so it is absent — not disabled — on a source that cannot write: a

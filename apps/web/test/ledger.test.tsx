@@ -197,6 +197,14 @@ describe("session detail", () => {
     expect(screen.getAllByText("[cp 2]").length).toBeGreaterThan(0);
   });
 
+  it("shows where the session started and what it is about in the header (P8 amendment 10)", async () => {
+    renderLedger();
+    await screen.findByText(ENDED_SESSION.goal!);
+    const header = screen.getByText(/started in/);
+    expect(header.textContent).toContain(`started in ${ENDED_SESSION.startedIn}`);
+    expect(header.textContent).toContain("about workledger, card-shopify_store");
+  });
+
   it("renders each Remaining line as → WL-id (rel)", async () => {
     renderLedger();
     for (const line of ENDED_SESSION.remaining) {
