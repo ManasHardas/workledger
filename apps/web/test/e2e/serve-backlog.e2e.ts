@@ -168,6 +168,11 @@ function backlogFiles(repo: string): { id: string; file: string; text: string }[
     });
 }
 
+/** Every session file in the ledger. */
+function sessionFiles(repo: string): string[] {
+  return readdirSync(path.join(repo, ".workledger", "sessions")).filter((name) => name.endsWith(".md"));
+}
+
 /** The `## Goal` lines of every session file, `- [cp N] ` prefix stripped. */
 function sessionGoals(repo: string): string[] {
   const dir = path.join(repo, ".workledger", "sessions");
@@ -264,18 +269,24 @@ test.describe("workledger serve, end to end", () => {
     expect(errors, "no console errors on Home").toEqual([]);
   });
 
-  test("Ledger lists the three sessions with their goals", async ({ page }) => {
+  test("Ledger lists every session with its goal", async ({ page }) => {
     const errors = watchConsole(page);
     await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
 
     // "Open" is the default tab and every copied session has ended, so the scope has to be All.
     await page.getByRole("tab", { name: "All" }).click();
 
-    const cards = page.getByRole("list", { name: "Sessions, newest first" }).getByRole("listitem");
-    await expect(cards).toHaveCount(3);
-
+    // The dogfood ledger grows a session every time this repo records one, so both counts come
+    // from the files on disk rather than numbers frozen when the test was written. A card per
+    // session file; a heading per session that got as far as a goal (a backfilled row that never
+    // checkpointed has an empty `## Goal`).
+    const files = sessionFiles(serving.repo);
     const goals = sessionGoals(serving.repo);
-    expect(goals, "three session files, three goals").toHaveLength(3);
+    expect(files.length, "at least one session file").toBeGreaterThan(0);
+    expect(goals.length, "at least one goal").toBeGreaterThan(0);
+
+    const cards = page.getByRole("list", { name: "Sessions, newest first" }).getByRole("listitem");
+    await expect(cards).toHaveCount(files.length);
     for (const goal of goals) {
       await expect(page.getByRole("heading", { name: goal, exact: true })).toBeVisible();
     }
