@@ -1,6 +1,6 @@
 # Session 4 Handoff
 
-**Generated:** 2026-09-09 by the orchestrator (PM inline) at S3 close.
+**Generated:** 2026-09-09 by the orchestrator (PM inline) at S3 close; amended 2026-09-10 after the operator's walkthrough (S3 addendum).
 **Stale-after:** any user direction change OR any merged PR appearing post-generation.
 
 ---
@@ -13,8 +13,9 @@
 
 ## Session 4 quick-context
 
-- **Phase:** P8 — Onboarding and home. **Built, not tagged.** All ten build PRs are on main (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96; last SHA at S3 close is the `chore(close): S3` commit). Spec `plans/feature-p8-onboarding-home.md`, contract `docs/contracts/p8/daemon-and-api.md` (amendments 1–4), tracking #75 (open; acceptance boxes ticked except the install box, which waits for a published release). Version is still 0.3.0; CHANGELOG has an Unreleased section for P8.
-- **The walkthrough gate:** the operator runs onboarding personally before `p8-shipped` (spec §Acceptance, 2026-09-09 direction). Prepare and wait for the verdict; do not tag first. Fresh-state commands, after `pnpm install && pnpm -r build` (`workledger` on PATH is a symlink to `packages/cli/bin/workledger`):
+- **Phase:** P8 — Onboarding and home. **Built and proven on the operator's machine, not tagged.** All fourteen build PRs are on main (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96, then #98 #102 #103 #104; last SHA at S3 close is the `chore(close): S3 addendum` commit). Spec `plans/feature-p8-onboarding-home.md`, contract `docs/contracts/p8/daemon-and-api.md` (amendments 1–6), tracking #75 (open; acceptance boxes ticked except the install box, which waits for a published release). Version is still 0.3.0; CHANGELOG has an Unreleased section for P8 that already lists the four walkthrough fixes.
+- **Two facts a resume touches:** headless resumes (repair, backfill) hand the checkpoint over as `workledger checkpoint --payload '<json>'` (or `--payload-file`), never a heredoc or pipe on stdin: Claude Code's headless permission matcher denies stdin heredocs and pipes even under `Bash(workledger checkpoint*)` (DL-18; instruction v3; 16 KB cap). At most 2 jobs run machine-wide. A resume refused by the operator's Claude usage limit ("resets 1am") is requeued with `retry_after` and retried automatically after the reset (up to three waits); the Jobs card and wizard show the wait.
+- **The walkthrough gate:** the operator runs onboarding personally before `p8-shipped` (spec §Acceptance, 2026-09-09 direction). The walkthrough ran on 2026-09-10: every backfill failed (permission matcher, payload cap and timeout, then the usage limit), four lean PRs fixed it, and all five real backfill jobs on the operator's machine then succeeded. The verdict is still pending; do not tag first. Fresh-state commands to repeat if asked, after `pnpm install && pnpm -r build` (`workledger` on PATH is a symlink to `packages/cli/bin/workledger`):
   - `workledger` — the machine's real state: daemon starts or is reused, Home lists the repos already enabled by P1–P5.
   - `WORKLEDGER_HOME=$(mktemp -d)/wl workledger` — zero enabled repos: the daemon starts on a fresh home and opens the wizard at `/#/onboarding`; `workledger stop` with the same `WORKLEDGER_HOME` afterwards.
   - Each defect the operator reports becomes a five-line issue in P8 (`[P8][<Role>] <title>`), fixed as one lean PR each.
@@ -41,7 +42,7 @@
 | Infra thin (orchestrator-verified, no review) | 87k | 0 | 0 | ~90k |
 | QA e2e (no review) | 175k (S2: 105–125k) | 0 | 0 | ~175k |
 
-Three fix-cycles across ten PRs in S3 (#84, #90, #93); every fix-cycle roughly doubles the reviewer spend on that slot.
+Three fix-cycles across fourteen PRs in S3 (#84, #90, #93; none on the four walkthrough fixes); every fix-cycle roughly doubles the reviewer spend on that slot.
 
 ---
 
@@ -54,7 +55,7 @@ export GH_TOKEN=$(gh auth token --user ManasHardas)
 cd /Users/manashardas/Projects/workledger && git fetch origin && git reset --hard origin/main
 # 1. Version: packages/cli/package.json "version": "0.3.0" -> "0.4.0" (pnpm -r build; node packages/cli/dist/main.js --version prints 0.4.0).
 # 2. CHANGELOG.md: rename "## Unreleased — P8 Onboarding and home" to "## 0.4.0 — P8 Onboarding and home (YYYY-MM-DD)",
-#    drop the "Built on main; …" line, append one bullet per P8 defect PR fixed after the walkthrough.
+#    drop the "Built on main; …" line (the four walkthrough fixes #98 #102 #103 #104 are already listed; append any later defect PR).
 # 3. Commit: "P8 shipped: changelog 0.4.0, version bump" with the usual trailers; git push origin main.
 # 4. Tags (annotated, on that commit): git tag -a v0.4.0 -m "workledger 0.4.0 — P8 onboarding and home"
 #    and git tag -a p8-shipped -m "P8 shipped"; git push origin v0.4.0 p8-shipped.

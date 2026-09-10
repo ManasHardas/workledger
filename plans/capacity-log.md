@@ -100,7 +100,7 @@
 
 **Waves executed:** P8 Wave 0 (spec, contract, tracking #75; amendments 1–4 as direct commits or inside PRs), Wave 0.5 (issues #76–#81 filed five-line; #85 #87 #88 #89 #94 filed for defects found in flight), Wave 1 (eight build PRs), Wave 2 (QA e2e #95 plus the integration fix #96). Wave 3 (tag) deferred to the operator's walkthrough.
 
-**Build PRs merged:** 10 (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96). Direct commits for the spec, the contract and its amendments 1–2, the roadmap, and the S3 handoff.
+**Build PRs merged:** 10 (#82 #83 #84 #86 #90 #91 #92 #93 #95 #96), plus 4 in the addendum below (#98 #102 #103 #104). Direct commits for the spec, the contract and its amendments 1–2, the roadmap, and the S3 handoff.
 
 **Activities completed:** everything in the CHANGELOG Unreleased section: one daemon per machine (`workledger` = `open`, `stop`, `~/.workledger/serve.json`), multi-repo server with a `repo` parameter and aggregates, `/api/onboarding/*` and `workledger onboard`, Home with a repo switcher and machine-wide Needs you and Jobs, the onboarding wizard (projects, history, method, running, done), Codex sessions in onboarding, release workflow with npm publish dry-run and Homebrew tap, README install. Proven end to end by #95: a fresh HOME with two repos runs the wizard through backfill with a stub `claude`.
 
@@ -122,3 +122,10 @@
 - Secrets are an operator dependency, not an agent one: the release workflow degrades cleanly without `NPM_TOKEN` and `TAP_TOKEN` and prints the manual commands.
 
 **S4 forecast:** walkthrough verdict → version 0.4.0, CHANGELOG, tags `v0.4.0` and `p8-shipped`, close #75 (orchestrator direct, ~20k); defect fixes at ~230–310k per backend fix and ~90–430k per frontend fix depending on breadth; P7 Wave 1 (~2 frontend PRs, ~450k each) only if the Figma inputs exist. P6 stays deferred.
+
+**S3 addendum — 2026-09-10 (after the operator's walkthrough, same conversation):**
+- The walkthrough happened: the fresh-state wizard ran, but every backfill job failed. Four more lean PRs merged the same session, all backend, 0 fix-cycles: #98 (#97, headless checkpoint: `--payload` argv forms, 16 KB cap, instruction v3, scaled timeouts, job logs; 267k / 106k), #102 (#101, instruction caps line; 71k / 0, orchestrator-verified), #103 (#99, daemon SIGTERM shutdown and stop escalation; 138k / 99k), #104 (#100, usage-limit detection, machine-wide concurrency cap 2, automatic retry after the reset; 277k / 118k). Contract p8 amendments 5–6.
+- Addendum totals: ≈0.75M implementer + ≈0.32M reviewer. Session totals now ≈2.87M implementer + ≈1.43M reviewer across 14 build PRs; 3 fix-cycles across 14 PRs. T-A, T-G, T-D all still held.
+- Root causes, for the record: Claude Code's headless permission matcher denies a heredoc-fed stdin even for an allowed command (DL-18); the 4 KB payload cap and 300 s timeout were too small for 100-turn sessions; the second round of failures was the operator's Claude subscription usage limit ("resets 1am"), which the product now detects and waits out.
+- Outcome: all five real backfill jobs on the operator's machine succeeded. P8 is built and proven on the operator's machine; the tag still waits for the operator's verdict.
+- Calibration: the stub `claude` in the QA e2e (#95) could not surface any of these three defects (permission matcher, payload size, usage limit); only a real harness on a real transcript does. Backend fix slots after a walkthrough ran 70–280k implementer, 0–120k reviewer, 0 fix-cycles, within the S3 lean anchors.

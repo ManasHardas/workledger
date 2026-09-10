@@ -952,6 +952,62 @@
       "review_iterations": 0,
       "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
       "note": "Home stale after init found by smoke; repos.changed SSE event; amendment 4"
+    },
+    {
+      "session": 3,
+      "wave": "P8-3",
+      "kind": "pr_merge",
+      "pr": 98,
+      "issue": 97,
+      "agent_role": "backend",
+      "class": "headless checkpoint fix, first-of-class (lean, CR)",
+      "tokens_implementer": 267000,
+      "tokens_reviewers": 106000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "walkthrough defect: Claude Code's headless permission matcher denies heredoc-fed stdin even for an allowed command; --payload argv forms, 16 KB cap, instruction v3, scaled timeouts, job logs"
+    },
+    {
+      "session": 3,
+      "wave": "P8-3",
+      "kind": "pr_merge",
+      "pr": 102,
+      "issue": 101,
+      "agent_role": "backend",
+      "class": "narrow-fix (lean, orchestrator-verified, no review)",
+      "tokens_implementer": 71000,
+      "tokens_reviewers": 0,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "instruction v3 states the per-field caps"
+    },
+    {
+      "session": 3,
+      "wave": "P8-3",
+      "kind": "pr_merge",
+      "pr": 103,
+      "issue": 99,
+      "agent_role": "backend",
+      "class": "daemon shutdown fix (lean, CR)",
+      "tokens_implementer": 138000,
+      "tokens_reviewers": 99000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "daemon exits within 3 s of SIGTERM (SSE and detached resume kept it alive); stop escalates to SIGKILL; amendment 6"
+    },
+    {
+      "session": 3,
+      "wave": "P8-3",
+      "kind": "pr_merge",
+      "pr": 104,
+      "issue": 100,
+      "agent_role": "backend",
+      "class": "service-module fix, first-of-class (lean, CR)",
+      "tokens_implementer": 277000,
+      "tokens_reviewers": 118000,
+      "review_iterations": 0,
+      "cc_session_id": "session_01BukmMWZ6SZQeFumc9UXcAV",
+      "note": "walkthrough defect: operator's Claude usage limit (resets 1am); detection, machine-wide concurrency cap 2, automatic retry after the reset; migration 0005"
     }
   ]
 }
