@@ -16,9 +16,10 @@
  * **The Stop allow path is cheap.** It has a p95 budget of 100 ms *including Node startup*
  * (data-flow §6), against ~40 ms of bare Node. So: the module's static imports reach nothing
  * heavier than `node:fs`; `better-sqlite3` arrives through the lazy `import("../index/db.js")`
- * below, after the disable / not-enabled checks have had their chance to return; and
+ * below, after the disable / not-enabled checks have had their chance to return;
  * `@workledger/core` — ~30 ms of zod schema construction plus `yaml` — is imported only on the
- * paths that render something, always off a deep specifier rather than the barrel.
+ * paths that render something, always off a deep specifier rather than the barrel; and the
+ * transcript scanner and the block text (`./hook-context.ts`) arrive only on the block ladder.
  * `packages/cli/test/hook-timing.test.ts` measures it and asserts core stays out.
  */
 import { existsSync } from "node:fs";
@@ -29,19 +30,11 @@ import process from "node:process";
 import { DEFAULT_HARNESS, adapterFor } from "../adapters/registry.js";
 import { isPrivateSession, loadConfig } from "../config.js";
 import { EXIT_OK } from "../exit-codes.js";
-import { checkpointInstruction } from "../instruction.js";
-import {
-  findRepoRoot,
-  isEnabled,
-  listOpenBacklogIds,
-  readTextFile,
-  sessionFile,
-  writeFileAtomic,
-} from "../ledger-fs.js";
+import { findRepoRoot, isEnabled, readTextFile, sessionFile, writeFileAtomic } from "../ledger-fs.js";
 import { HOOK_EVENTS } from "./hook-events.js";
 import type { HarnessAdapter, HookInput } from "../adapters/types.js";
 import type { HookConfig } from "../config.js";
-import type { IndexDb, NewSession } from "../index/db.js";
+import type { IndexDb, NewSession, SessionRow } from "../index/db.js";
 import type { HookEvent } from "./hook-events.js";
 
 export { HOOK_EVENTS };
@@ -160,8 +153,13 @@ export async function patchFrontmatter(
 export interface Context {
   io: HookIo;
   db: IndexDb;
-  /** The enabled repo root. */
+  /** The enabled repo root, or the workspace folder (`./hook-workspace.ts`). */
   root: string;
+  /**
+   * Where the harness session was started — the payload's `cwd` (amendment 10): recorded as
+   * `start_dir`, never what decides where the session is filed.
+   */
+  startDir: string;
   input: HookInput;
   config: HookConfig;
   /** `WORKLEDGER_PRIVATE=1` or a `private_paths` match: boundary record only, never a block. */
@@ -196,7 +194,7 @@ async function sessionStart(ctx: Context): Promise<number> {
       updated_at: ctx.nowIso,
     });
   } else {
-    ulid = await createSession(ctx, size);
+    ulid = await createSession(ctx, size, ctx.root, { start_dir: ctx.startDir });
   }
 
   if (ctx.private) return EXIT_OK;
@@ -252,8 +250,9 @@ async function opportunisticScan(ctx: Context, ulid: string): Promise<void> {
 /**
  * Mint the ulid, write the session file, and open the index row.
  *
- * `root` defaults to the context's repo; the workspace hook (`./hook-workspace.ts`) passes each
- * touched repo instead, and `extra` for the columns only it sets.
+ * `root` defaults to the context's repo; the block path (`./hook-context.ts`) passes each
+ * context repo instead, and `extra` for the columns only it sets. The frontmatter records where
+ * the session started (`started_in`, amendment 10); what it is about is patched in once known.
  */
 export async function createSession(
   ctx: Context,
@@ -295,6 +294,7 @@ export async function createSession(
     needs_repair: false,
     checkpoint_failures: 0,
     checkpoints: [],
+    started_in: extra.start_dir ?? ctx.startDir,
   });
   writeFileAtomic(sessionFile(root, ulid), text);
 
@@ -349,13 +349,20 @@ async function buildSessionBrief(ctx: Context, ulid: string): Promise<string | u
 // ---------------------------------------------------------------------------
 
 /**
- * `Stop` — data-flow §2, exactly.
+ * `Stop` — data-flow §2, with the block path of P8 amendment 10.
  *
  * Every branch ends in exit 0 except the two blocks, which are exit 2 with the instruction on
  * stderr. The counters are advanced on every branch, including the blocks, so a session that is
  * never checkpointed still has an honest `turns_total` for `SessionEnd`'s `needs_repair`.
+ *
+ * The row the counters live on is the one keyed by the directory the hook fired from — the
+ * session's own repo, or its workspace folder. Which repos a block asks a checkpoint for is
+ * decided on the block path alone (`./hook-context.ts`): the transcript's content, with the
+ * session's own repo only as the fallback. A session about its own repo alone sees the P1 block
+ * byte for byte; one about other repos gets a row and a ledger file in each, and its own row
+ * starts a fresh window once every one of them has its checkpoint.
  */
-async function stop(ctx: Context): Promise<number> {
+export async function stop(ctx: Context): Promise<number> {
   const { io, db, input } = ctx;
   const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId, ctx.root);
   // No SessionStart was seen for this id (a session that predates `init`, or a lost index).
@@ -366,7 +373,8 @@ async function stop(ctx: Context): Promise<number> {
   const turnsTotal = session.turns_total + 1;
   const turnsSince = session.turns_since_checkpoint + 1;
 
-  const size = io.adapter.transcriptSize(input.transcriptPath ?? session.transcript_path ?? undefined);
+  const transcript = input.transcriptPath ?? session.transcript_path ?? undefined;
+  const size = io.adapter.transcriptSize(transcript);
   let offset = session.last_offset;
   if (size !== undefined && size < offset) {
     // The harness rotated or truncated the transcript. Measuring `size - offset` now would give
@@ -409,6 +417,13 @@ async function stop(ctx: Context): Promise<number> {
   if (blocks === 0) {
     const trigger = firstCrossed(measured, ctx.config.thresholds);
     if (trigger === undefined) return allow();
+    // The scan and the inference, on the block path only (amendment 10).
+    const { openTargets, raiseBlock, scanContext } = await import("./hook-context.js");
+    const context = await scanContext(ctx, session, transcript);
+    const targets = await openTargets(ctx, session, context, size);
+    // A workspace session whose content qualifies nothing has nowhere to file; a repo session
+    // always has its own repo as the fallback.
+    if (targets.length === 0) return allow();
     db.updateSession(ulid, {
       ...advance,
       blocks_since_checkpoint: 1,
@@ -421,15 +436,28 @@ async function stop(ctx: Context): Promise<number> {
       last_attempt_exit: null,
       last_attempt_errors: null,
     });
-    return await block(ctx, ulid, undefined);
+    return raiseBlock(ctx, targets, undefined);
   }
 
   if (blocks === 1) {
+    const { cachedTargets, raiseBlock } = await import("./hook-context.js");
+    const targets = await cachedTargets(ctx, session);
+    const rows = targets.map((target) => db.getSessionByUlid(target.sessionId)).filter((row): row is SessionRow => row !== undefined);
     // `last_attempt_*` were cleared when the block was raised, so a row here is by definition an
     // attempt made *since* it.
-    if (session.last_attempt_at !== null && (session.last_attempt_exit ?? 0) !== 0) {
+    const failed = rows.find((row) => row.last_attempt_at !== null && (row.last_attempt_exit ?? 0) !== 0);
+    if (failed !== undefined) {
       db.updateSession(ulid, { ...advance, blocks_since_checkpoint: 2 });
-      return await block(ctx, ulid, session.last_attempt_errors ?? undefined);
+      return raiseBlock(ctx, targets, failed.last_attempt_errors ?? undefined);
+    }
+    // A checkpoint on this row resets its block state itself, so a session about its own repo
+    // is never here with a success. One filed elsewhere leaves this row's counters to the hook:
+    // once every target has its checkpoint, this row starts a fresh window.
+    const filedElsewhere = !targets.some((target) => target.sessionId === ulid);
+    if (filedElsewhere && rows.length > 0 && rows.every((row) => row.last_attempt_at !== null && row.last_attempt_exit === 0)) {
+      db.resetAfterCheckpoint(ulid, { offset: size ?? offset, at: ctx.nowIso });
+      db.updateSession(ulid, { turns_total: turnsTotal, transcript_path: advance.transcript_path });
+      return EXIT_OK;
     }
     // Either the agent ignored the block, or its attempt succeeded — in which case `checkpoint`
     // already reset `blocks_since_checkpoint` to 0 and we would not be here. Allow, and keep
@@ -447,7 +475,8 @@ async function stop(ctx: Context): Promise<number> {
 
   // blocks >= 2: the block was raised, the attempt failed, the retry failed too. Give up for
   // now — thresholds must re-accumulate before another block, so a block is never immediately
-  // repeated — and record the failure where an operator will see it.
+  // repeated — and record the failure where an operator will see it (a workspace row has no
+  // file, and the patch is a no-op there).
   db.updateSession(ulid, advance);
   db.giveUp(ulid, { offset: size ?? offset, at: ctx.nowIso });
   await patchFrontmatter(ctx.root, ulid, (data) => {
@@ -457,21 +486,22 @@ async function stop(ctx: Context): Promise<number> {
   return EXIT_OK;
 }
 
-/** Raise a block: exit 2 with the instruction on stderr, never a JSON decision field. */
-async function block(ctx: Context, ulid: string, previousErrors: string | undefined): Promise<number> {
-  const openIds = await listOpenBacklogIds(ctx.root);
-  const reason = checkpointInstruction({ sessionId: ulid, openIds, previousErrors });
-  return ctx.io.adapter.blockStop(reason, { stdout: ctx.io.stdout, stderr: ctx.io.stderr });
-}
-
 // ---------------------------------------------------------------------------
 // SessionEnd
 // ---------------------------------------------------------------------------
 
-/** `SessionEnd` — data-flow §2. No output, exit 0 always. */
-async function sessionEnd(ctx: Context): Promise<number> {
+/**
+ * `SessionEnd` — data-flow §2. No output, exit 0 always.
+ *
+ * Closes the row the hook fired for and every row a block opened for the same harness session
+ * in another repo (amendment 10), each with its ledger file; a workspace row has no file.
+ * `needs_repair` is the counted row's: its `turns_since_checkpoint` is reset only once every
+ * context repo has its checkpoint.
+ */
+export async function sessionEnd(ctx: Context): Promise<number> {
   const { io, db, input } = ctx;
-  const session = db.getSessionByHarnessId(io.adapter.harness, input.harnessSessionId, ctx.root);
+  const rows = db.listSessionsByHarnessId(io.adapter.harness, input.harnessSessionId);
+  const session = rows.find((row) => row.repo_path === ctx.root);
   if (session === undefined) return EXIT_OK;
 
   // `needs_repair` is a turn count, never a content read: a session that stopped many turns
@@ -479,19 +509,22 @@ async function sessionEnd(ctx: Context): Promise<number> {
   const needsRepair = session.turns_since_checkpoint > ctx.config.stale_turns;
   const endReason = END_REASON_MAP[input.reason ?? "other"] ?? "unknown";
 
-  await patchFrontmatter(ctx.root, session.ulid, (data) => {
-    data["ended"] = ctx.nowIso;
-    data["end_reason"] = endReason;
-    data["status"] = "ended";
-    data["needs_repair"] = needsRepair;
-  });
-
-  db.updateSession(session.ulid, { status: "ended", updated_at: ctx.nowIso });
+  for (const row of rows) {
+    if (row.workspace === 0) {
+      await patchFrontmatter(row.repo_path, row.ulid, (data) => {
+        data["ended"] = ctx.nowIso;
+        data["end_reason"] = endReason;
+        data["status"] = "ended";
+        data["needs_repair"] = needsRepair;
+      });
+    }
+    db.updateSession(row.ulid, { status: "ended", updated_at: ctx.nowIso });
+  }
 
   // P5 `auto_commit: on_session_end`. Last, and behind a lazy import so the Stop allow path
   // never pays for `node:child_process`; it cannot change this hook's exit code
   // (docs/contracts/p5/config-and-identities.md).
-  if (ctx.config.auto_commit === "on_session_end") {
+  if (session.workspace === 0 && ctx.config.auto_commit === "on_session_end") {
     try {
       const { maybeAutoCommit, sessionEndMessage } = await import("../auto-commit.js");
       maybeAutoCommit({
@@ -567,6 +600,7 @@ export async function runHook(event: HookEvent, io: HookIo): Promise<number> {
       io,
       db,
       root,
+      startDir: sessionCwd,
       input: parsed,
       config,
       private: isPrivate,

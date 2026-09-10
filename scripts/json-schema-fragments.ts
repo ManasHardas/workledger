@@ -390,6 +390,9 @@ function sessionFrontmatterDocument(): JsonObject {
           "SessionFrontmatter.checkpoints",
         ),
       ),
+      // P8 amendment 10 (2026-09-10): optional, additive.
+      started_in: pick(root["started_in"] as JsonObject, ["type", "minLength", "description"], "SessionFrontmatter.started_in"),
+      about: pick(root["about"] as JsonObject, ["type", "items", "description"], "SessionFrontmatter.about"),
     }),
     $defs: block({
       Actor: actorDef(),

@@ -28,8 +28,8 @@ import { openIndex } from "../src/index/db.js";
 import { workspaceCheckpointInstruction } from "../src/instruction.js";
 import { discoverRepos } from "../src/onboarding/discover.js";
 import { initRepos } from "../src/onboarding/init.js";
-import { touchedRootsOf } from "../src/commands/hook-workspace.js";
-import { MIN_REFERENCES, startedInRepo } from "../src/onboarding/touched.js";
+import { MIN_REFERENCES, rankContext, startedInRepo } from "../src/onboarding/touched.js";
+import type { TouchTally } from "../src/onboarding/touched.js";
 import { SETTINGS_PATH, hookCommandString } from "../src/settings-merge.js";
 import type { InitIo } from "../src/commands/init.js";
 import type { HookIo } from "../src/commands/hook.js";
@@ -191,14 +191,31 @@ describe("workledger init --workspace", () => {
   });
 });
 
-describe("touched roots from the accumulated counts", () => {
-  it("applies the contract's rule and ranks by references, then writes", () => {
-    expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES, writes: 0, pathInputs: 1 }, [repoB]: { references: 2, writes: 1, pathInputs: 0 } })).toEqual([repoA, repoB]);
-    expect(touchedRootsOf({ [repoA]: { references: 1, writes: 1, pathInputs: 1 }, [repoB]: { references: 1, writes: 2, pathInputs: 1 } })).toEqual([repoB, repoA]);
-    expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES - 1, writes: 0, pathInputs: 4 } })).toEqual([]);
-    // Bash text alone never attributes (#110); from inside another repo, only a write does.
-    expect(touchedRootsOf({ [repoA]: { references: 20, writes: 0, pathInputs: 0 } })).toEqual([]);
-    expect(touchedRootsOf({ [repoA]: { references: 20, writes: 0, pathInputs: 5 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } }, true)).toEqual([repoB]);
+describe("context repos from the accumulated counts (amendment 10)", () => {
+  const roots = (counts: Record<string, TouchTally>, startRepo?: string): string[] =>
+    rankContext(new Map(Object.entries(counts)), startRepo).map((context) => context.root);
+
+  it("applies the contract's rule and ranks by writes, then path inputs, then references", () => {
+    // A write outranks any number of reads; among reads, path inputs outrank references.
+    expect(roots({ [repoA]: { references: MIN_REFERENCES, writes: 0, pathInputs: 1 }, [repoB]: { references: 2, writes: 1, pathInputs: 0 } })).toEqual([repoB, repoA]);
+    expect(roots({ [repoA]: { references: 1, writes: 1, pathInputs: 1 }, [repoB]: { references: 1, writes: 2, pathInputs: 1 } })).toEqual([repoB, repoA]);
+    expect(roots({ [repoA]: { references: MIN_REFERENCES - 1, writes: 0, pathInputs: 4 } })).toEqual([]);
+    // Bash text alone never qualifies (#110).
+    expect(roots({ [repoA]: { references: 20, writes: 0, pathInputs: 0 } })).toEqual([]);
+  });
+
+  it("from inside a repo, another root qualifies only by a write, and the own repo is the fallback and the tiebreak", () => {
+    expect(roots({ [repoA]: { references: 20, writes: 0, pathInputs: 5 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } }, repoB)).toEqual([repoB]);
+    expect(roots({ [repoA]: { references: 20, writes: 0, pathInputs: 5 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } }, repoA)).toEqual([repoB, repoA]);
+    // Nothing qualifies: the repo the session started in, marked as the fallback.
+    expect(rankContext(new Map([[repoA, { references: 2, writes: 0, pathInputs: 1 }], [repoB, { references: 0, writes: 0, pathInputs: 0 }]]), repoA)).toEqual([
+      { root: repoA, references: 2, writes: 0, pathInputs: 1, fallback: true },
+    ]);
+    // A tie goes to the start directory's repo; a workspace session (no start repo) has no fallback.
+    expect(roots({ [repoA]: { references: 1, writes: 1, pathInputs: 1 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } }, repoB)).toEqual([repoB, repoA]);
+    expect(roots({ [repoA]: { references: 1, writes: 0, pathInputs: 1 } })).toEqual([]);
+    // Started inside a repo the caller did not ask about: the write rule for every root, no fallback.
+    expect(rankContext(new Map([[repoA, { references: 9, writes: 0, pathInputs: 9 }]]), undefined, true)).toEqual([]);
   });
 });
 
@@ -211,7 +228,7 @@ describe("hook from a workspace session", () => {
 
     expect(out).toEqual([]);
     const [row] = rows();
-    expect(row).toMatchObject({ repo_path: workspace, workspace: 1, cwd: workspace, status: "open", scan_offset: 0 });
+    expect(row).toMatchObject({ repo_path: workspace, workspace: 1, start_dir: workspace, status: "open", scan_offset: 0 });
     for (const root of [repoA, repoB]) expect(readdirSync(path.join(root, ".workledger", "sessions"))).toEqual([]);
     // The workspace never becomes a repo row.
     const db = openIndex({ home: indexHome });
@@ -243,12 +260,12 @@ describe("hook from a workspace session", () => {
     expect(rows()).toHaveLength(1);
   });
 
-  it("Stop over a threshold blocks with one --repo command per touched repo, most-touched first, opening a row and file in each", async () => {
+  it("Stop over a threshold blocks with one --repo command per context repo, best first, opening a row and file in each", async () => {
     await enableWorkspace();
     await runHook("SessionStart", hookIo(payload("session-start-startup")));
     // Six reads in repo A, one write in repo B; the minutes threshold is the one crossed (a
-    // workspace has no config, so the defaults apply). Repo B is touched by its write alone, and
-    // repo A comes first with more references.
+    // workspace has no config, so the defaults apply). Repo A qualifies by its reads, repo B by
+    // its write alone — and the write ranks first (amendment 10: writes, then path inputs).
     const lines =
       toolLine("Write", { file_path: `${repoB}/schedule.md`, content: "x" }) +
       Array.from({ length: 6 }, (_, i) => toolLine("Read", { file_path: `${repoA}/src/${i}.ts` })).join("");
@@ -268,15 +285,21 @@ describe("hook from a workspace session", () => {
     const commandB = `workledger checkpoint --session ${b.ulid} --repo ${repoB} --payload '<json>'`;
     expect(text).toContain(commandA);
     expect(text).toContain(commandB);
-    expect(text.indexOf(commandA)).toBeLessThan(text.indexOf(commandB));
+    expect(text.indexOf(commandB)).toBeLessThan(text.indexOf(commandA));
     expect(text).not.toContain("Run exactly one command");
-    // A ledger file per touched repo, none in the workspace; the scan is cached on the row.
+    // A ledger file per context repo, none in the workspace, each saying where the session
+    // started and what it is about; the scan and the inference are cached on the row.
     expect(readdirSync(path.join(repoA, ".workledger", "sessions"))).toEqual([`${a.ulid}.md`]);
     expect(readdirSync(path.join(repoB, ".workledger", "sessions"))).toEqual([`${b.ulid}.md`]);
+    const fileA = readFileSync(path.join(repoA, ".workledger", "sessions", `${a.ulid}.md`), "utf8");
+    expect(fileA).toContain(`started_in: ${workspace}`);
+    expect(fileA).toContain(`  - ${repoB}\n  - ${repoA}`);
     expect(existsSync(path.join(workspace, ".workledger"))).toBe(false);
     const ws = all[0] as SessionRow;
     expect(ws.scan_offset).toBe(Buffer.byteLength(lines));
     expect(JSON.parse(ws.scan_counts as string)).toEqual({ [repoA]: { references: 6, writes: 0, pathInputs: 6 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } });
+    expect(JSON.parse(ws.context_repos as string).map((context: { root: string }) => context.root)).toEqual([repoB, repoA]);
+    expect(a).toMatchObject({ start_dir: workspace, context_repos: ws.context_repos });
     expect(ws).toMatchObject({ blocks_since_checkpoint: 1, last_block_trigger: "minutes" });
 
     // The next Stop scans only the new bytes; nothing new and no attempt → allowed, once.

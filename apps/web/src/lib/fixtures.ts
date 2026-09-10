@@ -31,6 +31,8 @@ const session = (
   goal: string,
   overrides: Partial<ParsedSession["frontmatter"]>,
   body: Pick<ParsedSession, "done" | "remaining" | "notes">,
+  // Where it started and what it is about (P8 amendment 10); older sessions recorded neither.
+  context: Pick<ParsedSession, "startedIn" | "about"> = { startedIn: null, about: [] },
 ): ParsedSession => ({
   frontmatter: {
     schema_version: 1,
@@ -55,6 +57,7 @@ const session = (
   goal,
   ...body,
   unparsed: [],
+  ...context,
 });
 
 export const FIXTURE_SESSIONS: ParsedSession[] = [
@@ -138,6 +141,8 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
         },
       ],
     },
+    // Started in the workspace folder above the repos, about this repo and a sibling.
+    { startedIn: "/Users/manas/Projects/dome_workspace", about: ["/Users/manas/Projects/workledger", "/Users/manas/Projects/dome_workspace/card-shopify_store"] },
   ),
 ];
 

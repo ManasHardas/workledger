@@ -18,10 +18,12 @@
  * under method `extract` Codex sessions are not counted, not priced and not queued; the plan
  * reports them as `unsupported.codex` and the run leaves them for a later `resume`.
  *
- * Sessions attributed by touched paths (`./attribution.ts`, amendment 8) join each harness's
- * list before it is planned: one row and one job per (session, repo), the row keyed by the wider
+ * Which sessions are a repo's is the inference of amendment 10 (`./attribution.ts`): every
+ * transcript in both stores is scored by its content, and a session is planned for each repo
+ * it is about — one row and one job per (session, repo), the row keyed by the wider
  * `(harness, harness_session_id, repo_path)` and carrying the session's own start directory as
- * `cwd`, which is where the drain resumes it and why its instruction says `--repo`.
+ * `start_dir` (where the drain resumes it, and why its instruction says `--repo`) and the
+ * inference as `context_repos`.
  *
  * Two refusals have their own wire status (`../../server/src/onboarding.ts`): `run` without
  * `consent: true`, and `run` with method `extract` when `ANTHROPIC_API_KEY` is absent. Both are
@@ -30,12 +32,7 @@
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
 import { codexAdapter } from "../adapters/codex.js";
 import { BacklogOpError } from "../backlog-ops.js";
-import {
-  createBackfilledSession,
-  drainBackfillJobs,
-  enumerateStore,
-  planBackfill,
-} from "../commands/backfill.js";
+import { createBackfilledSession, drainBackfillJobs, planBackfill } from "../commands/backfill.js";
 import { loadConfig } from "../config.js";
 import { API_KEY_ENV } from "../extract/api.js";
 import { estimateExtraction } from "../extract/run.js";
@@ -44,7 +41,6 @@ import { isEnabled } from "../ledger-fs.js";
 import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OnboardingRefusalError, assertRepoPaths } from "./repo-path.js";
-import { enumerateCodexStore } from "./stores.js";
 import type { HarnessAdapter } from "../adapters/types.js";
 import type { BackfillIo, BackfillPlan } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
@@ -87,9 +83,9 @@ interface RepoPlan {
 async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promise<RepoPlan[]> {
   const plans: RepoPlan[] = [];
   const roots = assertRepoPaths(input.repos);
-  const touched = await attributeTranscripts(io.homeDir, roots, db, { tempDirs: io.tempDirs });
+  const about = await attributeTranscripts(io.homeDir, roots, db);
   for (const root of roots) {
-    const attribution = touched.get(root);
+    const attribution = about.get(root);
     const config = loadConfig(root);
     const options = {
       db,
@@ -99,14 +95,8 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
       concurrency: config.backfill.concurrency,
       secondsPerSession: config.backfill.seconds_per_session,
     };
-    const plan = planBackfill(
-      [...enumerateStore(io.homeDir, root), ...(attribution?.claude ?? [])],
-      { ...options, harness: claudeCodeAdapter.harness },
-    );
-    const codex = planBackfill(
-      [...enumerateCodexStore(io.homeDir, root), ...(attribution?.codex ?? [])],
-      { ...options, harness: codexAdapter.harness },
-    );
+    const plan = planBackfill(attribution?.claude ?? [], { ...options, harness: claudeCodeAdapter.harness });
+    const codex = planBackfill(attribution?.codex ?? [], { ...options, harness: codexAdapter.harness });
     let tokens = 0;
     let usd = 0;
     for (const session of plan.fresh) {

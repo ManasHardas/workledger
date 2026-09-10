@@ -7,7 +7,7 @@
  * `trigger: repair` stamp is the one thing this issue exists to produce, and only the whole path
  * from `pending_trigger` through `stampTrigger` to the rendered frontmatter can establish it.
  */
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -207,7 +207,8 @@ describe("runRepair — resume path", () => {
     const done = listJobs(db, repo)[0]!;
     expect(done.status).toBe("done");
     expect(done.log_path).toBe(path.join(home, "logs", `${done.id}.log`));
-    expect(readFileSync(done.log_path!, "utf8")).toBe("harness said: recorded\n");
+    // The inference is the job's first step and the log's first line (amendment 10).
+    expect(readFileSync(done.log_path!, "utf8")).toBe(`inference: started in ${repo}; about ${repo} (fallback: nothing qualified)\nharness said: recorded\n`);
   });
 
   it("keeps the log of a resume that failed, which is the only record of why (#97)", async () => {
@@ -221,7 +222,7 @@ describe("runRepair — resume path", () => {
     await runRepair(ULID, { timeout: 3 }, repairIo(failing));
     const failed = listJobs(db, repo).find((job) => job.status === "failed")!;
     expect(failed.log_path).toBe(path.join(home, "logs", `${failed.id}.log`));
-    expect(readFileSync(failed.log_path!, "utf8")).toBe("tail of a killed session");
+    expect(readFileSync(failed.log_path!, "utf8")).toBe(`inference: started in ${repo}; about ${repo} (fallback: nothing qualified)\ntail of a killed session`);
   });
 
   it("pins the resumed session to the repo, the checkpoint command, and the timeout", async () => {
@@ -242,7 +243,7 @@ describe("runRepair — resume path", () => {
     crashedSession();
     const workspace = path.join(dir, "workspace");
     mkdirSync(workspace, { recursive: true });
-    db.updateSession(ULID, { cwd: workspace });
+    db.updateSession(ULID, { start_dir: workspace });
     const adapter = checkpointingAdapter();
 
     const code = await runRepair(ULID, {}, repairIo(adapter));
@@ -286,7 +287,7 @@ describe("runRepair — resume path", () => {
       fakeHome = path.join(dir, "fakehome");
     });
 
-    it("the backfill records the workspace as cwd, and the resume runs there with --repo", async () => {
+    it("the backfill records the workspace as start_dir, and the resume runs there with --repo", async () => {
       transcriptUnder(projectSlug(workspace), "hs-ws", undefined);
       // As the wizard's touched-path attribution hands it to `createBackfilledSession`.
       const found = claudeTranscripts(fakeHome).find((entry) => entry.harnessSessionId === "hs-ws")!;
@@ -294,7 +295,7 @@ describe("runRepair — resume path", () => {
         { ...found, cwd: found.cwd ?? null },
         { db, root: repo, adapter: claudeCodeAdapter, homeDir: fakeHome, stdout: () => {}, stderr: () => {}, now: () => new Date("2026-09-09T13:00:00.000Z"), newId, home },
       );
-      expect(db.getSessionByUlid(ulid)?.cwd).toBe(workspace);
+      expect(db.getSessionByUlid(ulid)?.start_dir).toBe(workspace);
 
       const adapter = checkpointingAdapter(ulid);
       const code = await runRepair(ulid, {}, repairIo(adapter));
@@ -514,6 +515,89 @@ describe("runRepair — the real adapter against a stub harness", () => {
     // And the session is untouched: a repair that killed its harness repaired nothing.
     expect(frontmatter().frontmatter.status).toBe("crashed");
     expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
+  });
+});
+
+describe("runRepair — the inference comes first (amendment 10, #116)", () => {
+  /** A transcript started in the repo whose only tool input writes under `target`. */
+  function transcriptWriting(target: string): string {
+    const file = path.join(dir, "about-elsewhere.jsonl");
+    writeFileSync(
+      file,
+      `${JSON.stringify({ type: "user", timestamp: "2026-09-08T09:00:00.000Z", cwd: repo, message: { role: "user", content: "go" } })}\n` +
+        `${JSON.stringify({ type: "assistant", cwd: repo, message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Write", input: { file_path: path.join(target, "notes.md"), content: "x" } }] } })}\n`,
+      "utf8",
+    );
+    return file;
+  }
+
+  /** An enabled sibling repo the index knows about. */
+  function enabledSibling(name: string): string {
+    const root = path.join(dir, name);
+    writeFileAtomic(path.join(root, ".workledger", "config.yaml"), "orphan_minutes: 30\n");
+    mkdirSync(path.join(root, ".workledger", "sessions"), { recursive: true });
+    db.upsertRepo(root);
+    return root;
+  }
+
+  it("records start_dir and context_repos on the row and in the frontmatter, and logs the inference first", async () => {
+    crashedSession();
+    const other = enabledSibling("other");
+    db.updateSession(ULID, { transcript_path: transcriptWriting(repo) });
+    const adapter = checkpointingAdapter();
+
+    expect(await runRepair(ULID, {}, repairIo(adapter)), err.join("\n")).toBe(EXIT_OK);
+
+    const row = db.getSessionByUlid(ULID)!;
+    expect(row.start_dir).toBe(repo);
+    expect(JSON.parse(row.context_repos as string)).toEqual([{ root: repo, writes: 1, pathInputs: 1, references: 1 }]);
+    const parsed = frontmatter();
+    expect(parsed.frontmatter.started_in).toBe(repo);
+    expect(parsed.frontmatter.about).toEqual([repo]);
+    expect(parsed.frontmatter.checkpoints).toHaveLength(1);
+    const job = listJobs(db, repo)[0]!;
+    expect(readFileSync(job.log_path!, "utf8").split("\n")[0]).toBe(`inference: started in ${repo}; about ${repo} (1 writes, 1 path inputs, 1 references)`);
+    // The sibling was a candidate and got nothing.
+    expect(readdirSync(path.join(other, ".workledger", "sessions"))).toEqual([]);
+  });
+
+  it("files a session that turns out to be about another repo there, resumed where it started", async () => {
+    crashedSession();
+    const other = enabledSibling("other");
+    db.updateSession(ULID, { transcript_path: transcriptWriting(other) });
+    // The real resumed agent reads both the session and the repo off the instruction.
+    const seen: ResumeOptions[] = [];
+    const adapter: HarnessAdapter = {
+      ...claudeCodeAdapter,
+      async resumeHeadless(_sessionId: string, options: ResumeOptions): Promise<ResumeResult> {
+        seen.push(options);
+        const command = /--session (\S+) --repo (\S+)/.exec(options.instruction)!;
+        const code = await runCheckpoint(
+          { session: command[1]!, repo: command[2]! },
+          { readStdin: stdinFrom(PAYLOAD), stdout: () => {}, stderr: (line) => err.push(line), cwd: options.cwd, home, now: () => new Date("2026-09-09T13:00:00.000Z"), newId: () => "WL-01JBQK0000000000000000000B" },
+        );
+        return { exitCode: code, timedOut: false, output: "" };
+      },
+    };
+
+    expect(await runRepair(ULID, {}, repairIo(adapter)), err.join("\n")).toBe(EXIT_OK);
+
+    // One row and one ledger file in the repo the session is about, keyed by the same harness
+    // session; the resume ran in the start directory and named the other repo.
+    const filed = db.getSessionByHarnessId("claude-code", "hs-1", other)!;
+    expect(filed).toMatchObject({ start_dir: repo, status: "repaired" });
+    expect(JSON.parse(filed.context_repos as string)).toEqual([{ root: other, writes: 1, pathInputs: 1, references: 1 }]);
+    expect(seen[0]!.cwd).toBe(repo);
+    expect(seen[0]!.instruction).toContain(`workledger checkpoint --session ${filed.ulid} --repo ${other} --payload '<json>'`);
+    const elsewhere = parseSessionText(readFileSync(sessionFile(other, filed.ulid), "utf8"));
+    expect(elsewhere.frontmatter.checkpoints).toHaveLength(1);
+    expect(elsewhere.frontmatter.about).toEqual([other]);
+    expect(elsewhere.frontmatter.started_in).toBe(repo);
+    // The job's own row is repaired too — its work is recorded, elsewhere — and says so.
+    expect(db.getSessionByUlid(ULID)).toMatchObject({ status: "repaired", pending_trigger: null });
+    expect(frontmatter().frontmatter.checkpoints).toHaveLength(0);
+    expect(frontmatter().frontmatter.about).toEqual([other]);
+    expect(listJobs(db, repo)[0]).toMatchObject({ status: "done" });
   });
 });
 

@@ -39,19 +39,24 @@ export interface RepoCandidate {
    */
   suggested: boolean;
   /**
-   * Sessions per harness store attributed to this repo: started in it, or (amendment 8, #105)
-   * started elsewhere and touching it — `touchedSessions` of them.
+   * Sessions per harness store the inference says are about this repo (amendment 10), wherever
+   * they were started — `touchedSessions` of them elsewhere.
    */
   harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
   lastSessionAt: string | null;
   /**
-   * Distinct directories the touched-path sessions were started in, none of them this repo — a
-   * workspace folder above it, typically. Empty when every session started inside the repo.
+   * Distinct directories the repo's sessions were started in that are not inside it — a
+   * workspace folder above it, another repo. Empty when every session started inside the repo.
    */
   startedIn: string[];
-  /** How many of `harnessSessions` were attributed by touched paths rather than by their cwd. */
+  /** How many of `harnessSessions` were started outside the repo (in one of `startedIn`). */
   touchedSessions: number;
+  /**
+   * How the sessions came to be about this repo (amendment 10): `content` qualified it from the
+   * transcript's tool inputs, `fallback` is a session started inside it that qualified nothing.
+   */
+  about: { content: number; fallback: number };
 }
 
 /**

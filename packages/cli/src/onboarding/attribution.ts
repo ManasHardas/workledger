@@ -1,46 +1,51 @@
 /**
- * Which transcripts count for which repos beyond the directory they were started in —
- * docs/contracts/p8/daemon-and-api.md amendment 8 (#105).
+ * Which transcripts are about which repos — docs/contracts/p8/daemon-and-api.md amendment 10
+ * (#116, DL-20), replacing the cwd rule and the touched-path rule of amendment 8 (#105).
  *
- * The cwd rule (`discover.ts`, `enumerateStore`, `enumerateCodexStore`) attributes a session to
- * the repo its working directory is in. This is the second rule beside it: every other candidate
- * root the transcript wrote under once, or named at least {@link MIN_REFERENCES} times with at
- * least one path-tool input or `cd` among them (#110), gets the session too (`touched.ts`). The
- * reference rule is for sessions started outside any repo — a workspace folder; a session
- * started inside a repo X counts for another repo Y only with a write under Y, because reading
- * or `cd`-ing into a sibling project from X is routine and says nothing about working there.
- * "Inside a repo" is `startedInRepo` over the candidates and the enabled repos, the same
- * reckoning as the workspace Stop hook's, so the two paths cannot diverge. A transcript may therefore count for several repos;
- * it never counts twice for one, because the root its cwd is in is left to the cwd rule.
+ * Every transcript in both harness stores is run through one inference (`touched.ts`
+ * `inferContext`) against the repos asked about plus every enabled repo the index knows: the
+ * roots its content qualifies are its context repos, and the repo containing its start
+ * directory is the context only when nothing qualifies. The start directory is never an
+ * attribution by itself — a session started in `~/Projects/dome_workspace` that wrote in
+ * `card-shopify_store` is about that card, and one started in `workledger` that wrote only in
+ * a card is about the card, not workledger. A transcript may therefore count for several repos,
+ * and never twice for one.
  *
- * The result is per repo, in the `StoreSession` shape the P3 planner and the backfill already
- * take, so a touched session is queued, resumed and digested by the same code as any other —
- * with `cwd` set to where the session actually started, which is what the resume spawns in and
- * what makes the repair instruction say `--repo`.
+ * The result is per repo, in the `StoreSession` shape the P3 planner and the backfill take, so
+ * a session is queued, resumed and digested by the same code wherever it started — with `cwd`
+ * set to its start directory, which is where the resume spawns and what makes the repair
+ * instruction say `--repo`, and `context` carrying the inference for the session row.
  */
-import { realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import path from "node:path";
 
 import { isEnabled } from "../ledger-fs.js";
-import { OS_TEMP_DIRS, underTempDir } from "./repo-path.js";
-import { isDirectory, sessionRepoOf } from "./session-cwd.js";
+import { underTempDir } from "./repo-path.js";
+import { isDirectory } from "./session-cwd.js";
 import { claudeTranscripts, codexSessions } from "./stores.js";
-import { attributes, startedInRepo, touchedRoots } from "./touched.js";
+import { inferContext, repoAbove } from "./touched.js";
 import type { StoreSession } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
 
-/** What the touched-path rule attributed to one repo. */
+/** What the inference attributed to one repo. */
 export interface RepoAttribution {
-  /** Claude Code sessions attributed by touched paths, newest first. */
+  /** Claude Code sessions about the repo, newest first. */
   claude: StoreSession[];
-  /** Codex sessions attributed by touched paths, newest first. */
+  /** Codex sessions about the repo, newest first. */
   codex: StoreSession[];
-  /** Distinct start directories of those sessions — `RepoCandidate.startedIn`. */
+  /** Distinct start directories of those sessions that are not inside the repo — `RepoCandidate.startedIn`. */
   startedIn: string[];
+  /** How many of those sessions the content qualified, and how many are the fallback — `RepoCandidate.about`. */
+  about: { content: number; fallback: number };
 }
 
 /** Options for {@link attributeTranscripts}. */
 export interface AttributionOptions {
-  /** Directories nothing under is a project; the OS temp dirs when absent. */
+  /**
+   * Directories a session started under is nobody's (amendment 2) — discovery's temp-dir rule.
+   * Absent means no such rule: a repo the operator named is backfilled from every transcript
+   * about it, wherever that was started.
+   */
   tempDirs?: readonly string[] | undefined;
 }
 
@@ -53,14 +58,18 @@ function realOr(file: string): string {
   }
 }
 
-/** One transcript of either harness, as the scan needs it. */
+/** One transcript of either harness, as the inference needs it. */
 interface Transcript {
   harness: "claude-code" | "codex";
   session: StoreSession & { cwd: string };
 }
 
-/** Every transcript in both stores whose start directory still exists and is not scratch. */
-function transcripts(homeDir: string, tempDirs: readonly string[]): Transcript[] {
+/**
+ * Every transcript in both stores whose start directory still exists and is not under one of
+ * `tempDirs`. A start directory that is gone cannot be resumed in (#114), and one under the OS
+ * temp dir was a test fixture's, not a project's (amendment 2) — when the caller says so.
+ */
+export function transcripts(homeDir: string, tempDirs: readonly string[] = []): Transcript[] {
   const found: Transcript[] = [];
   const usable = (cwd: string | undefined | null): cwd is string =>
     typeof cwd === "string" && isDirectory(cwd) && !underTempDir(cwd, tempDirs);
@@ -93,16 +102,46 @@ function transcripts(homeDir: string, tempDirs: readonly string[]): Transcript[]
       },
     });
   }
-  return found;
+  return found.sort((a, b) => b.session.mtimeMs - a.session.mtimeMs);
 }
 
 /**
- * The touched-path attribution of every transcript in both stores to `repos`.
+ * The roots a session could be about, beyond `repos` and the enabled repos: the repo each
+ * transcript was started in (or the start directory itself, when it is a repo), and — for a
+ * start directory that is not a repo, a workspace folder — the git repos directly under it.
+ * A root the caller did not ask about can still be what a session is about, and must be able
+ * to win, or a session started in `workledger` that wrote only in a card under
+ * `dome_workspace` would fall back to workledger whenever the card is not selected.
+ */
+function rootsAround(startDirs: Iterable<string>): string[] {
+  const roots = new Set<string>();
+  for (const startDir of startDirs) {
+    const own = repoAbove(startDir);
+    if (own !== undefined) roots.add(realOr(own));
+    if (existsSync(path.join(startDir, ".git"))) continue;
+    let entries;
+    try {
+      entries = readdirSync(startDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const child = path.join(startDir, entry.name);
+      if (existsSync(path.join(child, ".git"))) roots.add(realOr(child));
+    }
+  }
+  return [...roots];
+}
+
+/**
+ * The context inference of every transcript in both stores, filed against `repos`.
  *
- * Every transcript is scanned against every repo but the one its cwd is in (`sessionRepoOf`, the
- * cwd rule's own reckoning), through the index cache, so the second call over an unchanged store
- * reads no transcript at all. Repos are keyed as given; the comparison is on resolved paths, so
- * a symlinked spelling is the same repo.
+ * Every transcript is scored against `repos`, every enabled repo the index knows, and the roots
+ * around every start directory ({@link rootsAround}), through the index cache, so the second
+ * call over an unchanged store reads no transcript at all. Repos are keyed as given; the
+ * comparison is on resolved paths, so a symlinked spelling is the same repo, and a context root
+ * comes back spelled as the caller asked for it when it is one of `repos`.
  */
 export async function attributeTranscripts(
   homeDir: string,
@@ -114,29 +153,30 @@ export async function attributeTranscripts(
   // Resolved root → the spellings asked for. Two spellings of one repo share one scan.
   const spellings = new Map<string, string[]>();
   for (const repo of repos) {
-    result.set(repo, { claude: [], codex: [], startedIn: [] });
+    result.set(repo, { claude: [], codex: [], startedIn: [], about: { content: 0, fallback: 0 } });
     const key = realOr(repo);
     spellings.set(key, [...(spellings.get(key) ?? []), repo]);
   }
   if (spellings.size === 0) return result;
-  const keys = [...spellings.keys()];
-  const tempDirs = options.tempDirs ?? OS_TEMP_DIRS;
+  const all = transcripts(homeDir, options.tempDirs);
+  const candidates = [
+    ...new Set([
+      ...spellings.keys(),
+      ...db.listRepos().map((repo) => realOr(repo.repo_path)).filter(isEnabled),
+      ...rootsAround(new Set(all.map((entry) => entry.session.cwd))),
+    ]),
+  ];
 
-  const repoRoots = [...new Set([...keys, ...db.listRepos().map((repo) => realOr(repo.repo_path)).filter(isEnabled)])];
-
-  const all = transcripts(homeDir, tempDirs).sort((a, b) => b.session.mtimeMs - a.session.mtimeMs);
   for (const { harness, session } of all) {
-    const own = realOr(sessionRepoOf(session.cwd));
-    const inRepo = startedInRepo(realOr(session.cwd), repoRoots);
-    const candidates = keys.filter((key) => key !== own);
-    if (candidates.length === 0) continue;
-    const tallies = await touchedRoots(db, session.file, candidates, { cwd: session.cwd, homeDir });
-    for (const [key, tally] of tallies) {
-      if (!attributes(tally, inRepo)) continue;
-      for (const repo of spellings.get(key) ?? []) {
+    const inference = await inferContext(session.file, candidates, session.cwd, { db, homeDir });
+    const spelled = inference.contextRepos.map((context) => ({ ...context, root: spellings.get(context.root)?.[0] ?? context.root }));
+    for (const context of inference.contextRepos) {
+      for (const repo of spellings.get(context.root) ?? []) {
         const entry = result.get(repo) as RepoAttribution;
-        (harness === "codex" ? entry.codex : entry.claude).push({ ...session });
-        if (!entry.startedIn.includes(session.cwd)) entry.startedIn.push(session.cwd);
+        (harness === "codex" ? entry.codex : entry.claude).push({ ...session, context: spelled });
+        if (context.fallback === true) entry.about.fallback += 1;
+        else entry.about.content += 1;
+        if (inference.startRepo !== context.root && !entry.startedIn.includes(session.cwd)) entry.startedIn.push(session.cwd);
       }
     }
   }

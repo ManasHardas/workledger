@@ -153,6 +153,12 @@ export function workspaceCheckpointInstruction(input: {
 export interface RepairInstructionInput extends InstructionInput {
   /** Why the session is being repaired, as one clause: `crashed`, `ended without a digest`. */
   reason: string;
+  /**
+   * The repos the session is about when there are several (P8 amendment 10): one
+   * `--repo` command each, as {@link workspaceCheckpointInstruction} lists them. Absent, or
+   * one target, keeps the single-command form.
+   */
+  targets?: readonly WorkspaceTarget[] | undefined;
 }
 
 /**
@@ -165,11 +171,16 @@ export interface RepairInstructionInput extends InstructionInput {
  * prompt-side half of the `--allowedTools` pin the adapter applies.
  */
 export function repairInstruction(input: RepairInstructionInput): string {
+  const several = input.targets !== undefined && input.targets.length > 1;
   return [
     `workledger: this session ${input.reason} without recording its work.`,
-    "Record one checkpoint describing what this session did, then stop. Do not edit files, run",
-    "builds, or start new work — the only command you may run is the one below.",
+    several
+      ? "Record one checkpoint per repo below describing what this session did there, then stop."
+      : "Record one checkpoint describing what this session did, then stop.",
+    `Do not edit files, run builds, or start new work — the only command${several ? "s" : ""} you may run ${several ? "are" : "is"} the one${several ? "s" : ""} below.`,
     "",
-    checkpointInstruction(input),
+    several
+      ? workspaceCheckpointInstruction({ targets: input.targets as readonly WorkspaceTarget[], previousErrors: input.previousErrors })
+      : checkpointInstruction(input),
   ].join("\n");
 }

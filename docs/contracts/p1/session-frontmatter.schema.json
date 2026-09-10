@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://workledger.dev/contracts/p1/session-frontmatter.schema.json",
   "title": "SessionFrontmatter",
-  "description": "YAML frontmatter of `.workledger/sessions/<ulid>.md`. Written only by the CLI. Frozen at P1 Wave 0 (2026-09-09).",
+  "description": "YAML frontmatter of `.workledger/sessions/<ulid>.md`. Written only by the CLI. Frozen at P1 Wave 0 (2026-09-09); `started_in` and `about` added, optional, by P8 amendment 10 (2026-09-10).",
   "type": "object",
   "additionalProperties": true,
   "required": ["schema_version", "id", "harness", "harness_session_id", "repo", "author", "started", "status", "private", "source", "checkpoints"],
@@ -26,7 +26,9 @@
     "checkpoints": {
       "type": "array",
       "items": { "$ref": "#/$defs/Checkpoint" }
-    }
+    },
+    "started_in": { "type": "string", "minLength": 1, "description": "Where the harness session was started — the directory its transcript is stored under and a resume runs in (P8 amendment 10). Never where the session is filed." },
+    "about": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The repos the session is about, inferred from its transcript's tool inputs, best first (P8 amendment 10); this ledger's repo is one of them." }
   },
   "$defs": {
     "Actor": {

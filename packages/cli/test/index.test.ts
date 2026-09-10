@@ -60,10 +60,11 @@ const SESSION_COLUMNS = [
   "last_attempt_errors",
   "updated_at",
   "pending_trigger",
-  "cwd",
+  "start_dir",
   "workspace",
   "scan_offset",
   "scan_counts",
+  "context_repos",
 ];
 
 /** Column list of `checkpoints`, verbatim from the frozen DDL, in declaration order. */
@@ -183,20 +184,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0008_touch_path_inputs.sql` is the latest.
-    expect(row?.value).toBe("8");
+    // Bumped by every migration that lands; `0009_context_repos.sql` is the latest.
+    expect(row?.value).toBe("9");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0010_tenth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0009_ninth.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0011_eleventh.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0010_tenth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0009_ninth.sql", "0010_tenth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(10);
+    expect(migrate(db.connection, dir)).toEqual(["0010_tenth.sql", "0011_eleventh.sql"]);
+    expect(schemaVersion(db.connection)).toBe(11);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -219,7 +220,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql", "0007_workspaces.sql", "0008_touch_path_inputs.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql", "0007_workspaces.sql", "0008_touch_path_inputs.sql", "0009_context_repos.sql"]);
   });
 });
 
@@ -339,16 +340,16 @@ describe("repos (0003_repos.sql)", () => {
 describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
   it("holds one harness session in two repos, and still refuses a duplicate within one", () => {
     const db = open();
-    const first = db.insertSession(session({ cwd: "/workspace" }));
+    const first = db.insertSession(session({ start_dir: "/workspace" }));
     const second = db.insertSession(
-      session({ ulid: "01JQ8ZK4T0000000000000000B", repo_path: "/repos/other", cwd: "/workspace" }),
+      session({ ulid: "01JQ8ZK4T0000000000000000B", repo_path: "/repos/other", start_dir: "/workspace" }),
     );
 
-    expect(first.cwd).toBe("/workspace");
+    expect(first.start_dir).toBe("/workspace");
     expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", REPO)).toEqual(first);
     expect(db.getSessionByHarnessId("claude-code", "hsess-aaaaaaaaaaaaaaaa", "/repos/other")).toEqual(second);
     expect(() => db.insertSession(session({ ulid: "01JQ8ZK4T0000000000000000C" }))).toThrow(/UNIQUE/);
-    expect(db.updateSession(first.ulid, { cwd: null })?.cwd).toBeNull();
+    expect(db.updateSession(first.ulid, { start_dir: null })?.start_dir).toBeNull();
   });
 
   it("migrates an index from before the wider key, keeping every row", () => {
@@ -377,7 +378,7 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
     opened.pop();
 
     const migrated = open();
-    expect(schemaVersion(migrated.connection)).toBe(8);
+    expect(schemaVersion(migrated.connection)).toBe(9);
     expect(columnsOf(migrated, "sessions")).toEqual(SESSION_COLUMNS);
     expect(migrated.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toMatchObject({
       repo_path: "/tmp/old",
@@ -385,12 +386,33 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
       transcript_path: "/t/h1.jsonl",
       turns_total: 4,
       pending_trigger: "repair",
-      cwd: null,
+      start_dir: null,
+      context_repos: null,
     });
     // The wider key: the same harness session may now be opened for a second repo.
     migrated.insertSession(session({ ulid: "01JQ8ZK4T0000000000000000B", repo_path: "/tmp/new", harness_session_id: "h1" }));
     expect(migrated.getSessionByHarnessId("claude-code", "h1", "/tmp/new")?.ulid).toBe("01JQ8ZK4T0000000000000000B");
     expect(migrated.listTranscriptTouches("/t/h1.jsonl")).toEqual([]);
+  });
+
+  // 0009 (#116): `cwd` becomes `start_dir` with its value intact, and `context_repos` is added.
+  it("migrates an index from before 0009, keeping every row and its start directory", () => {
+    const db = open();
+    db.connection.exec("ALTER TABLE sessions DROP COLUMN context_repos");
+    db.connection.exec("ALTER TABLE sessions RENAME COLUMN start_dir TO cwd");
+    db.connection
+      .prepare("INSERT INTO sessions (ulid, repo_path, harness, harness_session_id, status, updated_at, cwd) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("01JQ8ZK4T0000000000000000A", "/tmp/old", "claude-code", "h1", "ended", "2026-09-01T00:00:00.000Z", "/tmp/old/ws");
+    db.connection.prepare("UPDATE schema_meta SET value = '8' WHERE key = 'schema_version'").run();
+    db.close();
+    opened.pop();
+
+    const migrated = open();
+    expect(schemaVersion(migrated.connection)).toBe(9);
+    expect(columnsOf(migrated, "sessions")).toEqual(SESSION_COLUMNS);
+    expect(migrated.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toMatchObject({ start_dir: "/tmp/old/ws", context_repos: null });
+    const json = JSON.stringify([{ root: "/tmp/old", writes: 1, pathInputs: 2, references: 3 }]);
+    expect(migrated.updateSession("01JQ8ZK4T0000000000000000A", { context_repos: json })?.context_repos).toBe(json);
   });
 
   it("caches touch counts per transcript and root, replacing the set on every scan", () => {

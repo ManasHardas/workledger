@@ -87,6 +87,8 @@ function echoApp(): Hono {
       remaining: [],
       notes: [],
       unparsed: [],
+      startedIn: null,
+      about: [],
     };
     return c.json(session);
   });

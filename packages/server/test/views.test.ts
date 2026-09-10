@@ -44,13 +44,17 @@ describe("note resolution", () => {
     const server = appFor(repo);
     try {
       const session = (await (await server.app.request(`/api/sessions/${SESSION}`)).json()) as SessionView;
-      // The dogfood file already carries one discovery at cp 1, so the appended pair are
-      // checkpoint-local indices 1 and 2.
-      expect(session.notes.map((note) => note.resolved)).toEqual([false, true, false]);
+      // The dogfood ledger grows its own notes, so the assertion is about the two this test
+      // appended, found by their text: the frontmatter resolves checkpoint-1-local index 1,
+      // which is the blocker (the discovery the file already carries at cp 1 is index 0).
+      const flagOf = (text: string) => session.notes.find((note) => note.text === text)?.resolved;
+      expect(flagOf("first blocker")).toBe(true);
+      expect(flagOf("second, still open")).toBe(false);
 
       const open = (await (await server.app.request("/api/notes?open=true")).json()) as NoteRef[];
-      expect(open.map((note) => note.text)).toEqual(["second, still open"]);
-      expect(open[0]!.session).toBe(SESSION);
+      expect(open.map((note) => note.text)).not.toContain("first blocker");
+      const still = open.find((note) => note.text === "second, still open");
+      expect(still?.session).toBe(SESSION);
     } finally {
       server.close();
     }

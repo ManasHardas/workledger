@@ -93,12 +93,20 @@ export interface SessionRow {
   pending_trigger: string | null;
   updated_at: string;
   /**
-   * Where the harness session was started, when that is not the repo root (migration
-   * `0006_session_repo_key`): a workspace folder holding the repo, or a transcript's recorded
-   * cwd. The resume spawns the harness there so it finds its session; the repair instruction
-   * names the repo with `--repo` when it differs. `null` reads as "the repo root".
+   * Where the harness session was started (`0006_session_repo_key` as `cwd`, renamed by
+   * `0009_context_repos`; P8 amendment 10): a workspace folder, the repo, a directory inside it,
+   * or a transcript's recorded cwd. It decides where the resume spawns — the harness finds its
+   * session by that directory — and nothing about where checkpoints are filed; the repair
+   * instruction names the target repo with `--repo` when the two differ. `null` reads as "the
+   * repo root" for a row from before the column.
    */
-  cwd: string | null;
+  start_dir: string | null;
+  /**
+   * What the session is about (`0009_context_repos`): JSON `[{ root, writes, pathInputs,
+   * references, fallback? }]`, best first, from `inferContext` over the transcript — the repos
+   * its checkpoints are filed into. `null` until something has inferred it.
+   */
+  context_repos: string | null;
   /**
    * 1 for the row a workspace session opens before any repo is known (`0007_workspaces`): its
    * `repo_path` is the workspace folder, no ledger file exists for it, and a checkpoint never
@@ -302,7 +310,8 @@ const UPDATABLE_COLUMNS = new Set<keyof SessionRow>([
   "last_attempt_errors",
   "pending_trigger",
   "updated_at",
-  "cwd",
+  "start_dir",
+  "context_repos",
   "scan_offset",
   "scan_counts",
 ]);
@@ -430,7 +439,8 @@ const SESSION_COLUMNS = [
   "last_attempt_errors",
   "pending_trigger",
   "updated_at",
-  "cwd",
+  "start_dir",
+  "context_repos",
   "workspace",
   "scan_offset",
   "scan_counts",
@@ -461,7 +471,8 @@ function completeSession(session: NewSession): SessionRow {
     last_attempt_exit: null,
     last_attempt_errors: null,
     pending_trigger: null,
-    cwd: null,
+    start_dir: null,
+    context_repos: null,
     updated_at: new Date().toISOString(),
     workspace: 0,
     scan_offset: 0,

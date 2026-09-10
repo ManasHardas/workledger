@@ -11,14 +11,15 @@
  *
  * Two rules shape the enumeration, both from plans/feature-p3-data-flow.md §Backfill:
  *
- * - **Metadata only.** A file's name, its `stat`, and the first record's `cwd` and `timestamp`.
- *   Nothing else is read, and nothing that is read is written anywhere but the session row.
- *   Deciding what to backfill must not itself become a reason to open a transcript.
+ * - **Metadata, and tool inputs only.** A file's name, its `stat`, the first record's `cwd` and
+ *   `timestamp`, and — since P8 amendment 10 — the paths its tool inputs name, counted through
+ *   the index cache by `src/onboarding/touched.ts` to decide which repo the session is about.
+ *   Nothing that is read is written anywhere but the session row and the touch cache.
  * - **Resumable.** Every unit of work is a `jobs` row, so a cancelled or killed run is resumed by
  *   running the command again: sessions already in the index are skipped, `done` jobs are never
  *   re-claimed, and a job a dead process left `running` is re-queued by the runner.
  */
-import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -30,7 +31,7 @@ import { DEFAULT_TIMEOUT_S, resumeSession } from "./repair.js";
 import { MAX_USAGE_WAITS, enqueueJob } from "../jobs/queue.js";
 import { jobLogDir, runJobs } from "../jobs/runner.js";
 import { findRepoRoot, isEnabled, listOpenBacklogIds, sessionFile, writeFileAtomic } from "../ledger-fs.js";
-import { projectSlug, sessionRepoOf, slugToPath } from "../onboarding/session-cwd.js";
+import { projectSlug } from "../onboarding/session-cwd.js";
 import { statSize } from "../adapters/types.js";
 import type { Harness } from "@workledger/core/schema";
 import type { ExtractIo } from "../extract/run.js";
@@ -38,6 +39,7 @@ import type { HarnessAdapter } from "../adapters/types.js";
 import type { IndexDb } from "../index/db.js";
 import type { JobResult } from "../jobs/runner.js";
 import type { JobRow } from "../jobs/queue.js";
+import type { ContextRepo } from "../onboarding/touched.js";
 
 /** Options commander parses for `backfill`. */
 export interface BackfillOptions {
@@ -74,10 +76,17 @@ export interface StoreSession {
   startedIso: string | null;
   /**
    * Where the session was started: the first record that carries a `cwd`, else the project slug
-   * inverted against the filesystem. `null` only when neither says. Rejects a file from another
-   * repo, and is recorded on the row so the resume spawns there (#114).
+   * inverted against the filesystem. `null` only when neither says. Recorded on the row as
+   * `start_dir` so the resume spawns there (#114); never what decides where the session is
+   * filed (amendment 10).
    */
   cwd: string | null;
+  /**
+   * What the session is about — `inferContext`'s context repos, best first — when the
+   * attribution has run (`src/onboarding/attribution.ts`); recorded on the row as
+   * `context_repos` and in the frontmatter as `about`.
+   */
+  context?: ContextRepo[] | undefined;
 }
 
 // `projectSlug` lives in `../onboarding/session-cwd.ts` with the slug inversion; re-exported so
@@ -153,84 +162,6 @@ export function firstRecord(file: string): { cwd: string | null; startedIso: str
     if (startedIso === null && typeof at === "string" && !Number.isNaN(Date.parse(at))) startedIso = at;
   }
   return { cwd, startedIso };
-}
-
-/**
- * The project directories of the store that may hold sessions of `root`: the repo's own slug,
- * and (#105 review) every slug it is a prefix of — a session started in `<repo>/src` lives under
- * its own directory and is the repo's all the same, as discovery has always counted it.
- *
- * `inferred` says whether the directory name, inverted against the filesystem (`slugToPath`),
- * names a working directory inside the repo — `cwd`, when it does. A slug is ambiguous
- * (`repo/src` and `repo-src` share one), so the inversion decides only for a transcript whose
- * records carry no cwd; one that does is judged by its cwd in {@link enumerateStore}.
- */
-function projectDirsFor(homeDir: string, root: string): Array<{ dir: string; inferred: boolean; cwd?: string }> {
-  const store = path.join(homeDir, CLAUDE_STORE);
-  const own = projectSlug(root);
-  const dirs: Array<{ dir: string; inferred: boolean; cwd?: string }> = [{ dir: path.join(store, own), inferred: true, cwd: root }];
-  let slugs: string[];
-  try {
-    slugs = readdirSync(store, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return dirs;
-  }
-  for (const slug of slugs) {
-    if (!slug.startsWith(`${own}-`)) continue;
-    const cwd = slugToPath(slug);
-    const inferred = cwd !== undefined && sessionRepoOf(cwd) === root;
-    dirs.push({ dir: path.join(store, slug), inferred, ...(inferred ? { cwd } : {}) });
-  }
-  return dirs;
-}
-
-/**
- * Every transcript in the store that belongs to `repoPath`, newest first.
- *
- * The `cwd` check is a second opinion on the slug, not a replacement for it: a harness that
- * changes its slugging would otherwise silently backfill another repo's sessions into this
- * ledger, and a `cwd` that disagrees is the only evidence available that it has. A first-record
- * cwd inside the repo agrees (`sessionRepoOf`).
- */
-export function enumerateStore(homeDir: string, repoPath: string): StoreSession[] {
-  const root = path.resolve(repoPath);
-  const sessions: StoreSession[] = [];
-  for (const { dir, inferred, cwd: inverted } of projectDirsFor(homeDir, root)) {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.endsWith(".jsonl")) continue;
-      const file = path.join(dir, entry);
-      let stat;
-      try {
-        stat = statSync(file);
-      } catch {
-        continue;
-      }
-      if (!stat.isFile() || stat.size === 0) continue;
-
-      const { cwd, startedIso } = firstRecord(file);
-      if (cwd === null ? !inferred : sessionRepoOf(cwd) !== root) continue;
-
-      sessions.push({
-        harnessSessionId: entry.slice(0, -".jsonl".length),
-        file,
-        bytes: stat.size,
-        mtimeMs: stat.mtimeMs,
-        startedIso,
-        // The slug's directory stands in for a transcript that never says where it started
-        // (#114): the resume has to spawn somewhere the harness will look.
-        cwd: cwd ?? inverted ?? null,
-      });
-    }
-  }
-  return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
 /**
@@ -409,6 +340,9 @@ export async function createBackfilledSession(
       needs_repair: true,
       checkpoint_failures: 0,
       checkpoints: [],
+      // Where it started and what it is about (amendment 10): the two facts a session view shows.
+      ...(session.cwd === null ? {} : { started_in: session.cwd }),
+      ...(session.context === undefined ? {} : { about: session.context.map((context) => context.root) }),
     }),
   );
 
@@ -420,8 +354,10 @@ export async function createBackfilledSession(
     harness_session_id: session.harnessSessionId,
     status: "ended",
     transcript_path: session.file,
-    // Where the harness session started — the resume spawns there (amendment 8, #105).
-    cwd: session.cwd,
+    // Where the harness session started — the resume spawns there (#114) — and what it is
+    // about, which is why this row is in this repo at all (amendment 10).
+    start_dir: session.cwd,
+    context_repos: session.context === undefined ? null : JSON.stringify(session.context),
     // Zero rather than the file size: an extraction fallback measures its span from here, and a
     // backfilled session has never been described, so the span is the whole transcript.
     last_offset: 0,
@@ -448,11 +384,10 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
   }
   const concurrency = options.concurrency ?? config.backfill.concurrency;
 
-  // The cwd rule's sessions, then the ones attributed by touched paths (amendment 8, #105) —
-  // a session started in a workspace folder above this repo that did its work here.
+  // Every transcript the inference says is about this repo, wherever it started (amendment 10).
   const { attributeTranscripts } = await import("../onboarding/attribution.js");
-  const touched = (await attributeTranscripts(io.homeDir, [io.root], io.db)).get(io.root);
-  const plan = planBackfill([...enumerateStore(io.homeDir, io.root), ...(touched?.claude ?? [])], {
+  const about = (await attributeTranscripts(io.homeDir, [io.root], io.db)).get(io.root);
+  const plan = planBackfill(about?.claude ?? [], {
     db: io.db,
     harness: io.adapter.harness,
     repoPath: io.root,

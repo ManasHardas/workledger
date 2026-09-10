@@ -13,6 +13,8 @@
  * bookkeeping — the job row, the `pending_trigger` that makes the resumed checkpoint stamp
  * `repair`, and the frontmatter that records the outcome.
  */
+import { statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -22,7 +24,9 @@ import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
 import { isDirectory, projectSlug, slugToPath } from "../onboarding/session-cwd.js";
-import { firstRecord } from "./backfill.js";
+import { inferContext } from "../onboarding/touched.js";
+import { createBackfilledSession, firstRecord } from "./backfill.js";
+import { patchFrontmatter } from "./hook.js";
 import { SESSION_NOT_FOUND_CODE, USAGE_LIMIT_CODE, enqueueJob } from "../jobs/queue.js";
 import { jobLogDir, runJobs } from "../jobs/runner.js";
 import {
@@ -36,7 +40,9 @@ import {
 import type { HarnessAdapter } from "../adapters/types.js";
 import type { UsageLimit } from "../adapters/usage-limit.js";
 import type { IndexDb, SessionRow } from "../index/db.js";
+import type { WorkspaceTarget } from "../instruction.js";
 import type { JobResult } from "../jobs/runner.js";
+import type { ContextRepo } from "../onboarding/touched.js";
 
 /** Options commander parses for `repair`. */
 export interface RepairOptions {
@@ -93,6 +99,8 @@ export interface RepairIo {
   fetchImpl?: typeof globalThis.fetch;
   /** Overrides `WORKLEDGER_HOME` for the checkpoint the extraction writes through. */
   home?: string | undefined;
+  /** Where the harness stores live and what `~` expands to; the process home when absent. */
+  homeDir?: string | undefined;
   /**
    * Sleep through a harness usage-window wait and finish the job after the reset (#100). On
    * by default — the daemon's repair runner has nobody else to finish it. A test with a fixed
@@ -189,7 +197,7 @@ export function usageLimitMessage(harness: string, limit: UsageLimit): string {
 /**
  * Where to spawn the resume of `session` — #114.
  *
- * The row's `cwd` when it has one. A row from before the column, or one the backfill wrote
+ * The row's `start_dir` when it has one. A row from before the column, or one the backfill wrote
  * without reading past the transcript's first line, is resolved from the transcript now: the
  * first record that carries a `cwd`, else the project slug the transcript lives under, inverted
  * against the filesystem. The repo root is the answer only when nothing else is known — no
@@ -199,7 +207,7 @@ export function usageLimitMessage(harness: string, limit: UsageLimit): string {
  * has no such session, which is exactly what job HHM16Z did.
  */
 export function resumeCwdOf(session: SessionRow, root: string): { cwd: string } | { error: string } {
-  if (session.cwd !== null) return { cwd: session.cwd };
+  if (session.start_dir !== null) return { cwd: session.start_dir };
   if (session.transcript_path === null) return { cwd: root };
   const recorded = firstRecord(session.transcript_path).cwd;
   if (recorded !== null && isDirectory(recorded)) return { cwd: recorded };
@@ -220,7 +228,7 @@ export function resumeCwdOf(session: SessionRow, root: string): { cwd: string } 
 export function sessionNotFoundMessage(harness: string, harnessSessionId: string, cwd: string): string {
   return (
     `${harness} found no session ${harnessSessionId} in ${cwd}; a session is looked up by the directory ` +
-    "it was started in, so the row's cwd must name that directory"
+    "it was started in, so the row's start_dir must name that directory"
   );
 }
 
@@ -230,6 +238,125 @@ export interface ResumeSessionIo {
   root: string;
   adapter: HarnessAdapter;
   now: () => Date;
+  /** Where `~` expands to in a tool input and where git's global config is; the process home when absent. */
+  homeDir?: string | undefined;
+  stderr?: ((line: string) => void) | undefined;
+}
+
+/** One line of the job log naming what the inference found — its first line. */
+export function inferenceLine(startDir: string, contextRepos: readonly ContextRepo[]): string {
+  const about =
+    contextRepos.length === 0
+      ? "nothing (no root qualified and the start directory is outside every repo)"
+      : contextRepos
+          .map((context) =>
+            context.fallback === true
+              ? `${context.root} (fallback: nothing qualified)`
+              : `${context.root} (${context.writes} writes, ${context.pathInputs} path inputs, ${context.references} references)`,
+          )
+          .join(", ");
+  return `inference: started in ${startDir}; about ${about}`;
+}
+
+/**
+ * Step 1 of every repair (P8 amendment 10): what the session is about.
+ *
+ * The transcript is scored against the job's repo and every enabled repo the index knows, the
+ * result is recorded as `start_dir` and `context_repos` on every row of the harness session and
+ * as `started_in` and `about` in each row's frontmatter, and the line for the job log comes
+ * back with it. A row with no transcript has nothing to infer from: the job's repo stands, as
+ * the fallback would.
+ */
+export async function inferForRepair(
+  session: SessionRow,
+  startDir: string,
+  io: ResumeSessionIo,
+): Promise<{ contextRepos: ContextRepo[]; line: string }> {
+  const { db, root } = io;
+  let contextRepos: ContextRepo[];
+  if (session.transcript_path === null) {
+    contextRepos = [{ root, writes: 0, pathInputs: 0, references: 0, fallback: true }];
+  } else {
+    const candidates = [...new Set([root, ...db.listRepos().map((repo) => repo.repo_path).filter(isEnabled)])];
+    const inference = await inferContext(session.transcript_path, candidates, startDir, { db, homeDir: io.homeDir ?? os.homedir() });
+    contextRepos = inference.contextRepos;
+  }
+  const about = contextRepos.map((context) => context.root);
+  const nowIso = io.now().toISOString();
+  for (const row of db.listSessionsByHarnessId(session.harness, session.harness_session_id)) {
+    db.updateSession(row.ulid, { start_dir: startDir, context_repos: JSON.stringify(contextRepos), updated_at: nowIso });
+    if (row.workspace === 0) {
+      await patchFrontmatter(row.repo_path, row.ulid, (data) => {
+        data["started_in"] = startDir;
+        data["about"] = about;
+      });
+    }
+  }
+  return { contextRepos, line: inferenceLine(startDir, contextRepos) };
+}
+
+/** Two spellings of one directory, resolved. */
+function sameDirectory(a: string, b: string): boolean {
+  return path.resolve(a) === path.resolve(b);
+}
+
+/**
+ * Where a repair files its checkpoints (amendment 10): the job's own repo when the session is
+ * about it — or about nothing enabled, in which case it is the only ledger there is — else one
+ * target per enabled context repo, each with a row of its own, opened here as the backfill would
+ * open it when the session has none there yet. A job whose repo is not a context repo is a row
+ * the start directory filed before the inference existed, or the anchor row of a live session
+ * that turned out to be about another repo; its digest belongs where the work was.
+ */
+async function repairTargets(
+  session: SessionRow,
+  startDir: string,
+  contextRepos: readonly ContextRepo[],
+  openIds: readonly string[],
+  io: ResumeSessionIo,
+): Promise<WorkspaceTarget[]> {
+  const { db, root } = io;
+  const roots = contextRepos.map((context) => context.root).filter(isEnabled);
+  if (roots.length === 0 || roots.some((candidate) => sameDirectory(candidate, root))) {
+    return [{ sessionId: session.ulid, root, openIds }];
+  }
+  const targets: WorkspaceTarget[] = [];
+  for (const target of roots) {
+    const existing = db.getSessionByHarnessId(session.harness, session.harness_session_id, target);
+    let sessionId = existing?.ulid;
+    if (sessionId === undefined) {
+      const { newSessionId } = await import("@workledger/core/ids");
+      let stat: { size: number; mtimeMs: number } = { size: 0, mtimeMs: io.now().getTime() };
+      try {
+        if (session.transcript_path !== null) stat = statSync(session.transcript_path);
+      } catch {
+        // The row's own dates stand in for a transcript that cannot be stat'd.
+      }
+      sessionId = await createBackfilledSession(
+        {
+          harnessSessionId: session.harness_session_id,
+          file: session.transcript_path ?? "",
+          bytes: stat.size,
+          mtimeMs: stat.mtimeMs,
+          startedIso: session.last_checkpoint_at,
+          cwd: startDir,
+          context: [...contextRepos],
+        },
+        {
+          db,
+          root: target,
+          adapter: adapterForSession(session, io.adapter),
+          homeDir: io.homeDir ?? os.homedir(),
+          stdout: io.stderr ?? (() => {}),
+          stderr: io.stderr ?? (() => {}),
+          now: io.now,
+          newId: newSessionId,
+        },
+      );
+    }
+    targets.push({ sessionId, root: target, openIds: await listOpenBacklogIds(target) });
+  }
+  return targets;
 }
 
 /** The rest of what one resume attempt needs. */
@@ -289,25 +416,33 @@ export async function resumeSession(
     };
   }
 
-  const before = db.countCheckpoints(ulid);
-  // A session started outside the repo (a workspace folder, amendment 8) is resumed where it
-  // started — the harness finds its session by that directory — and told which ledger to write.
+  // The session is resumed where it started — the harness finds its session by that directory
+  // (#114) — and told which ledger to write.
   const where = resumeCwdOf(session, root);
   if ("error" in where) return { ok: false, code: SESSION_NOT_FOUND_CODE, error: where.error };
   const { cwd } = where;
-  const elsewhere = path.resolve(cwd) !== path.resolve(root);
+
+  // Step 1 (amendment 10): what the session is about decides where the digest is filed. The
+  // line is the job log's first, ahead of whatever the harness prints.
+  const { contextRepos, line } = await inferForRepair(session, cwd, io);
+  const targets = await repairTargets(session, cwd, contextRepos, options.openIds, io);
+  const counted = (): number => targets.reduce((sum, target) => sum + db.countCheckpoints(target.sessionId), 0);
+  const before = counted();
+  const first = targets[0] as WorkspaceTarget;
   const instruction = repairInstruction({
-    sessionId: ulid,
-    openIds: options.openIds,
-    sinceCheckpoint: before,
+    sessionId: first.sessionId,
+    openIds: first.openIds,
+    sinceCheckpoint: db.countCheckpoints(first.sessionId),
     reason: options.reason,
-    ...(elsewhere ? { repo: root } : {}),
+    ...(sameDirectory(cwd, first.root) ? {} : { repo: first.root }),
+    ...(targets.length > 1 ? { targets } : {}),
   });
+  const withLine = (output: string | undefined): string => `${line}\n${output ?? ""}`;
 
   // Set *before* the spawn: the resumed agent's checkpoint reads it off the session row, which
   // is what keeps `--session <ulid>` the only thing on its command line
   // (plans/feature-p3-data-flow.md §Repair by resume).
-  db.updateSession(ulid, { pending_trigger: "repair", updated_at: io.now().toISOString() });
+  for (const target of targets) db.updateSession(target.sessionId, { pending_trigger: "repair", updated_at: io.now().toISOString() });
   try {
     const result = await resume(session.harness_session_id, {
       cwd,
@@ -320,10 +455,18 @@ export async function resumeSession(
     // session that exits 0 without running the checkpoint has repaired nothing.
     // The output rides along either way: the runner writes it to `<home>/logs/<job>.log`, which
     // is the only record of *why* a resume that exited 0 recorded nothing (#97).
-    if (db.countCheckpoints(ulid) > before) {
-      await markRepaired(root, ulid, io.now().toISOString());
-      db.updateSession(ulid, { status: "repaired", updated_at: io.now().toISOString() });
-      return { ok: true, output: result.output };
+    if (counted() > before) {
+      const nowIso = io.now().toISOString();
+      for (const target of targets) {
+        await markRepaired(target.root, target.sessionId, nowIso);
+        db.updateSession(target.sessionId, { status: "repaired", updated_at: nowIso });
+      }
+      // The job's own row, when the digest went elsewhere: its work is recorded, not here.
+      if (!targets.some((target) => target.sessionId === ulid)) {
+        await markRepaired(root, ulid, nowIso);
+        db.updateSession(ulid, { status: "repaired", updated_at: nowIso });
+      }
+      return { ok: true, output: withLine(result.output) };
     }
     // Not a failure of this session: the harness's subscription window is spent and it said
     // when the window resets. The runner puts the job back for then (#100). Only a harness that
@@ -337,7 +480,7 @@ export async function resumeSession(
         code: USAGE_LIMIT_CODE,
         retryAfter: limit.resetAt,
         error: usageLimitMessage(adapter.harness, limit),
-        output: result.output,
+        output: withLine(result.output),
       };
     }
     if (result.exitCode !== null && adapter.detectSessionNotFound?.(result.output) === true) {
@@ -345,15 +488,17 @@ export async function resumeSession(
         ok: false,
         code: SESSION_NOT_FOUND_CODE,
         error: sessionNotFoundMessage(adapter.harness, session.harness_session_id, cwd),
-        output: result.output,
+        output: withLine(result.output),
       };
     }
-    return { ok: false, error: failureReason(result, options.timeoutS), output: result.output };
+    return { ok: false, error: failureReason(result, options.timeoutS), output: withLine(result.output) };
   } finally {
     // Whatever happened, the next checkpoint in this session is an ordinary one. `checkpoint`
     // clears the column itself when it consumes it; this is the path where it never did.
-    if (db.getSessionByUlid(ulid)?.pending_trigger !== null) {
-      db.updateSession(ulid, { pending_trigger: null, updated_at: io.now().toISOString() });
+    for (const target of targets) {
+      if (db.getSessionByUlid(target.sessionId)?.pending_trigger !== null) {
+        db.updateSession(target.sessionId, { pending_trigger: null, updated_at: io.now().toISOString() });
+      }
     }
   }
 }
@@ -473,6 +618,7 @@ export async function repairCommand(ulid: string, options: RepairOptions): Promi
       db,
       root,
       adapter: claudeCodeAdapter,
+      homeDir: os.homedir(),
       stdout: (line) => void process.stdout.write(`${line}\n`),
       stderr: (line) => void process.stderr.write(`${line}\n`),
       now: () => new Date(),
