@@ -12,6 +12,7 @@
  * disk the way `readBriefInput` does and asserts this route's bytes are `buildBrief`'s over it.
  */
 import { buildBrief } from "@workledger/core/brief";
+import { doneBriefText } from "@workledger/core/render/session";
 import { BriefConfig } from "@workledger/core/schema";
 import { parse } from "yaml";
 import type { BriefInput } from "@workledger/core/brief";
@@ -45,7 +46,7 @@ export function briefInput(model: ReadModel): BriefInput {
     .listSessions({ limit: Number.MAX_SAFE_INTEGER })
     .map((session) => ({
       frontmatter: session.frontmatter,
-      done: session.done.map((line) => line.text),
+      done: session.done.map(doneBriefText),
       notes: session.notes.map((note) => ({ type: note.type, text: note.text, cp: note.cp })),
     }));
 

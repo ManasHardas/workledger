@@ -11,7 +11,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_PAYLOAD_BYTES, createItem, createSessionText } from "@workledger/core";
+import {
+  MAX_DETAIL_CHARS,
+  MAX_GIST_CHARS,
+  MAX_PAYLOAD_BYTES,
+  createItem,
+  createSessionText,
+} from "@workledger/core";
 import type { SessionFrontmatter } from "@workledger/core";
 
 import { redactLine, runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
@@ -621,7 +627,8 @@ describe("workledger checkpoint", () => {
     const payload = {
       goal: "Fill the payload to the 4 KB cap.",
       done: Array.from({ length: 12 }, (_, i) => ({
-        text: `Did unit ${i} of work, described at the length a real digest reaches.`.padEnd(180, "."),
+        text: `Did unit ${i} of work, described at the length a real gist reaches.`.padEnd(MAX_GIST_CHARS, "."),
+        detail: `How unit ${i} was actually done, at the length a real detail reaches.`.padEnd(MAX_DETAIL_CHARS, "."),
         commit: "0447dab",
         verified: "tests-passed" as const,
       })),

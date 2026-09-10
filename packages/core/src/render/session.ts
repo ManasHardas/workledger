@@ -286,6 +286,14 @@ export function renderDoneLine(n: number, item: DoneItem): string {
   return `- ${cpTag(n)} ${oneLine(item.text)}\n${CONTINUATION_INDENT}${attributes.join(ATTR_SEPARATOR)}`;
 }
 
+/**
+ * The Done text the brief carries (P8 amendment 11). The brief is read by agents, so it gets the
+ * gist *and* the detail; the session view shows the gist alone.
+ */
+export function doneBriefText(line: Pick<DoneLine, "text" | "detail">): string {
+  return line.detail === undefined || line.detail === "" ? line.text : `${line.text} — ${line.detail}`;
+}
+
 /** Render one `## Memory` line: the fact, then ` file: <path>` when the item names one. */
 export function renderMemoryLine(n: number, item: MemoryItem): string {
   const file = item.file === undefined ? "" : ` ${MEMORY_FILE_KEY}: ${oneLine(item.file)}`;

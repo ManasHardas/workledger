@@ -11,7 +11,16 @@
  * `HookIo` hands every one of those to the test — while a child process would put the branch
  * coverage Clause #3 measures out of reach. `hook-timing.test.ts` is where the built binary runs.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,12 +29,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MAX_BLOCKED_BY,
+  MAX_DETAIL_CHARS,
   MAX_FILES_PER_ITEM,
+  MAX_GIST_CHARS,
   MAX_GOAL_CHARS,
+  MAX_MEMORY_TEXT_CHARS,
   MAX_NOTE_TEXT_CHARS,
   MAX_PAYLOAD_BYTES,
+  MAX_REMAINING_TEXT_CHARS,
   MAX_SECTION_ITEMS,
   MAX_TEXT_CHARS,
+  MAX_WHY_CHARS,
 } from "@workledger/core";
 import { createItem } from "@workledger/core/render/backlog";
 
@@ -35,7 +49,14 @@ import { EXIT_BLOCK, EXIT_OK } from "../src/exit-codes.js";
 import { gitInfo, normalizeRemote, parseIni } from "../src/git-info.js";
 import { openIndex } from "../src/index/db.js";
 import { checkpointInstruction, INSTRUCTION_VERSION, MAX_PREVIOUS_ERRORS } from "../src/instruction.js";
-import { runHook, firstCrossed, minutesSince, END_REASON_MAP } from "../src/commands/hook.js";
+import {
+  runHook,
+  firstCrossed,
+  isMemoryPath,
+  memoryFilesInSpan,
+  minutesSince,
+  END_REASON_MAP,
+} from "../src/commands/hook.js";
 import { sessionFile } from "../src/ledger-fs.js";
 import type { HookEvent } from "../src/commands/hook-events.js";
 import type { HookIo } from "../src/commands/hook.js";
@@ -857,8 +878,8 @@ describe("the checkpoint instruction", () => {
     expect(text).not.toContain("previous attempt failed:");
   });
 
-  it("is v3: one --payload argument, the string rule, no heredocs or pipes, reason on decisions (#97)", () => {
-    expect(INSTRUCTION_VERSION).toBe(3);
+  it("is v4: one --payload argument, the string rule, no heredocs or pipes, reason on decisions (#97, #117)", () => {
+    expect(INSTRUCTION_VERSION).toBe(4);
     const text = checkpointInstruction({ sessionId: "01JQ8ZK4T0000000000000000A", openIds: [] });
     expect(text).toContain("workledger checkpoint --session 01JQ8ZK4T0000000000000000A --payload '<json>'");
     expect(text).toContain("At most 16384 bytes");
@@ -876,13 +897,50 @@ describe("the checkpoint instruction", () => {
     const text = checkpointInstruction({ sessionId: "x", openIds: [] });
     const caps = text.slice(text.indexOf("Caps:"), text.indexOf("Strings:"));
     expect(caps).toContain(`goal ≤ ${MAX_GOAL_CHARS} chars`);
-    expect(caps).toContain(`text, why and reason ≤ ${MAX_TEXT_CHARS} chars`);
-    expect(caps).toContain(`notes text ≤ ${MAX_NOTE_TEXT_CHARS}`);
+    expect(caps).toContain(`done text ≤ ${MAX_GIST_CHARS} and detail ≤ ${MAX_DETAIL_CHARS}`);
+    expect(caps).toContain(`remaining text and why ≤ ${MAX_REMAINING_TEXT_CHARS}`);
+    expect(MAX_WHY_CHARS).toBe(MAX_REMAINING_TEXT_CHARS);
+    expect(caps).toContain(`notes text ≤ ${MAX_NOTE_TEXT_CHARS} and reason ≤ ${MAX_TEXT_CHARS}`);
+    expect(caps).toContain(`memory text ≤ ${MAX_MEMORY_TEXT_CHARS}`);
     expect(caps).toContain(`files ≤ ${MAX_FILES_PER_ITEM}`);
     expect(caps).toContain(`blocked_by ≤ ${MAX_BLOCKED_BY}`);
     expect(caps).toContain(`≤ ${MAX_SECTION_ITEMS} items per section`);
     expect(caps).toContain(`≤ ${MAX_PAYLOAD_BYTES} bytes total`);
     expect(text).toContain(`At most ${MAX_PAYLOAD_BYTES} bytes`);
+  });
+
+  it("v4 asks for human gists with the specifics in detail, 3–8 items, and memory (#117)", () => {
+    const text = checkpointInstruction({ sessionId: "x", openIds: [] });
+    expect(text).toContain("done {text, detail?, files[], commit?");
+    expect(text).toContain("memory {text, file?}");
+    expect(text).toContain("done[].text is the gist, and it is read by a human");
+    expect(text).toContain("the way you");
+    expect(text).toContain("would tell a teammate at standup");
+    expect(text).toContain("No file paths, no commit ids");
+    // The worked pair the operator asked for: one outcome, then the specifics behind it.
+    expect(text).toContain("  text: Buyers can now check out from the cart on their phone");
+    expect(text).toContain("  detail: Checkout control is the link itself; pendingCheckout flag");
+    expect(text).toContain("Give 3–8 done items");
+    expect(text).toContain("remaining[].text is one action, imperative and short");
+    expect(text).toContain("memory[] is the facts you saved to a memory file this span");
+    // v3's payload rules are unchanged, and the JSON stays single-quote safe.
+    expect(text).toContain("--payload '<json>'");
+    // The only apostrophes are the two v3 lines: nothing v4 adds can break the single-quoted arg.
+    expect(text.split("\n").filter((line) => line.includes("'"))).toEqual([
+      "Run exactly one command: workledger checkpoint --session x --payload '<json>'",
+      "Strings: no single quote (') and no backslash (\\) anywhere in the JSON — write an",
+    ]);
+  });
+
+  it("lists the memory files the Stop hook derived, when it found any", () => {
+    const files = ["~/.claude/projects/-Users-x/memory/MEMORY.md", "/repo/CLAUDE.md"];
+    const text = checkpointInstruction({ sessionId: "x", openIds: [], memoryFiles: files });
+    expect(text).toContain("You wrote to these memory files this span: " + files.join(", ") + ".");
+    expect(text).toContain("Record what you saved there as memory[] entries");
+    expect(checkpointInstruction({ sessionId: "x", openIds: [], memoryFiles: [files[0]!] })).toContain(
+      "You wrote to this memory file this span:",
+    );
+    expect(checkpointInstruction({ sessionId: "x", openIds: [] })).not.toContain("memory files this span");
   });
 
   it("tells the agent to mint an item when the backlog is empty", () => {
@@ -1136,3 +1194,65 @@ function backlogItem(id: string): string {
     now: "2026-09-09T10:00:00.000Z",
   });
 }
+
+// ---------------------------------------------------------------------------
+// P8 amendment 11 — memory derived from the transcript's Write/Edit tool inputs
+// ---------------------------------------------------------------------------
+
+describe("memory derivation (P8 amendment 11)", () => {
+  it("recognises the four memory path shapes and nothing else", () => {
+    for (const file of [
+      "/Users/x/.claude/projects/-Users-x-Projects/memory/MEMORY.md",
+      "/Users/x/.claude/projects/-Users-x/memory/notes.md",
+      "/repo/CLAUDE.md",
+      "/repo/packages/core/MEMORY.md",
+      "/repo/.claude/memory/facts.md",
+    ]) {
+      expect(isMemoryPath(file)).toBe(true);
+    }
+    for (const file of [
+      "/repo/src/claude.md",
+      "/repo/README.md",
+      "/repo/.claude/settings.json",
+      "/Users/x/.claude/projects/-Users-x/transcript.jsonl",
+      "/repo/docs/CLAUDE.md.bak",
+    ]) {
+      expect(isMemoryPath(file)).toBe(false);
+    }
+  });
+
+  it("takes Write and Edit file paths out of the span, distinct and in order", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wl-memory-"));
+    const transcript = path.join(dir, "t.jsonl");
+    const record = (name: string, file: string): string =>
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name, input: { file_path: file } }] },
+      });
+    const lines = [
+      record("Read", "/Users/x/.claude/projects/-Users-x/memory/MEMORY.md"),
+      record("Write", "/repo/src/index.ts"),
+      record("Write", "/Users/x/.claude/projects/-Users-x/memory/MEMORY.md"),
+      record("Edit", "/repo/CLAUDE.md"),
+      record("Edit", "/Users/x/.claude/projects/-Users-x/memory/MEMORY.md"),
+      "{ not json",
+      JSON.stringify({ type: "user", message: { content: "plain text turn" } }),
+    ];
+    const head = `${record("Write", "/repo/before-the-span/CLAUDE.md")}\n`;
+    writeFileSync(transcript, head + lines.join("\n") + "\n");
+
+    expect(memoryFilesInSpan(transcript, head.length, statSync(transcript).size)).toEqual([
+      "/Users/x/.claude/projects/-Users-x/memory/MEMORY.md",
+      "/repo/CLAUDE.md",
+    ]);
+    // The span is honoured: nothing before `from` is read.
+    expect(memoryFilesInSpan(transcript, 0, head.length)).toEqual([
+      "/repo/before-the-span/CLAUDE.md",
+    ]);
+    // Fails open on every unreadable input rather than wedging the block.
+    expect(memoryFilesInSpan(undefined, 0, 10)).toEqual([]);
+    expect(memoryFilesInSpan(path.join(dir, "missing.jsonl"), 0, 10)).toEqual([]);
+    expect(memoryFilesInSpan(transcript, 10, 10)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

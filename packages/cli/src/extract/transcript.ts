@@ -2,7 +2,9 @@
  * The transcript slice the extraction fallback sends to the model —
  * plans/feature-p3-data-flow.md §Extraction fallback.
  *
- * This is the one place in workledger that reads transcript *content*. Everything else in the
+ * This is the place in workledger that reads transcript *content* at length — the only other
+ * reader is `memoryFilesInSpan` in `src/commands/hook.ts`, which takes `file_path` strings off
+ * Write/Edit tool uses on the Stop block path and keeps nothing else. Everything else in the
  * product measures transcripts (mtime, size, byte offsets) and never opens them, because a
  * digest written by the session's own agent needs no parser and an excerpt renderer only needs
  * bytes. Extraction is the exception the contract carves out for a session no harness can resume,

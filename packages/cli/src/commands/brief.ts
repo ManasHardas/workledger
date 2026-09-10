@@ -69,7 +69,7 @@ function ledgerFiles(dir: string): string[] {
  * rule `listOpenBacklogIds` follows, because one corrupt file must not cost a session its brief.
  */
 export async function readBriefInput(root: string): Promise<BriefInput> {
-  const [{ parseItem }, { parseSessionText }] = await Promise.all([
+  const [{ parseItem }, { doneBriefText, parseSessionText }] = await Promise.all([
     import("@workledger/core/render/backlog"),
     import("@workledger/core/render/session"),
   ]);
@@ -109,7 +109,7 @@ export async function readBriefInput(root: string): Promise<BriefInput> {
           ...parsed.frontmatter,
           author: resolveActor(parsed.frontmatter.author, identities),
         },
-        done: parsed.done.map((line) => line.text),
+        done: parsed.done.map(doneBriefText),
         notes: parsed.notes.map((line) => ({ type: line.type, text: line.text, cp: line.cp })),
       });
     } catch {
