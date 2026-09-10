@@ -436,6 +436,12 @@ export interface PlanResult {
   /** Sessions in the window the index has never seen, across `repos`. */
   sessions: number;
   estimate: ResumeEstimate | ExtractionEstimate | null;
+  /**
+   * Amendment 3: under method `extract`, the Codex sessions left out of `sessions` and the
+   * estimate — the extractor parses Claude Code transcripts only, so they are skipped rather
+   * than queued. Resume covers them.
+   */
+  unsupported?: { codex: number };
 }
 
 /** `POST /api/onboarding/run` body. The server refuses anything but `consent: true` (409). */

@@ -115,8 +115,9 @@ function Plan({ state, source, method }: { state: WizardState; source: AppSource
           result.sessions === 0 ? (
             <>
               <p className="text-sm">
-                No session in {WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. There is nothing to
-                backfill.
+                {(result.unsupported?.codex ?? 0) > 0
+                  ? `${plural(result.unsupported!.codex, "Codex session")} can only be backfilled by resume and will be skipped by extraction; nothing else in ${WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. Change your answer to resume them, or finish.`
+                  : `No session in ${WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. There is nothing to backfill.`}
               </p>
               <StepActions>
                 {back}
@@ -190,16 +191,25 @@ function ResumePlan({ result }: { result: PlanResult }) {
 
 function ExtractPlan({ result }: { result: PlanResult }) {
   const estimate = result.estimate as ExtractionEstimate | null;
+  const codex = result.unsupported?.codex ?? 0;
   return (
-    <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-sm">
-      <Row label="sessions" value={formatCount(result.sessions)} />
-      <Row label="tokens" value={estimate === null ? "—" : formatCount(estimate.tokens)} />
-      <Row label="estimated cost" value={estimate === null ? "—" : formatUsd(estimate.usd)} />
-      <Row
-        label="ANTHROPIC_API_KEY"
-        value={estimate === null ? "—" : estimate.needsApiKey ? "not set on the daemon" : "set on the daemon"}
-      />
-    </dl>
+    <>
+      <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-sm">
+        <Row label="sessions" value={formatCount(result.sessions)} />
+        <Row label="tokens" value={estimate === null ? "—" : formatCount(estimate.tokens)} />
+        <Row label="estimated cost" value={estimate === null ? "—" : formatUsd(estimate.usd)} />
+        <Row
+          label="ANTHROPIC_API_KEY"
+          value={estimate === null ? "—" : estimate.needsApiKey ? "not set on the daemon" : "set on the daemon"}
+        />
+      </dl>
+      {codex > 0 ? (
+        // Amendment 3: the extractor reads Claude Code transcripts only.
+        <p className="rounded-md bg-warning/20 p-2 text-xs">
+          {plural(codex, "Codex session")} can only be backfilled by resume and will be skipped by extraction.
+        </p>
+      ) : null}
+    </>
   );
 }
 

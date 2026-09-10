@@ -54,7 +54,7 @@ const ops: OnboardingOps = {
   plan: async (input) => {
     calls.push({ op: "plan", args: [input] });
     return input.method === "extract"
-      ? { sessions: 3, estimate: { tokens: 1000, usd: 0.01, needsApiKey: true } }
+      ? { sessions: 3, estimate: { tokens: 1000, usd: 0.01, needsApiKey: true }, unsupported: { codex: 1 } }
       : { sessions: 3, estimate: { seconds: 68 } };
   },
   run: async (input) => {
@@ -120,6 +120,8 @@ describe("OnboardingSource over the real routes", () => {
     expect(init.results[0]).toMatchObject({ path: repo, ok: true });
     const plan = await source.plan({ repos: [repo], since: "7d", method: "resume" });
     expect(plan).toEqual({ sessions: 3, estimate: { seconds: 68 } });
+    const extract = await source.plan({ repos: [repo], since: "7d", method: "extract" });
+    expect(extract.unsupported).toEqual({ codex: 1 });
     const run = await source.run({ repos: [repo], since: "7d", method: "resume", consent: true });
     expect(run.jobs).toEqual([JOB]);
     const status = await source.status();
@@ -131,11 +133,12 @@ describe("OnboardingSource over the real routes", () => {
       `/api/onboarding/history?repos=${encodeURIComponent(repo)}`,
       "/api/onboarding/init",
       "/api/onboarding/plan",
+      "/api/onboarding/plan",
       "/api/onboarding/run",
       "/api/onboarding/status",
     ]);
     for (const post of urls.filter((u) => u.method === "POST")) expect(post.type).toBe("application/json");
-    expect(calls.map((c) => c.op)).toEqual(["discover", "discover", "history", "init", "plan", "run", "status"]);
+    expect(calls.map((c) => c.op)).toEqual(["discover", "discover", "history", "init", "plan", "plan", "run", "status"]);
     expect(calls[1]!.args[0]).toEqual([dir]);
   });
 

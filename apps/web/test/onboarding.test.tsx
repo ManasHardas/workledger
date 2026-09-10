@@ -369,6 +369,8 @@ describe("method step", () => {
     expect(screen.getByText("1,900,000")).toBeDefined();
     expect(screen.getByText("$6.84")).toBeDefined();
     expect(screen.getByText("not set on the daemon")).toBeDefined();
+    // Amendment 3: Codex sessions are priced out of extraction and said so.
+    expect(screen.getByText("5 Codex sessions can only be backfilled by resume and will be skipped by extraction.")).toBeDefined();
     const run = screen.getByRole("button", { name: "Run extraction" }) as HTMLButtonElement;
     expect(run.disabled).toBe(true);
     expect(screen.getByText(/Run extraction is disabled because the daemon has no/)).toBeDefined();

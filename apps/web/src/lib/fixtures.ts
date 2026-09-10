@@ -398,10 +398,14 @@ export function fixtureInitResult(path: string): InitRepoResult {
 /** 27 sessions over 30 days, at the config's default 45 s per headless resume. */
 export const FIXTURE_PLAN_RESUME: PlanResult = { sessions: 27, estimate: { seconds: 27 * 45 } };
 
-/** The same 27 sessions priced for extraction, on a daemon started without an API key. */
+/**
+ * The same window priced for extraction, on a daemon started without an API key: kubera's five
+ * Codex sessions are left out (amendment 3), so 22 sessions are priced and 5 reported skipped.
+ */
 export const FIXTURE_PLAN_EXTRACT: PlanResult = {
-  sessions: 27,
+  sessions: 22,
   estimate: { tokens: 1_900_000, usd: 6.84, needsApiKey: true },
+  unsupported: { codex: 5 },
 };
 
 /** Nothing queued yet, which the contract defines as complete. */
