@@ -8,11 +8,19 @@ import { createSource } from "./lib/ledger-source.js";
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");
 
-// `"fixture"` until packages/api-client (#35) merges; #37–#39 swap in
-// `createSource("local", { baseUrl: "/api" })` and nothing else here changes.
+// A production bundle is the one `workledger serve` hosts, so it always reads through the real
+// server; in dev the fixture ledger is the default and `VITE_API_BASE` opts into a running server.
+// The base URL is same-origin `""` because `serve` hosts the app and `/api` together — an absolute
+// origin here would only be right for a dev server pointed at a separate `serve`.
+const apiBase = import.meta.env.VITE_API_BASE as string | undefined;
+const source =
+  import.meta.env.PROD || apiBase !== undefined
+    ? createSource("local", { baseUrl: apiBase ?? "" })
+    : createSource("fixture");
+
 createRoot(container).render(
   <StrictMode>
-    <App source={createSource("fixture")} />
+    <App source={source} />
   </StrictMode>,
 );
 

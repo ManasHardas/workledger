@@ -89,6 +89,8 @@ export interface BacklogView {
 /** `GET /api/notes` element — a note plus the ulid of the session it was read from. */
 export interface NoteRef extends NoteLine {
   session: string;
+  /** The note's 0-based position among the notes of its own checkpoint (api.md §Read models). */
+  index: number;
 }
 
 /** One harness row of `workledger doctor`, as `/api/health` returns it. */

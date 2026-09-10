@@ -53,14 +53,14 @@ describe("routes render fixture data", () => {
     expect(ended.length).toBeGreaterThan(0);
 
     for (const session of open) {
-      expect(await screen.findByText(session.goal[0]!.text)).toBeDefined();
+      expect(await screen.findByText(session.goal!)).toBeDefined();
     }
     // The default scope is "Open", so an ended session is filtered out until the tab changes.
-    expect(screen.queryByText(ended[0]!.goal[0]!.text)).toBeNull();
+    expect(screen.queryByText(ended[0]!.goal!)).toBeNull();
 
     fireEvent.mouseDown(screen.getByRole("tab", { name: "All" }));
     for (const session of FIXTURE_SESSIONS) {
-      expect(await screen.findByText(session.goal[0]!.text)).toBeDefined();
+      expect(await screen.findByText(session.goal!)).toBeDefined();
     }
   });
 
