@@ -39,8 +39,14 @@ export interface BacklogView {
   body: string;
 }
 
-/** A `## Notes` line carrying the ulid of the session it was read from. */
-export type NoteRef = NoteLine & { session: string; resolved?: boolean };
+/**
+ * A `## Notes` line carrying the ulid of the session it was read from and, since the 2026-09-09
+ * amendment to `docs/contracts/p2/api.md`, its `index` — the note's 0-based position among the
+ * notes of **its own checkpoint**, in file order. That pair is what `resolveNote` names a note by
+ * (`docs/contracts/p2/backlog-cli.md`), and no position in a filtered list reproduces it, so the
+ * server sends it rather than leaving the UI to reconstruct it from the session.
+ */
+export type NoteRef = NoteLine & { session: string; index: number; resolved?: boolean };
 
 /** One harness row of `workledger doctor`, as `/api/health` returns it. */
 export interface DoctorEntry {

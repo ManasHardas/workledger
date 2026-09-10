@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { hrefFor, useRoute, type RouteId } from "../lib/router.js";
+import { KeyboardHelp } from "./keyboard-help.js";
 import { Button } from "./ui/button.js";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
 
@@ -63,6 +64,7 @@ export function AppShell({ nav, children }: { nav: NavItem[]; children: React.Re
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>
+      <KeyboardHelp />
     </div>
   );
 }
