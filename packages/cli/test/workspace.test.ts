@@ -193,9 +193,11 @@ describe("workledger init --workspace", () => {
 
 describe("touched roots from the accumulated counts", () => {
   it("applies the contract's rule and ranks by references, then writes", () => {
-    expect(touchedRootsOf({ [repoA]: { refs: MIN_REFERENCES, writes: 0 }, [repoB]: { refs: 2, writes: 1 } })).toEqual([repoA, repoB]);
-    expect(touchedRootsOf({ [repoA]: { refs: 1, writes: 1 }, [repoB]: { refs: 1, writes: 2 } })).toEqual([repoB, repoA]);
-    expect(touchedRootsOf({ [repoA]: { refs: MIN_REFERENCES - 1, writes: 0 } })).toEqual([]);
+    expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES, writes: 0, pathInputs: 1 }, [repoB]: { references: 2, writes: 1, pathInputs: 0 } })).toEqual([repoA, repoB]);
+    expect(touchedRootsOf({ [repoA]: { references: 1, writes: 1, pathInputs: 1 }, [repoB]: { references: 1, writes: 2, pathInputs: 1 } })).toEqual([repoB, repoA]);
+    expect(touchedRootsOf({ [repoA]: { references: MIN_REFERENCES - 1, writes: 0, pathInputs: 4 } })).toEqual([]);
+    // Bash text alone never attributes (#110).
+    expect(touchedRootsOf({ [repoA]: { references: 20, writes: 0, pathInputs: 0 } })).toEqual([]);
   });
 });
 
@@ -273,7 +275,7 @@ describe("hook from a workspace session", () => {
     expect(existsSync(path.join(workspace, ".workledger"))).toBe(false);
     const ws = all[0] as SessionRow;
     expect(ws.scan_offset).toBe(Buffer.byteLength(lines));
-    expect(JSON.parse(ws.scan_counts as string)).toEqual({ [repoA]: { refs: 6, writes: 0 }, [repoB]: { refs: 1, writes: 1 } });
+    expect(JSON.parse(ws.scan_counts as string)).toEqual({ [repoA]: { references: 6, writes: 0, pathInputs: 6 }, [repoB]: { references: 1, writes: 1, pathInputs: 1 } });
     expect(ws).toMatchObject({ blocks_since_checkpoint: 1, last_block_trigger: "minutes" });
 
     // The next Stop scans only the new bytes; nothing new and no attempt → allowed, once.
@@ -375,6 +377,33 @@ describe("discover, init and doctor with workspaces", () => {
     mkdirSync(lone);
     recordSessionIn(lone);
     expect((await discoverRepos({}, io)).workspaces.map((w) => w.path)).toEqual([workspace]);
+  });
+
+  it("discover lists a start folder inside another git repo as a workspace when it holds a candidate", async () => {
+    // `outer` is itself a repo (a `~/Projects` under git), `outer/ws` is not, and two repos sit
+    // below it. Only `a` is a candidate: a session started in it, and the walk covers none of
+    // them (`outer` is outside the default root). A session started in `ws` writes under `a`.
+    const outer = path.join(home, "outer");
+    const ws = path.join(outer, "ws");
+    const a = path.join(ws, "a");
+    const b = path.join(ws, "b");
+    for (const root of [outer, a, b]) mkdirSync(path.join(root, ".git"), { recursive: true });
+    recordSessionIn(a);
+    const store = path.join(home, CLAUDE_STORE, projectSlug(ws));
+    mkdirSync(store, { recursive: true });
+    writeFileSync(
+      path.join(store, "s-ws.jsonl"),
+      `${JSON.stringify({ type: "user", cwd: ws })}\n${JSON.stringify({
+        type: "assistant",
+        cwd: ws,
+        message: { role: "assistant", content: [{ type: "tool_use", id: "t", name: "Write", input: { file_path: path.join(a, "notes.md"), content: "x" } }] },
+      })}\n`,
+      "utf8",
+    );
+
+    const result = await discoverRepos({}, onboardingIo());
+    expect(result.workspaces).toEqual([{ path: ws, repos: [a], hooksInstalled: false }]);
+    expect(result.known.find((c) => c.path === a)).toMatchObject({ startedIn: [ws], touchedSessions: 1 });
   });
 
   it("doctor lists each workspace with its hook status", async () => {

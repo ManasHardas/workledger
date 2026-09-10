@@ -30,7 +30,6 @@ import path from "node:path";
 
 import { workspaceHooksInstalled } from "../commands/init-workspace.js";
 import { configFile } from "../config.js";
-import { findRepoRoot } from "../ledger-fs.js";
 import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
@@ -144,10 +143,14 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
     known.set(key, entry);
   };
 
-  // Start directories that are not repos (amendment 8): candidates for `init --workspace`.
+  // Start directories that are not repo roots themselves (amendment 8): candidates for
+  // `init --workspace`. "Not a repo root" is the directory's own `.git`, not an ancestor's: a
+  // `~/Projects/dome_workspace` under a `~/Projects` that is itself a git repo is still the
+  // folder its sessions start in, and `findRepoRoot` would resolve it to the ancestor.
   const starts = new Set<string>();
   const startedIn = (cwd: string): void => {
-    if (findRepoRoot(cwd) === undefined) starts.add(realOr(path.resolve(cwd)));
+    const start = path.resolve(cwd);
+    if (!existsSync(path.join(start, ".git"))) starts.add(realOr(start));
   };
 
   for (const project of claudeProjects(io.homeDir)) {

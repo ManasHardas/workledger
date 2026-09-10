@@ -733,12 +733,13 @@ describe("touched-path attribution (amendment 8, #105)", () => {
     const claudeAt = new Date(NOW.getTime() - 2 * DAY_MS);
     utimesSync(claudeFile, claudeAt, claudeAt);
 
-    // A Codex rollout started there too: five reads of card-a (enough), three of card-b (not).
+    // A Codex rollout started there too: five references to card-a, one of them a `cd` into it
+    // (enough, #110), three shell mentions of card-b (not).
     codexFile = path.join(home, CODEX_STORE, "2026", "09", "08", "rollout-ws.jsonl");
     writeFileSync(
       codexFile,
       `${JSON.stringify({ timestamp: "2026-09-08T10:00:00.000Z", type: "session_meta", payload: { id: CODEX_WS_ID, cwd: ws, timestamp: "2026-09-08T10:00:00.000Z" } })}\n` +
-        ["cat card-a/src/a.ts", "ls card-a", "rg x card-a/src", "wc -l card-a/src/a.ts", "head card-a/README.md"].map(exec).join("") +
+        ["cat card-a/src/a.ts", "ls card-a", "rg x card-a/src", "wc -l card-a/src/a.ts", "cd card-a && head README.md"].map(exec).join("") +
         ["ls card-b", "cat card-b/README.md", "rg y card-b"].map(exec).join(""),
       "utf8",
     );

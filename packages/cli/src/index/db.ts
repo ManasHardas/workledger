@@ -107,7 +107,7 @@ export interface SessionRow {
   workspace: number;
   /** How far into the transcript the workspace hook's scan has read for this row. */
   scan_offset: number;
-  /** JSON `{ "<root>": { "refs": n, "writes": n } }` that scan has accumulated, or `null`. */
+  /** JSON `{ "<root>": { "references": n, "writes": n, "pathInputs": n } }` that scan has accumulated, or `null`. */
   scan_counts: string | null;
 }
 
@@ -396,9 +396,11 @@ export interface TouchCount {
   /** The candidate root, as the caller spelled it. */
   root: string;
   /** Tool inputs naming a path under `root`. */
-  refs: number;
+  references: number;
   /** Of those, the ones that wrote under it. */
   writes: number;
+  /** Of those, the non-Bash path inputs and the Bash `cd`s into it (#110). */
+  pathInputs: number;
 }
 
 /** A `transcript_touches` row. */
@@ -542,18 +544,21 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     "SELECT COUNT(*) AS count FROM checkpoints WHERE session_ulid = ?",
   );
 
+  // `refs` and `path_inputs` are the column names; `REFERENCES` is a SQL keyword.
   const selectTouches = db.prepare<[string], TouchRow>(
-    "SELECT transcript_path, root, refs, writes, mtime_ms, size FROM transcript_touches " +
-      "WHERE transcript_path = ? ORDER BY root",
+    "SELECT transcript_path, root, refs AS \"references\", writes, path_inputs AS pathInputs, mtime_ms, size " +
+      "FROM transcript_touches WHERE transcript_path = ? ORDER BY root",
   );
   const deleteTouches = db.prepare<[string]>("DELETE FROM transcript_touches WHERE transcript_path = ?");
-  const insertTouch = db.prepare<[string, string, number, number, number, number]>(
-    "INSERT INTO transcript_touches (transcript_path, root, refs, writes, mtime_ms, size) VALUES (?, ?, ?, ?, ?, ?)",
+  const insertTouch = db.prepare<[string, string, number, number, number, number, number]>(
+    "INSERT INTO transcript_touches (transcript_path, root, refs, writes, path_inputs, mtime_ms, size) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const replaceTouchesTx = db.transaction(
     (transcriptPath: string, stamp: { mtimeMs: number; size: number }, rows: readonly TouchCount[]) => {
       deleteTouches.run(transcriptPath);
-      for (const row of rows) insertTouch.run(transcriptPath, row.root, row.refs, row.writes, stamp.mtimeMs, stamp.size);
+      for (const row of rows) {
+        insertTouch.run(transcriptPath, row.root, row.references, row.writes, row.pathInputs, stamp.mtimeMs, stamp.size);
+      }
     },
   );
 

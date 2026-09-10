@@ -4,8 +4,8 @@
  *
  * The cwd rule (`discover.ts`, `enumerateStore`, `enumerateCodexStore`) attributes a session to
  * the repo its working directory is in. This is the second rule beside it: every other candidate
- * root the transcript's tool inputs name at least {@link MIN_REFERENCES} times, or wrote under
- * once, gets the session too (`touched.ts`). A transcript may therefore count for several repos;
+ * root the transcript wrote under once, or named at least {@link MIN_REFERENCES} times with at
+ * least one path-tool input or `cd` among them (#110), gets the session too (`touched.ts`). A transcript may therefore count for several repos;
  * it never counts twice for one, because the root its cwd is in is left to the cwd rule.
  *
  * The result is per repo, in the `StoreSession` shape the P3 planner and the backfill already

@@ -108,8 +108,11 @@ A session is attributed to every enabled or candidate repo whose root appears in
 tool inputs (Read/Edit/Write/Glob/Grep paths, Bash command text, `cd` targets), not only to the
 directory it was started in. `RepoCandidate` gains `startedIn: string[]` (distinct session start
 directories that are not the repo itself) and `touchedSessions: number` (sessions attributed by
-touched paths). A transcript counts for a repo when it references that root at least 5 times or
-has one write under it; a transcript may count for several repos. `history`, `plan` and `run`
+touched paths). A transcript counts for a repo when it has at least one write under that root, or
+at least 5 references to it of which at least one is a non-Bash path tool input
+(Read/Edit/Write/Glob/Grep/NotebookEdit `file_path`/`path`/`notebook_path` under the root) or a
+Bash `cd` into the root; Bash command text mentions alone never attribute (#110). A transcript may
+count for several repos. `history`, `plan` and `run`
 use the same attribution; `run` queues one repair job per (session, repo) pair, and the repair
 instruction names the target root.
 
@@ -119,7 +122,8 @@ is used as before. `workledger init --workspace <dir>` writes the three hook fil
 folder that contains tracked repos; a hook fired from such a session resolves its target repo(s)
 from the transcript's touched paths (same rule as above) and, at Stop, instructs one checkpoint per
 touched repo with `--repo`. `GET /api/onboarding/discover` gains `workspaces: { path, repos:
-string[], hooksInstalled: boolean }[]` for start directories that contain selected candidates;
+string[], hooksInstalled: boolean }[]` for start directories that are not themselves repo roots
+(no `.git` of their own, whatever their ancestors hold) and contain known or found candidates;
 `POST /api/onboarding/init` accepts `workspaces: string[]`.
 
 ## Amendment 9 (2026-09-10) — unlimited backfill window
