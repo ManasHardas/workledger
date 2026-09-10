@@ -1,9 +1,20 @@
+import { useState } from "react";
+
 import { AsyncPanel } from "../../components/async-panel.js";
 import { RepairSheet } from "../jobs/repair-sheet.js";
 import { useRepoId, useSource } from "../../lib/source-context.js";
 import { Badge } from "../../components/ui/badge.js";
+import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
-import type { ParsedSession } from "../../lib/ledger-source.js";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "../../components/ui/sheet.js";
+import type { Line as DoneLine, NoteLine, ParsedSession, Verified } from "../../lib/ledger-source.js";
 import { ledgerListHref } from "./detail-route.js";
 import { cpMarker, formatInstant } from "./format.js";
 import { useLiveSession } from "./live.js";
@@ -11,10 +22,16 @@ import { ProvenancePanel } from "./provenance-panel.js";
 
 /**
  * One session in full: the four body sections the CLI writes — Goal, Done, Remaining, Notes — then
- * anything the parser could not classify, then where each line came from.
+ * Memory when the session committed anything to a memory file, anything the parser could not
+ * classify, and where each line came from.
  *
  * Every line carries its `[cp n]` marker, because the checkpoint is what makes a ledger line
  * checkable against the transcript; without it a line is just a claim.
+ *
+ * Amendment 11 (docs/contracts/p8/daemon-and-api.md): the page is for the human. Done shows the
+ * gist of each item and nothing else; the specifics — detail, commit, files, verified — wait in a
+ * side drawer until an item is opened. Discovery notes are written for the next agent, so they sit
+ * behind a disclosure; blocker, question and decision are the ones a person acts on.
  */
 export function SessionDetail({ ulid }: { ulid: string }) {
   const session = useLiveSession(ulid);
@@ -45,9 +62,19 @@ function repoName(root: string): string {
   return root.split("/").filter((part) => part !== "").at(-1) ?? root;
 }
 
+/** The note types a person reads by default; everything else is `For agents`. */
+const HUMAN_NOTE_TYPES: ReadonlySet<NoteLine["type"]> = new Set(["blocker", "question", "decision"]);
+
 function SessionBody({ session }: { session: ParsedSession }) {
   const { frontmatter } = session;
   const source = useSource();
+  /** The Done item whose drawer is open, by position — two items may share a gist. */
+  const [openDone, setOpenDone] = useState<number | null>(null);
+
+  const humanNotes = session.notes.filter((line) => HUMAN_NOTE_TYPES.has(line.type));
+  const agentNotes = session.notes.filter((line) => !HUMAN_NOTE_TYPES.has(line.type));
+  const memory = session.memory ?? [];
+  const opened = openDone === null ? null : (session.done[openDone] ?? null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -94,18 +121,19 @@ function SessionBody({ session }: { session: ParsedSession }) {
           <Lines>
             {session.done.map((line, index) => (
               <Line key={`${line.cp}-${index}`} cp={line.cp}>
-                {line.text}
-                {line.commit || line.files?.length || line.verified ? (
-                  <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    {line.commit ? <span className="font-mono">{line.commit}</span> : null}
-                    {line.files?.map((file) => (
-                      <span key={file} className="font-mono">
-                        {file}
-                      </span>
-                    ))}
-                    {line.verified ? <span>{line.verified}</span> : null}
-                  </span>
-                ) : null}
+                {/*
+                  A real button, so Enter and Space open it, it is in the tab order, and a screen
+                  reader announces it as something that does something — none of which a `<li>`
+                  with an onClick would give.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setOpenDone(index)}
+                  aria-haspopup="dialog"
+                  className="w-full rounded-md text-left hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  {line.text}
+                </button>
               </Line>
             ))}
           </Lines>
@@ -120,15 +148,13 @@ function SessionBody({ session }: { session: ParsedSession }) {
             {session.remaining.map((line, index) => (
               <Line key={`${line.cp}-${index}`} cp={line.cp}>
                 {line.text}
-                <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-mono">{`→ ${line.ref} (${line.rel})`}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <Badge variant="outline" className="font-mono">{`→ ${line.ref} (${line.rel})`}</Badge>
+                  {line.why ? <span className="min-w-0">{line.why}</span> : null}
                   {line.blocked_by?.length ? (
                     <span>blocked by {line.blocked_by.join(", ")}</span>
                   ) : null}
                 </span>
-                {line.why ? (
-                  <span className="mt-1 block text-xs text-muted-foreground">{line.why}</span>
-                ) : null}
               </Line>
             ))}
           </Lines>
@@ -139,23 +165,40 @@ function SessionBody({ session }: { session: ParsedSession }) {
         {session.notes.length === 0 ? (
           <Empty>No notes on this session.</Empty>
         ) : (
-          <Lines>
-            {session.notes.map((line, index) => (
-              <Line key={`${line.cp}-${index}`} cp={line.cp}>
-                <span className="mr-2 inline-flex">
-                  <Badge variant={line.type === "blocker" ? "destructive" : "accent"}>
-                    {line.type}
-                  </Badge>
-                </span>
-                {line.text}
-                {line.reason ? (
-                  <span className="mt-1 block text-xs text-muted-foreground">{line.reason}</span>
-                ) : null}
-              </Line>
-            ))}
-          </Lines>
+          <div className="flex flex-col gap-3">
+            {humanNotes.length === 0 ? (
+              <Empty>Nothing here needs a person.</Empty>
+            ) : (
+              <Lines>
+                {humanNotes.map((line, index) => (
+                  <Note key={`${line.cp}-${index}`} line={line} />
+                ))}
+              </Lines>
+            )}
+            {agentNotes.length > 0 ? <ForAgents notes={agentNotes} /> : null}
+          </div>
         )}
       </Section>
+
+      {memory.length > 0 ? (
+        <Section title="Memory">
+          <p className="mb-2 text-xs text-muted-foreground">
+            Facts this session committed to a memory file.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {memory.map((entry, index) => (
+              <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                <span className="min-w-0">{entry.text}</span>
+                {entry.file ? (
+                  <Badge variant="outline" className="font-mono">
+                    {entry.file}
+                  </Badge>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
 
       {session.unparsed.length > 0 ? (
         <Section title="Unparsed">
@@ -170,6 +213,147 @@ function SessionBody({ session }: { session: ParsedSession }) {
       ) : null}
 
       <ProvenancePanel session={session} />
+
+      <DoneDrawer
+        line={opened}
+        checkpointAt={opened ? frontmatter.checkpoints.find((c) => c.n === opened.cp)?.at : undefined}
+        onClose={() => setOpenDone(null)}
+      />
+    </div>
+  );
+}
+
+/**
+ * The side drawer behind a Done item: everything the gist leaves out. Radix's dialog underneath,
+ * so Escape closes it, focus is trapped while open and returns to the item that opened it.
+ *
+ * `line` is null when closed; the sheet stays mounted so the close animation has something to
+ * animate and the trigger's focus has somewhere to return to.
+ */
+function DoneDrawer({
+  line,
+  checkpointAt,
+  onClose,
+}: {
+  line: DoneLine | null;
+  checkpointAt: string | undefined;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet open={line !== null} onOpenChange={(open) => (open ? undefined : onClose())}>
+      <SheetContent side="right" className="overflow-y-auto sm:max-w-md">
+        {line ? (
+          <>
+            <SheetHeader>
+              <SheetTitle className="text-base leading-snug">{line.text}</SheetTitle>
+              <SheetDescription className="flex flex-wrap gap-x-2 font-mono text-xs">
+                <span>{cpMarker(line.cp)}</span>
+                {checkpointAt ? <span>{formatInstant(checkpointAt)}</span> : null}
+              </SheetDescription>
+            </SheetHeader>
+            <dl className="flex flex-col gap-3 text-sm">
+              <Field label="Detail">
+                {line.detail ? (
+                  <span>{line.detail}</span>
+                ) : (
+                  <span className="text-muted-foreground">No detail recorded.</span>
+                )}
+              </Field>
+              <Field label="Commit">
+                {line.commit ? (
+                  <span className="font-mono">{line.commit}</span>
+                ) : (
+                  <span className="text-muted-foreground">None</span>
+                )}
+              </Field>
+              <Field label="Files">
+                {line.files?.length ? (
+                  <ul className="flex flex-col gap-1">
+                    {line.files.map((file) => (
+                      <li key={file} className="break-all font-mono text-xs">
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-muted-foreground">None</span>
+                )}
+              </Field>
+              <Field label="Verified">
+                {line.verified ? (
+                  <Badge variant={verifiedVariant(line.verified)}>{line.verified}</Badge>
+                ) : (
+                  <span className="text-muted-foreground">Not stated</span>
+                )}
+              </Field>
+            </dl>
+            {/*
+              Escape and the overlay both close it, but neither is visible; at 375 px the overlay
+              is a 75 px strip, so the drawer needs a control a thumb can find.
+            */}
+            <SheetClose asChild>
+              <Button variant="outline" className="w-fit">
+                Close
+              </Button>
+            </SheetClose>
+          </>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function verifiedVariant(verified: Verified): "accent" | "destructive" | "outline" {
+  if (verified === "tests-passed") return "accent";
+  if (verified === "tests-failed") return "destructive";
+  return "outline";
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
+  );
+}
+
+function Note({ line }: { line: NoteLine }) {
+  return (
+    <Line cp={line.cp}>
+      <span className="mr-2 inline-flex">
+        <Badge variant={line.type === "blocker" ? "destructive" : "accent"}>{line.type}</Badge>
+      </span>
+      {line.text}
+      {line.reason ? <span className="mt-1 block text-xs text-muted-foreground">{line.reason}</span> : null}
+    </Line>
+  );
+}
+
+/**
+ * Discovery notes, folded by default. A button with `aria-expanded` rather than `<details>`, so
+ * the folded content is genuinely absent (not merely unrendered by the browser) and the label
+ * carries the count either way.
+ */
+function ForAgents({ notes }: { notes: NoteLine[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="w-fit rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span aria-hidden="true">{open ? "▾" : "▸"}</span> For agents ({notes.length})
+      </button>
+      {open ? (
+        <Lines>
+          {notes.map((line, index) => (
+            <Note key={`${line.cp}-${index}`} line={line} />
+          ))}
+        </Lines>
+      ) : null}
     </div>
   );
 }

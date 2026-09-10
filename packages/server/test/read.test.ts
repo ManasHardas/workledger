@@ -49,7 +49,7 @@ describe("GET /api/sessions", () => {
     const session = body.find((s) => s.remaining.length > 0);
     expect(session).toBeDefined();
     expect(Object.keys(session!).sort()).toEqual(
-      ["done", "frontmatter", "goal", "notes", "remaining", "unparsed", "startedIn", "about"].sort(),
+      ["done", "frontmatter", "goal", "notes", "memory", "remaining", "unparsed", "startedIn", "about"].sort(),
     );
     expect(typeof session!.goal).toBe("string");
     expect(session!.frontmatter.schema_version).toBe(1);

@@ -12,10 +12,15 @@ import type { BacklogItem, NoteType, SessionFrontmatter, Verified } from "@workl
 import type { ParsedItem } from "@workledger/core/render/backlog";
 import type { ParsedSession as CoreParsedSession } from "@workledger/core/render/session";
 
-/** A `## Done` line on the wire. */
+/**
+ * A `## Done` line on the wire. `text` is the gist a human reads; `detail` the specifics for
+ * agents, off the indented continuation (P8 amendment 11). `detail` is absent on a line written
+ * before the amendment, which carried its evidence inline and no `detail` at all.
+ */
 export interface Line {
   cp: number;
   text: string;
+  detail?: string;
   files?: string[];
   commit?: string;
   verified?: Verified;
@@ -40,6 +45,13 @@ export interface NoteLine {
   resolved?: boolean;
 }
 
+/** A `## Memory` line on the wire: one fact the session saved to a memory file (amendment 11). */
+export interface MemoryLine {
+  cp: number;
+  text: string;
+  file?: string;
+}
+
 /** A body line that did not match its section's form, kept so the UI can flag a drifted file. */
 export interface UnparsedLine {
   section: string;
@@ -53,6 +65,8 @@ export interface SessionView {
   done: Line[];
   remaining: RemainingLine[];
   notes: NoteLine[];
+  /** `## Memory`; `[]` for a file written before amendment 11, which has no such section. */
+  memory: MemoryLine[];
   unparsed: UnparsedLine[];
   /**
    * Where the harness session was started — the frontmatter's `started_in` (P8 amendment 10),
@@ -120,6 +134,7 @@ export function toSessionView(parsed: CoreParsedSession): SessionView {
     done: parsed.done.map((line) => ({
       cp: line.cp,
       text: line.text,
+      ...(line.detail === undefined ? {} : { detail: line.detail }),
       files: line.files,
       ...(line.commit === undefined ? {} : { commit: line.commit }),
       ...(line.verified === undefined ? {} : { verified: line.verified }),
@@ -144,6 +159,11 @@ export function toSessionView(parsed: CoreParsedSession): SessionView {
         resolved: resolved.some((ref) => ref.cp === line.cp && ref.index === index),
       };
     }),
+    memory: parsed.memory.map((line) => ({
+      cp: line.cp,
+      text: line.text,
+      ...(line.file === undefined ? {} : { file: line.file }),
+    })),
     unparsed: parsed.unparsed.map((line) => ({ section: line.section, line: line.line })),
     startedIn: parsed.frontmatter.started_in ?? null,
     about: parsed.frontmatter.about ?? [],

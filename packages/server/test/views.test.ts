@@ -115,3 +115,64 @@ describe("error shape", () => {
     expect(errorBody("just a string").body.error.message).toBe("just a string");
   });
 });
+
+/**
+ * P8 amendment 11: a Done entry's specifics live on an indented continuation and `## Memory` is
+ * the fifth section. Core parses both (#122); these assert the wire projection carries them, so
+ * the session view's drawer and Memory section have something to show on real data.
+ */
+describe("amendment 11 — done detail and memory reach the wire", () => {
+  /** Append a checkpoint-3 Done entry with a continuation and a `## Memory` section. */
+  function withGistAndMemory(): void {
+    const file = path.join(repo.sessions, `${SESSION}.md`);
+    const text = readFileSync(file, "utf8");
+    writeFileSync(
+      file,
+      `${text}\n## Memory\n- [cp 1] gh needs the ManasHardas token prefix file: ~/.claude/MEMORY.md\n` +
+        `- [cp 1] Never run a worktree build against the real ~/.workledger\n`,
+      "utf8",
+    );
+  }
+
+  it("carries `detail` on a Done line and the `memory` array onto `SessionView`", async () => {
+    const file = path.join(repo.sessions, `${SESSION}.md`);
+    const text = readFileSync(file, "utf8").replace(
+      "## Remaining",
+      "- [cp 1] Buyers can now check out from the cart on their phone\n" +
+        "  detail: Checkout control is the link itself · commit: a1b2c3d · files: src/cart/checkout.ts · verified: tests-passed\n" +
+        "\n## Remaining",
+    );
+    writeFileSync(file, text, "utf8");
+    withGistAndMemory();
+
+    const server = appFor(repo);
+    try {
+      const session = (await (await server.app.request(`/api/sessions/${SESSION}`)).json()) as SessionView;
+
+      const gist = session.done.find((line) => line.text === "Buyers can now check out from the cart on their phone");
+      expect(gist, "the gist line reached the wire").toBeDefined();
+      expect(gist!.detail).toBe("Checkout control is the link itself");
+      expect(gist!.commit).toBe("a1b2c3d");
+      expect(gist!.files).toEqual(["src/cart/checkout.ts"]);
+      expect(gist!.verified).toBe("tests-passed");
+
+      expect(session.memory).toEqual([
+        { cp: 1, text: "gh needs the ManasHardas token prefix", file: "~/.claude/MEMORY.md" },
+        { cp: 1, text: "Never run a worktree build against the real ~/.workledger" },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("gives a pre-amendment file no memory and no detail, rather than undefined", async () => {
+    const server = appFor(repo);
+    try {
+      const session = (await (await server.app.request(`/api/sessions/${SESSION}`)).json()) as SessionView;
+      expect(session.memory).toEqual([]);
+      expect(session.done.every((line) => line.detail === undefined)).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+});

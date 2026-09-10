@@ -8,10 +8,11 @@ timestamps ISO 8601 UTC. Errors: `{ "error": { "code": string, "message": string
 ## Read models
 
 ```ts
-type Line          = { cp: number; text: string; files?: string[]; commit?: string; verified?: "tests-passed"|"tests-failed"|"not-verified" };
+type Line          = { cp: number; text: string; detail?: string; files?: string[]; commit?: string; verified?: "tests-passed"|"tests-failed"|"not-verified" };  // detail: the continuation's specifics (P8 amendment 11, 2026-09-10, additive); absent on a pre-amendment line
+type MemoryLine    = { cp: number; text: string; file?: string };  // a `## Memory` line (P8 amendment 11, 2026-09-10, additive)
 type RemainingLine = Line & { ref: string; rel: "new"|"updates"|"closes"; why: string; blocked_by?: string[] };
 type NoteLine      = { cp: number; type: "discovery"|"decision"|"blocker"|"question"; text: string; by?: "human"|"agent"; reason?: string; resolved?: boolean };
-type ParsedSession = { frontmatter: SessionFrontmatter; goal: string|null; done: Line[]; remaining: RemainingLine[]; notes: NoteLine[]; unparsed: { section: string; line: string }[]; startedIn: string|null; about: string[] };  // startedIn/about: the frontmatter's started_in and about (P8 amendment 10, 2026-09-10, additive)
+type ParsedSession = { frontmatter: SessionFrontmatter; goal: string|null; done: Line[]; remaining: RemainingLine[]; notes: NoteLine[]; memory: MemoryLine[]; unparsed: { section: string; line: string }[]; startedIn: string|null; about: string[] };  // startedIn/about: the frontmatter's started_in and about (P8 amendment 10, 2026-09-10, additive); memory: `[]` for a file with no `## Memory` (P8 amendment 11, 2026-09-10, additive)
 type BacklogView   = { frontmatter: BacklogItem; body: string };
 type NoteRef       = NoteLine & { session: string; index: number };  // session ulid; index = position within its checkpoint (amended 2026-09-09)
 type Health        = { cli: string; repo: string; harnesses: DoctorEntry[]; index: { path: string; bytes: number; openSessions: number }; config: { valid: boolean; problems: string[] }; lastHookAt: string|null };

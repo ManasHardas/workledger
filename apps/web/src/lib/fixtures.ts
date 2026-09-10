@@ -31,7 +31,7 @@ const session = (
   id: string,
   goal: string,
   overrides: Partial<ParsedSession["frontmatter"]>,
-  body: Pick<ParsedSession, "done" | "remaining" | "notes">,
+  body: Pick<ParsedSession, "done" | "remaining" | "notes" | "memory">,
   // Where it started and what it is about (P8 amendment 10); older sessions recorded neither.
   context: Pick<ParsedSession, "startedIn" | "about"> = { startedIn: null, about: [] },
 ): ParsedSession => ({
@@ -71,6 +71,7 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
         {
           cp: 1,
           text: "Debounced the .workledger watcher at 100 ms",
+          detail: "chokidar awaitWriteFinish with stabilityThreshold 100; one change event per checkpoint write",
           files: ["packages/server/src/watch.ts"],
           commit: "9c1f2ab",
           verified: "tests-passed",
@@ -93,6 +94,8 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
           text: "Should a watcher failure fall back to polling silently, or surface in Health?",
         },
       ],
+      // Nothing was committed to a memory file this session, so the view shows no Memory section.
+      memory: [],
     },
   ),
   session(
@@ -104,6 +107,7 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
         {
           cp: 1,
           text: "Froze the LedgerSource interface and the REST surface it maps onto",
+          detail: "Twelve methods, snake_case on the wire, blockedBy renamed blocked_by; goal collapses to one string",
           files: ["docs/contracts/p2/ledger-source.md", "docs/contracts/p2/api.md"],
           commit: "4e77b03",
           verified: "not-verified",
@@ -140,6 +144,16 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
           by: "agent",
           text: "packages/api-client is unmerged, so apps/web cannot import the real source yet",
         },
+        {
+          cp: 2,
+          type: "discovery",
+          by: "agent",
+          text: "vitest resolves @workledger/core to src/ through an alias, so a stale dist never masks a red",
+        },
+      ],
+      memory: [
+        { cp: 2, text: "workledger pushes to origin via the personal SSH alias without asking", file: "MEMORY.md" },
+        { cp: 2, text: "Never run a worktree build against the real ~/.workledger" },
       ],
     },
     // Started in the workspace folder above the repos, about this repo and a sibling.
