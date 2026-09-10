@@ -219,3 +219,19 @@ render.
 `POST /api/onboarding/init` accepts `repos: []` when `workspaces` is non-empty — Home's "Install
 hooks" enables a folder whose repos are already tracked. An empty `repos` with no workspace named
 is still a 400.
+
+## Amendment 13 (2026-09-10) — commit and file links, and the shell
+
+`GET /api/repos` and the session view expose the repo's web base when its `origin` remote resolves
+to a known host: `remote: { host: "github"|"gitlab"|"bitbucket"|"other", webBase, commitUrl(sha),
+fileUrl(path, sha) }` derived from the remote URL in either ssh or https form, with credentials and
+`.git` stripped; a repo with no remote, or an unrecognised host, reports `remote: null` and the UI
+shows the identifier with a copy control and no link. A commit id in the session panel links to
+`commitUrl`; a file path links to `fileUrl` at that item's commit when one is recorded, else at the
+default branch. Independently, `config.yaml` gains `editor: "vscode" | "cursor" | "none"` (default
+`vscode`): when set, each file also offers an open-in-editor control using that scheme and the
+absolute local path. Links open in a new tab with `rel="noreferrer noopener"`; no request is ever
+made to the remote host by the daemon itself.
+
+UI shape follows `docs/design/direction.md`: left nav, middle pane, and a floating right panel
+that is a bottom sheet under 768 px. The panel is non-modal on desktop and modal on mobile.
