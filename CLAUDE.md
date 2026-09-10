@@ -26,6 +26,7 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
   PR's body (`Closes #10` on PR #22), so its issue had to be closed by hand.
 - **Never remove a worktree from inside it.** Merge and clean up from the repo root.
 - **`workledger onboard`/init must never touch a repo the operator did not select; the wizard and the CLI enforce this (P8).**
+- **Agents never run a build against the operator's real `~/.workledger`.** Every test, review drive, and smoke uses `WORKLEDGER_HOME=$(mktemp -d)/home`; a worktree build that migrates the real index leaves it unreadable by main (2026-09-10: a pre-rebase migration made `serve` fail with "table workspaces already exists"). Only the orchestrator restarts the daemon on port 7419, from the main checkout's build.
 
 ## Orchestration (agentwaves)
 
