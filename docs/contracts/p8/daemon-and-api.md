@@ -46,6 +46,14 @@ job is not this repo's or has no log. `LedgerSource` gains `jobLog(id)`; the Job
 collapsed "Log" section. `POST /api/jobs/:id/retry` on a `repair` job also hands the re-queued job to
 the daemon's resume runner, so a retry from the Jobs view runs rather than waiting for a CLI drain.
 
+Amendment 6 (2026-09-10, #99) — shutdown grace period. On `SIGTERM`/`SIGINT` the daemon stops its
+runners claiming, `SIGKILL`s the process group of every in-flight resume, waits up to 1.5 s for those
+jobs to record `failed`, removes `serve.json`, closes the listener *and every open connection* (an
+`/api/events` stream never closes on its own), stops the watchers, and exits — within **3 s** of the
+signal at most, by a hard exit if anything else still holds the loop. Rows still `queued` stay queued.
+`workledger stop` waits **5 s** for the pid after `SIGTERM`, then sends `SIGKILL`, waits 1 s more,
+removes `serve.json` and exits 0; it exits 1 only when the pid survives `SIGKILL`.
+
 ## Onboarding endpoints
 
 ```yaml
