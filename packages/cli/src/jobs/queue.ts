@@ -36,6 +36,11 @@ export interface JobRow {
   error: string | null;
   cost_estimate_usd: number | null;
   log_path: string | null;
+  /**
+   * Who queued the row: `onboarding` for the wizard's backfill
+   * (docs/contracts/p8/daemon-and-api.md §Onboarding endpoints), `null` for every P3 command.
+   */
+  source: string | null;
 }
 
 /**
@@ -64,11 +69,13 @@ export interface EnqueueInput {
   /** Mints the job id; a ULID, so `ORDER BY id` is creation order. */
   newId: () => string;
   now: Date;
+  /** Recorded as {@link JobRow.source}; absent for the P3 commands. */
+  source?: string | undefined;
 }
 
 const COLUMNS =
   "id, kind, session_ulid, repo_path, status, attempts, created_at, started_at, " +
-  "finished_at, heartbeat_at, error, cost_estimate_usd, log_path";
+  "finished_at, heartbeat_at, error, cost_estimate_usd, log_path, source";
 
 /** Every job for one repo, newest first (cli.md: "list jobs for the repo (newest first)"). */
 export function listJobs(db: IndexDb, repoPath: string): JobRow[] {
@@ -126,12 +133,13 @@ export function enqueueJob(db: IndexDb, input: EnqueueInput): { job: JobRow; cre
       error: null,
       cost_estimate_usd: null,
       log_path: null,
+      source: input.source ?? null,
     };
     db.connection
       .prepare<JobRow>(
         `INSERT INTO jobs (${COLUMNS}) VALUES (@id, @kind, @session_ulid, @repo_path, @status, ` +
           "@attempts, @created_at, @started_at, @finished_at, @heartbeat_at, @error, " +
-          "@cost_estimate_usd, @log_path)",
+          "@cost_estimate_usd, @log_path, @source)",
       )
       .run(row);
     return { job: row, created: true };
