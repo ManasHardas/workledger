@@ -20,7 +20,7 @@ import { RESUME_QUESTION, explainRunFailure } from "../src/features/onboarding/s
 import { jobsOfRun, progressByRepo } from "../src/features/onboarding/use-backfill-progress.js";
 import { formatLocalTime } from "../src/features/jobs/format.js";
 import { OnboardingWizard, reachableStep } from "../src/features/onboarding/wizard.js";
-import { FIXTURE_DISCOVER, FIXTURE_HISTORY, FIXTURE_REPOS, FIXTURE_TRUST_STEP } from "../src/lib/fixtures.js";
+import { FIXTURE_DISCOVER, FIXTURE_HISTORY, FIXTURE_REPOS, FIXTURE_TRUST_STEP, FIXTURE_WORKSPACE } from "../src/lib/fixtures.js";
 import { createSource } from "../src/lib/ledger-source.js";
 import { ONBOARDING_HREF } from "../src/lib/router.js";
 import { MachineProvider } from "../src/lib/source-context.js";
@@ -148,7 +148,8 @@ describe("wizard state in the hash", () => {
       step: "history" as const,
       roots: ["/Users/me/code", "/srv/a,b"],
       repos: [DASHERO, KUBERA],
-      since: "30d" as const,
+      workspaces: [`${FIXTURE_DISCOVER.roots[0]!}/dome_workspace`],
+      since: "all" as const,
       method: "resume" as const,
     };
     expect(parseWizardHash(wizardHref(full))).toEqual(full);
@@ -318,10 +319,66 @@ describe("projects step", () => {
   });
 });
 
+describe("workspaces on the projects step (amendment 8)", () => {
+  const SHOPIFY = FIXTURE_WORKSPACE.repos[0]!;
+  const label = `dome_workspace: install hooks here so sessions started from this folder are recorded in the repos they touch`;
+
+  it("offers a start folder only once one of its repos is selected, pre-checked, and sends it to init", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source);
+    await screen.findByRole("heading", { name: "Choose the repos to track" });
+    expect(screen.queryByRole("group", { name: "Sessions were also started from these folders" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "card-shopify_store" }));
+    const group = await screen.findByRole("group", { name: "Sessions were also started from these folders" });
+    const box = within(group).getByRole("checkbox", { name: label }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(within(group).getByText(FIXTURE_WORKSPACE.path)).toBeDefined();
+    expect(within(group).getByText(/card-shopify_store, card-bart_schedules/)).toBeDefined();
+
+    // Unticking it is remembered in the hash and leaves it out of the request.
+    fireEvent.click(box);
+    await waitFor(() => expect(state().workspaces).toEqual([]));
+    expect((within(group).getByRole("checkbox", { name: label }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(within(group).getByRole("checkbox", { name: label }));
+    await waitFor(() => expect(state().workspaces).toEqual([FIXTURE_WORKSPACE.path]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Repos enabled" });
+    expect(calls.at(-1)).toBe(`initRepos:[{"repos":${JSON.stringify([DASHERO, KUBERA, SHOPIFY])},"workspaces":${JSON.stringify([FIXTURE_WORKSPACE.path])}}]`);
+    const results = screen.getByRole("list", { name: "Workspace results" });
+    expect(within(results).getByText("dome_workspace")).toBeDefined();
+    expect(within(results).getByText("hooks installed")).toBeDefined();
+    expect(within(results).getByText(".claude/settings.json")).toBeDefined();
+    // The workspace is not a repo: Next carries the repos only.
+    fireEvent.click(screen.getByRole("button", { name: "Next: choose history" }));
+    await waitFor(() => expect(state().step).toBe("history"));
+    expect(state().repos).toEqual([DASHERO, KUBERA, SHOPIFY]);
+  });
+
+  it("shows a folder whose hooks are already installed ticked and locked, and sends nothing for it", async () => {
+    const { source, calls } = stubSource({
+      discover: async () => ({ ...FIXTURE_DISCOVER, workspaces: [{ ...FIXTURE_WORKSPACE, hooksInstalled: true }] }),
+    });
+    renderWizard(source);
+    await screen.findByRole("heading", { name: "Choose the repos to track" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "card-shopify_store" }));
+    const group = await screen.findByRole("group", { name: "Sessions were also started from these folders" });
+    const box = within(group).getByRole("checkbox", { name: label }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(true);
+    expect(within(group).getByText("hooks installed")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Repos enabled" });
+    expect(calls.at(-1)).toBe(`initRepos:[{"repos":${JSON.stringify([DASHERO, KUBERA, SHOPIFY])}}]`);
+    expect(screen.queryByRole("list", { name: "Workspace results" })).toBeNull();
+  });
+});
+
 describe("history step", () => {
   const AT_HISTORY = wizardHref({ ...INITIAL_STATE, step: "history", repos: [DASHERO, KUBERA] });
 
-  it("resumes from the hash and shows four cards with counts and sizes", async () => {
+  it("resumes from the hash and shows five cards with counts and sizes", async () => {
     const { source, calls } = stubSource();
     renderWizard(source, AT_HISTORY);
     await screen.findByRole("heading", { name: "How much history to backfill" });
@@ -333,8 +390,35 @@ describe("history step", () => {
       `Last 7 days${String(FIXTURE_HISTORY.windows["7d"].sessions)} sessions3.4 MB of transcripts`,
       `Last 30 days${String(FIXTURE_HISTORY.windows["30d"].sessions)} sessions11.8 MB of transcripts`,
       `Last 90 days${String(FIXTURE_HISTORY.windows["90d"].sessions)} sessions26.1 MB of transcripts`,
+      `All history${String(FIXTURE_HISTORY.windows.all!.sessions)} sessions27.9 MB of transcripts`,
       "No backfillStart fresh — only sessions from now on are recorded.",
     ]);
+  });
+
+  it("All (amendment 9) sends since: all to plan and run; a daemon without it shows no All card", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source, AT_HISTORY);
+    await screen.findByRole("heading", { name: "How much history to backfill" });
+    fireEvent.click(screen.getByRole("button", { name: /All history/ }));
+    await waitFor(() => expect(state().since).toBe("all"));
+    await screen.findByRole("heading", { name: "How should past sessions be digested?" });
+    fireEvent.click(screen.getByRole("button", { name: "Yes, replay my sessions" }));
+    await screen.findByRole("heading", { name: "Resume in your harness" });
+    expect(calls).toContain(`plan:[{"repos":${JSON.stringify([DASHERO, KUBERA])},"since":"all","method":"resume"}]`);
+    fireEvent.click(screen.getByRole("button", { name: "Start backfill (27 sessions)" }));
+    await waitFor(() =>
+      expect(calls).toContain(`run:[{"repos":${JSON.stringify([DASHERO, KUBERA])},"since":"all","method":"resume","consent":true}]`),
+    );
+    cleanup();
+
+    const older = stubSource({
+      history: async () => ({ windows: { "7d": FIXTURE_HISTORY.windows["7d"], "30d": FIXTURE_HISTORY.windows["30d"], "90d": FIXTURE_HISTORY.windows["90d"] } } as never),
+    });
+    renderWizard(older.source, AT_HISTORY);
+    await screen.findByRole("heading", { name: "How much history to backfill" });
+    const group = screen.getByRole("group", { name: "Backfill window" });
+    expect(within(group).getAllByRole("button")).toHaveLength(4);
+    expect(within(group).queryByRole("button", { name: /All history/ })).toBeNull();
   });
 
   it("a window goes to the method step with a history entry; none goes straight to done", async () => {

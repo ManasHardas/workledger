@@ -14,10 +14,11 @@ const LIST_SEP = "\u0000";
 /**
  * Step 2 — how far back to read (plans/feature-p8-onboarding-home.md step 3).
  *
- * Four cards from `GET /api/onboarding/history`: the sessions and transcript bytes in each
- * window across the repos just enabled, and "none". Choosing one *is* the answer, so the cards
- * are the buttons and there is no separate Continue. `none` skips the method step: there is
- * nothing to choose a method for.
+ * Five cards from `GET /api/onboarding/history`: the sessions and transcript bytes in each
+ * window across the repos just enabled — 7, 30 and 90 days, and every transcript regardless of
+ * age (amendment 9) — and "none". Choosing one *is* the answer, so the cards are the buttons and
+ * there is no separate Continue. `none` skips the method step: there is nothing to choose a
+ * method for. A window the daemon did not count (an older daemon without `all`) gets no card.
  */
 export function HistoryStep({ state, source }: { state: WizardState; source: AppSource }) {
   const repos = state.repos ?? [];
@@ -43,7 +44,7 @@ export function HistoryStep({ state, source }: { state: WizardState; source: App
       <AsyncPanel result={history} empty="">
         {(result) => (
           <div role="group" aria-label="Backfill window" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {COUNTED_WINDOWS.map((window) => (
+            {COUNTED_WINDOWS.filter((window) => result.windows[window] !== undefined).map((window) => (
               <WindowCard key={window} window={window} result={result} onChoose={choose} />
             ))}
             <button
@@ -77,7 +78,9 @@ function WindowCard({
   result: HistoryResult;
   onChoose: (since: OnboardingWindow) => void;
 }) {
-  const { sessions, bytes } = result.windows[window];
+  const counted = result.windows[window];
+  if (counted === undefined) return null;
+  const { sessions, bytes } = counted;
   return (
     <button
       type="button"

@@ -103,6 +103,7 @@ export type {
   ScanSummary,
   SessionQuery,
   Turn,
+  WorkspaceCandidate,
 } from "@workledger/api-client";
 
 /**
@@ -220,7 +221,10 @@ class FixtureSource implements LedgerSource, MachineSource, OnboardingSource {
   }
 
   async initRepos(input: InitInput): Promise<InitResult> {
-    return { results: input.repos.map(fixtureInitResult) };
+    return {
+      results: input.repos.map(fixtureInitResult),
+      ...(input.workspaces === undefined ? {} : { workspaces: input.workspaces.map(fixtureInitResult) }),
+    };
   }
 
   async plan(input: PlanInput): Promise<PlanResult> {

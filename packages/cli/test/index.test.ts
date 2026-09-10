@@ -61,6 +61,9 @@ const SESSION_COLUMNS = [
   "updated_at",
   "pending_trigger",
   "cwd",
+  "workspace",
+  "scan_offset",
+  "scan_counts",
 ];
 
 /** Column list of `checkpoints`, verbatim from the frozen DDL, in declaration order. */
@@ -180,20 +183,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0006_session_repo_key.sql` is the latest.
-    expect(row?.value).toBe("6");
+    // Bumped by every migration that lands; `0007_workspaces.sql` is the latest.
+    expect(row?.value).toBe("7");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0008_eighth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0007_seventh.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0009_ninth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0008_eighth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0007_seventh.sql", "0008_eighth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(8);
+    expect(migrate(db.connection, dir)).toEqual(["0008_eighth.sql", "0009_ninth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(9);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -216,7 +219,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql", "0006_session_repo_key.sql", "0007_workspaces.sql"]);
   });
 });
 
@@ -301,9 +304,10 @@ describe("repos (0003_repos.sql)", () => {
   it("is seeded from the sessions an older index already had", () => {
     const db = open();
     // Roll the schema back to before the table existed, re-insert the way 0002 left things,
-    // and let `openIndex` apply 0003 (and 0004–0006, whose columns and tables have to go too) over it.
+    // and let `openIndex` apply 0003 (and 0004–0007, whose columns and tables have to go too) over it.
     db.connection.exec("DROP TABLE repos");
     db.connection.exec("DROP TABLE transcript_touches");
+    db.connection.exec("DROP TABLE workspaces");
     db.connection.exec("DROP INDEX jobs_by_source_status");
     db.connection.exec("ALTER TABLE jobs DROP COLUMN source");
     db.connection.exec("ALTER TABLE jobs DROP COLUMN error_code");
@@ -349,8 +353,9 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
 
   it("migrates an index from before the wider key, keeping every row", () => {
     const db = open();
-    // Roll the schema back to 0005's table: the P1 key, no `cwd`, no touch cache.
+    // Roll the schema back to 0005's table: the P1 key, no `cwd`, no touch cache, no workspaces.
     db.connection.exec("DROP TABLE transcript_touches");
+    db.connection.exec("DROP TABLE workspaces");
     db.connection.exec(
       "CREATE TABLE sessions_v5 (ulid TEXT PRIMARY KEY, repo_path TEXT NOT NULL, harness TEXT NOT NULL, " +
         "harness_session_id TEXT NOT NULL, transcript_path TEXT, status TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0, " +
@@ -372,7 +377,7 @@ describe("sessions keyed per repo (0006_session_repo_key.sql)", () => {
     opened.pop();
 
     const migrated = open();
-    expect(schemaVersion(migrated.connection)).toBe(6);
+    expect(schemaVersion(migrated.connection)).toBe(7);
     expect(columnsOf(migrated, "sessions")).toEqual(SESSION_COLUMNS);
     expect(migrated.getSessionByUlid("01JQ8ZK4T0000000000000000A")).toMatchObject({
       repo_path: "/tmp/old",

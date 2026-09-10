@@ -63,6 +63,9 @@ class FakeOnboardingOps implements OnboardingOps {
   init = async (input: InitInput): Promise<InitResult> =>
     this.#record("init", [input], {
       results: input.repos.map((path) => ({ path, ok: !path.endsWith("/bad"), hooksWritten: [".claude/settings.json"], trustSteps: [] })),
+      ...(input.workspaces === undefined
+        ? {}
+        : { workspaces: input.workspaces.map((path) => ({ path, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] })) }),
     });
   plan = async (input: PlanInput): Promise<PlanResult> =>
     this.#record("plan", [input], { sessions: 3, estimate: { seconds: 68 } });
@@ -234,6 +237,19 @@ describe("POST /api/onboarding/init", () => {
     } finally {
       machine.close();
     }
+  });
+
+  it("forwards workspaces (amendment 8) and 400s one that is not a directory", async () => {
+    const { status, body } = await post("/api/onboarding/init", { repos: [repoA], workspaces: [dir] });
+    expect(status).toBe(200);
+    expect((body as InitResult).workspaces).toEqual([{ path: dir, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] }]);
+    expect(ops.calls).toEqual([{ op: "init", args: [{ repos: [repoA], workspaces: [dir] }] }]);
+
+    const missing = await post("/api/onboarding/init", { repos: [repoA], workspaces: [path.join(dir, "nope")] });
+    expect(missing.status).toBe(400);
+    expect(code(missing.body)).toBe("invalid-root");
+    expect((await post("/api/onboarding/init", { repos: [repoA], workspaces: "x" })).status).toBe(400);
+    expect(ops.calls).toHaveLength(1);
   });
 
   it("400s an empty list, a non-string path, an unknown field and bad harnesses", async () => {

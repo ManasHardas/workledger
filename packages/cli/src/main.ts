@@ -112,6 +112,7 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .option("--yes", "skip the confirmation prompt before editing .claude/settings.json")
     .option("--no-backfill", "do not offer to backfill past sessions")
     .option("--teammate", "onboard onto a repo that is already enabled; writes no hook files")
+    .option("--workspace <dir>", "write the hook files into a non-git folder that holds tracked repos")
     .option(
       "--harness <name>",
       "also write this harness's hook file even if it is not detected (repeatable)",
@@ -244,6 +245,7 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .option("--json", "emit the six onboarding API objects as one JSON document")
     .option("--roots <dirs>", "comma-separated directories to search for repos (default: ~/Projects)")
     .option("--select <paths>", "comma-separated repos to enable (default: every repo with agent sessions)")
+    .option("--workspaces <dirs>", "comma-separated non-git folders holding selected repos to write hook files into")
     .option("--since <window>", "backfill window: 7d, 30d, 90d, all or none")
     .option("--method <method>", "how to digest past sessions: resume, extract or none")
     .option("--yes", "take every default and consent to the backfill")

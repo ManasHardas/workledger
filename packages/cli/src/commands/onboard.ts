@@ -47,6 +47,8 @@ export interface OnboardOptions {
   roots?: string;
   /** Comma-separated repo paths to enable; default every `suggested` `known` repo. */
   select?: string;
+  /** Comma-separated non-git folders holding selected repos, to run `init --workspace` in. */
+  workspaces?: string;
   since?: string;
   method?: string;
   /** Answer every prompt with its default and consent to the backfill. */
@@ -244,8 +246,9 @@ async function onboard(options: OnboardOptions, io: OnboardIo): Promise<number> 
   if (since === undefined) return EXIT_USAGE;
 
   // 4. Init.
-  const init = await initRepos({ repos }, io);
-  for (const result of init.results) {
+  const workspaces = csv(options.workspaces);
+  const init = await initRepos({ repos, ...(workspaces.length === 0 ? {} : { workspaces }) }, io);
+  for (const result of [...init.results, ...(init.workspaces ?? [])]) {
     say(
       result.ok
         ? `  ${result.path}: enabled${result.hooksWritten.length === 0 ? " (already)" : `; wrote ${result.hooksWritten.join(", ")}`}`

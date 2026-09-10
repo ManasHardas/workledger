@@ -427,8 +427,17 @@ export interface DoctorReport {
    * share one index, and before P5 `doctor` could only see the one it was run in.
    */
   repos: RepoRow[];
+  /** One entry per workspace `init --workspace` recorded (P8 amendment 8), with its hook files. */
+  workspaces: WorkspaceHealth[];
   checks: Check[];
   status: "ok" | "warnings" | "broken";
+}
+
+/** One `workspaces` row and whether each hook file in it still carries the hook. */
+export interface WorkspaceHealth {
+  path: string;
+  /** By hook file path (`.claude/settings.json`, …): `true` when it carries `workledger hook`. */
+  hooks: Record<string, boolean>;
 }
 
 /** One `repos` row. */
@@ -570,6 +579,18 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
       `${repo.open_sessions} open session(s), last hook ${repo.last_hook ?? "never"}`,
     );
   }
+  // Workspaces the same way: informational rows, one per folder `init --workspace` recorded. A
+  // folder whose Claude Code hook file has lost the hook is warned about, because sessions
+  // started there are silently unrecorded until it is restored.
+  const workspaces = await readWorkspaces(io);
+  for (const workspace of workspaces) {
+    const installed = Object.entries(workspace.hooks).filter(([, ok]) => ok).map(([file]) => file);
+    add(
+      `workspace ${workspace.path}`,
+      workspace.hooks[SETTINGS_PATH] === true ? "ok" : "warn",
+      installed.length === 0 ? "no hook file carries the hook; re-run `workledger init --workspace`" : `hooks in ${installed.join(", ")}`,
+    );
+  }
 
   const status = checks.some((check) => check.status === "broken")
     ? "broken"
@@ -588,9 +609,36 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
     config,
     index,
     repos,
+    workspaces,
     checks,
     status,
   };
+}
+
+/** Every workspace the index knows that still exists, with its hook files' state. */
+async function readWorkspaces(io: HealthIo): Promise<WorkspaceHealth[]> {
+  const { openIndex } = await import("../index/db.js");
+  const { workspaceHookStatus } = await import("./init-workspace.js");
+  const home = io.env["WORKLEDGER_HOME"]?.trim();
+  try {
+    const db = openIndex(home ? { home } : {});
+    try {
+      return db
+        .listWorkspaces()
+        .filter((row) => {
+          try {
+            return statSync(row.path).isDirectory();
+          } catch {
+            return false;
+          }
+        })
+        .map((row) => ({ path: row.path, hooks: workspaceHookStatus(row.path) }));
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
 }
 
 /**

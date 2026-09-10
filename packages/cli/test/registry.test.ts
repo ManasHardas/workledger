@@ -43,7 +43,7 @@ const OPTIONS: Record<string, string[]> = {
   stop: [],
   // `--harness` on both: `init` writes that harness's hook file, `hook` reads that harness's
   // wire format (docs/contracts/p4/hooks-codex.md, hooks-cursor.md).
-  init: ["--repo", "--yes", "--no-backfill", "--teammate", "--harness"],
+  init: ["--repo", "--yes", "--no-backfill", "--teammate", "--workspace", "--harness"],
   hook: ["--harness"],
   checkpoint: ["--session", "--repo", "--payload", "--payload-file", "--dry-run"],
   brief: ["--repo", "--max-tokens"],
@@ -54,7 +54,7 @@ const OPTIONS: Record<string, string[]> = {
   repair: ["--extract", "--yes", "--timeout", "--force"],
   backfill: ["--repo", "--since", "--concurrency", "--dry-run", "--yes", "--extract-fallback"],
   jobs: ["--repo", "--json", "--cancel", "--retry"],
-  onboard: ["--json", "--roots", "--select", "--since", "--method", "--yes"],
+  onboard: ["--json", "--roots", "--select", "--workspaces", "--since", "--method", "--yes"],
   // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
   // is registered here beyond the pass-through argument.
   backlog: [],

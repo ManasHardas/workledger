@@ -99,6 +99,16 @@ export interface SessionRow {
    * names the repo with `--repo` when it differs. `null` reads as "the repo root".
    */
   cwd: string | null;
+  /**
+   * 1 for the row a workspace session opens before any repo is known (`0007_workspaces`): its
+   * `repo_path` is the workspace folder, no ledger file exists for it, and a checkpoint never
+   * lands on it. SQLite has no boolean type; 0 or 1.
+   */
+  workspace: number;
+  /** How far into the transcript the workspace hook's scan has read for this row. */
+  scan_offset: number;
+  /** JSON `{ "<root>": { "refs": n, "writes": n } }` that scan has accumulated, or `null`. */
+  scan_counts: string | null;
 }
 
 /** The columns a caller may supply to `insertSession`; the rest take their DDL defaults. */
@@ -155,6 +165,12 @@ export interface RepoSummary {
   open_sessions: number;
   /** The newest `updated_at` of any of its sessions — when a hook last ran. `null` if none. */
   last_hook: string | null;
+}
+
+/** One `workspaces` row (`0007_workspaces`): a folder `init --workspace` wrote hook files into. */
+export interface WorkspaceRow {
+  path: string;
+  created_at: string;
 }
 
 /** Options for {@link openIndex}. */
@@ -287,6 +303,8 @@ const UPDATABLE_COLUMNS = new Set<keyof SessionRow>([
   "pending_trigger",
   "updated_at",
   "cwd",
+  "scan_offset",
+  "scan_counts",
 ]);
 
 /** A value SQLite can bind directly. */
@@ -308,6 +326,8 @@ export interface IndexDb {
    * has two rows, and a hook or a plan asks for the one belonging to the repo it is working in.
    */
   getSessionByHarnessId(harness: string, harnessSessionId: string, repoPath: string): SessionRow | undefined;
+  /** Every row sharing one harness session id, the workspace row first, then by repo path. */
+  listSessionsByHarnessId(harness: string, harnessSessionId: string): SessionRow[];
   /** Open sessions for one repo, oldest first, which is the order a usage error lists them in. */
   listOpenSessions(repoPath: string): SessionRow[];
   /** Every repo the index knows, by path, with its open-session count and last hook time. */
@@ -317,6 +337,12 @@ export interface IndexDb {
    * its `added_at` and gets a fresh `updated_at`.
    */
   upsertRepo(repoPath: string, now?: string): void;
+  /** Record a workspace folder `init --workspace` enabled (`0007_workspaces`). Idempotent. */
+  upsertWorkspace(workspacePath: string, now?: string): void;
+  /** Every workspace the index knows, by path. */
+  listWorkspaces(): WorkspaceRow[];
+  /** `true` when `workspacePath` is a registered workspace. */
+  isWorkspace(workspacePath: string): boolean;
   /** Insert a session, keeping the `repos` row for its `repo_path` in step. */
   insertSession(session: NewSession): SessionRow;
   /** Partial update by ulid. Returns the stored row, or `undefined` when the ulid is unknown. */
@@ -403,6 +429,9 @@ const SESSION_COLUMNS = [
   "pending_trigger",
   "updated_at",
   "cwd",
+  "workspace",
+  "scan_offset",
+  "scan_counts",
 ] as const satisfies ReadonlyArray<keyof SessionRow>;
 
 /**
@@ -432,6 +461,9 @@ function completeSession(session: NewSession): SessionRow {
     pending_trigger: null,
     cwd: null,
     updated_at: new Date().toISOString(),
+    workspace: 0,
+    scan_offset: 0,
+    scan_counts: null,
     ...given,
   };
 }
@@ -463,8 +495,16 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   const selectByHarness = db.prepare<[string, string, string], SessionRow>(
     "SELECT * FROM sessions WHERE harness = ? AND harness_session_id = ? AND repo_path = ?",
   );
+  const selectAllByHarness = db.prepare<[string, string], SessionRow>(
+    "SELECT * FROM sessions WHERE harness = ? AND harness_session_id = ? ORDER BY workspace DESC, repo_path",
+  );
   const selectOpen = db.prepare<[string], SessionRow>(
     "SELECT * FROM sessions WHERE repo_path = ? AND status = 'open' ORDER BY ulid",
+  );
+  const selectWorkspaces = db.prepare<[], WorkspaceRow>("SELECT path, created_at FROM workspaces ORDER BY path");
+  const selectWorkspace = db.prepare<[string], WorkspaceRow>("SELECT path, created_at FROM workspaces WHERE path = ?");
+  const upsertWorkspaceStmt = db.prepare<[string, string]>(
+    "INSERT INTO workspaces (path, created_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING",
   );
   const selectRepos = db.prepare<[], RepoSummary>(
     "SELECT r.path AS repo_path, r.enabled AS enabled, " +
@@ -568,7 +608,8 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   }
 
   const insertSessionTx = db.transaction((row: SessionRow) => {
-    upsertRepo(row.repo_path, row.updated_at);
+    // A workspace row's `repo_path` is a folder, not a repo: it must not become a `repos` row.
+    if (row.workspace === 0) upsertRepo(row.repo_path, row.updated_at);
     insertSessionStmt.run(row);
   });
 
@@ -580,9 +621,15 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
     getSessionByUlid: (ulid) => selectByUlid.get(ulid),
     getSessionByHarnessId: (harness, harnessSessionId, repoPath) =>
       selectByHarness.get(harness, harnessSessionId, repoPath),
+    listSessionsByHarnessId: (harness, harnessSessionId) => selectAllByHarness.all(harness, harnessSessionId),
     listOpenSessions: (repoPath) => selectOpen.all(repoPath),
     listRepos: () => selectRepos.all(),
     upsertRepo,
+    upsertWorkspace: (workspacePath, now = new Date().toISOString()) => {
+      upsertWorkspaceStmt.run(workspacePath, now);
+    },
+    listWorkspaces: () => selectWorkspaces.all(),
+    isWorkspace: (workspacePath) => selectWorkspace.get(workspacePath) !== undefined,
 
     insertSession(session) {
       const row = completeSession(session);

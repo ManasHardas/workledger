@@ -56,7 +56,7 @@ export interface RepoCandidate {
 
 /**
  * A start directory that is not a repo but holds selected candidates — where `init --workspace`
- * would put hooks (amendment 8). Filled by the workspace-hooks slot of #105.
+ * would put hooks (amendment 8).
  */
 export interface WorkspaceCandidate {
   path: string;
@@ -73,7 +73,7 @@ export interface DiscoverResult {
   found: RepoCandidate[];
   /** The roots that were walked, absolute. */
   roots: string[];
-  /** Start directories holding selected candidates (amendment 8); `[]` until that slot lands. */
+  /** Start directories holding selected candidates (amendment 8). */
   workspaces: WorkspaceCandidate[];
 }
 
@@ -94,6 +94,8 @@ export interface InitInput {
   repos: string[];
   /** Harnesses to enable regardless of detection — `init --harness`. */
   harnesses?: string[] | undefined;
+  /** Non-git folders holding selected repos to run `init --workspace` in (amendment 8). */
+  workspaces?: string[] | undefined;
 }
 
 /** What `init` did in one repo. */
@@ -110,6 +112,8 @@ export interface InitRepoResult {
 /** `POST /api/onboarding/init` response. */
 export interface InitResult {
   results: InitRepoResult[];
+  /** One row per requested workspace, in the same shape; absent when none was requested. */
+  workspaces?: InitRepoResult[];
 }
 
 /** `POST /api/onboarding/plan` body. */

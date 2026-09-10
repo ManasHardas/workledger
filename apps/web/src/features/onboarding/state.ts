@@ -36,11 +36,16 @@ export interface WizardState {
    * box was unticked".
    */
   repos: string[] | undefined;
+  /**
+   * Workspace folders ticked on the projects step (amendment 8). `undefined` until touched, which
+   * is what lets the step pre-check every offered folder.
+   */
+  workspaces: string[] | undefined;
   since: OnboardingWindow | undefined;
   method: OnboardingMethod | undefined;
 }
 
-const WINDOWS: readonly OnboardingWindow[] = ["7d", "30d", "90d", "none"];
+const WINDOWS: readonly OnboardingWindow[] = ["7d", "30d", "90d", "all", "none"];
 const METHODS: readonly OnboardingMethod[] = ["resume", "extract", "none"];
 
 function oneOf<T extends string>(value: string | null, allowed: readonly T[]): T | undefined {
@@ -72,6 +77,7 @@ export const INITIAL_STATE: WizardState = {
   step: "projects",
   roots: [],
   repos: undefined,
+  workspaces: undefined,
   since: undefined,
   method: undefined,
 };
@@ -85,6 +91,7 @@ export function parseWizardHash(hash: string): WizardState {
     step: oneOf(params.get("step"), STEPS) ?? "projects",
     roots: readList(params.get("roots")) ?? [],
     repos: readList(params.get("repos")),
+    workspaces: readList(params.get("workspaces")),
     since: oneOf(params.get("since"), WINDOWS),
     method: oneOf(params.get("method"), METHODS),
   };
@@ -96,6 +103,7 @@ export function wizardHref(state: WizardState): string {
   params.set("step", state.step);
   if (state.roots.length > 0) params.set("roots", writeList(state.roots));
   if (state.repos !== undefined) params.set("repos", writeList(state.repos));
+  if (state.workspaces !== undefined) params.set("workspaces", writeList(state.workspaces));
   if (state.since !== undefined) params.set("since", state.since);
   if (state.method !== undefined) params.set("method", state.method);
   return `${ONBOARDING_HREF}?${params.toString()}`;
