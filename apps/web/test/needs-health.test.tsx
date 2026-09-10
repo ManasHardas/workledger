@@ -213,6 +213,7 @@ describe("Health", () => {
   const HEALTH: Health = {
     cli: "0.0.1",
     repo: "github.com/ManasHardas/workledger",
+    repos: [],
     harnesses: [
       {
         harness: "claude-code",

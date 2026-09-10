@@ -12,6 +12,7 @@ import type { HookEvent } from "./commands/hook-events.js";
 import type { HookOptions } from "./commands/hook.js";
 import type { InitOptions } from "./commands/init.js";
 import type { JobsOptions } from "./commands/jobs.js";
+import type { OpenOptions } from "./commands/open.js";
 import type { RepairOptions } from "./commands/repair.js";
 import type { ScanOptions } from "./commands/scan.js";
 import type { ServeOptions } from "./commands/serve.js";
@@ -77,7 +78,31 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     // `backlog` and `note` own their own sub-parsers, so everything after their first operand
     // has to reach them untouched — `--title`, `--json` and the rest are theirs, not ours.
     .enablePositionalOptions()
-    .exitOverride();
+    .exitOverride()
+    // `workledger` with no sub-command is `workledger open` (docs/contracts/p8/daemon-and-api.md
+    // §CLI): the daemon is the product's front door, and typing its name should open it.
+    .action(async () => {
+      const { openCommand } = await import("./commands/open.js");
+      exit.code = await openCommand({});
+    });
+
+  program
+    .command("open")
+    .description("start the local server if it is not running and open the UI (the default command)")
+    .option("--port <n>", "port to start the server on (default: 7419, else a free port)", positiveInteger)
+    .option("--no-browser", "print the URL without opening the browser")
+    .action(async (options: OpenOptions) => {
+      const { openCommand } = await import("./commands/open.js");
+      exit.code = await openCommand(options);
+    });
+
+  program
+    .command("stop")
+    .description("stop the local server started by `workledger open`")
+    .action(async () => {
+      const { stopCommand } = await import("./commands/stop.js");
+      exit.code = await stopCommand();
+    });
 
   program
     .command("init")
@@ -143,8 +168,8 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
 
   program
     .command("serve")
-    .description("serve the local UI and API on 127.0.0.1 until Ctrl-C")
-    .option("--repo <path>", "repo to serve (default: the repo root above cwd)")
+    .description("serve the local UI and API on 127.0.0.1 until Ctrl-C, for every enabled repo")
+    .option("--repo <path>", "serve this one repo instead (single-repo mode, for debugging)")
     .option("--port <n>", "port to bind (default: a random high port)", positiveInteger)
     .option("--no-open", "do not open the browser")
     .action(async (options: ServeOptions) => {

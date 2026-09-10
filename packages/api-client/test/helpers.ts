@@ -63,6 +63,45 @@ export async function startHarness(): Promise<Harness> {
   };
 }
 
+/** A machine-mode server (P8) over two temp copies of the dogfood ledger. */
+export interface MachineHarness {
+  baseUrl: string;
+  /** The two repos, by root, in the order `/api/repos` lists them. */
+  roots: [string, string];
+  stop(): Promise<void>;
+}
+
+/** Two temp repos behind one machine-mode server, the shape `workledger open` runs. */
+export async function startMachineHarness(): Promise<MachineHarness> {
+  const roots = ["a", "b"].map((name) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), `workledger-api-client-${name}-`));
+    cpSync(DOGFOOD_LEDGER, path.join(root, ".workledger"), { recursive: true });
+    return root;
+  }) as [string, string];
+  roots.sort();
+
+  const app = createApp({
+    repos: roots,
+    home: path.join(roots[0], "home"),
+    env: { PATH: "" },
+    homeDir: roots[0],
+    debounceMs: 20,
+    pollMs: 100,
+    pingMs: 1000,
+  });
+  const server = await app.start();
+
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    roots,
+    stop: async () => {
+      app.close();
+      await server.close();
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
 /**
  * A minimal `EventSource` over `fetch`: connect, parse `event:`/`data:` frames separated by a
  * blank line, dispatch to the listeners the client registered, and report any transport failure

@@ -19,23 +19,23 @@
  * `GET` issued immediately after the `POST` must not still see the old one.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 
 import { ApiError, badRequest, notFound, toApiError } from "../errors.js";
 import { readBody, readInteger, readString } from "./body.js";
 import type { BacklogOps, EditPatch, ItemResult, OpContext } from "../ops.js";
 import type { BacklogView, SessionView } from "../views.js";
-import type { KeyedMutex } from "../mutex.js";
-import type { ReadModel } from "../read-model.js";
+import type { RepoContext } from "../repos.js";
 import type { Actor, Priority } from "@workledger/core/schema";
 
 /** What the write routes need from `createApp`. */
 export interface WriteRouteDeps {
-  model: ReadModel;
+  /**
+   * The repo whose `.workledger/` is written — resolved per request from `?repo=` (P8), with
+   * its read model and its per-id mutex (data-flow §Writes) alongside.
+   */
+  repo: (c: Context) => RepoContext;
   ops: BacklogOps;
-  /** The repo whose `.workledger/` is written. */
-  repoRoot: string;
-  /** Serializes writes per backlog id / session ulid (data-flow §Writes). */
-  mutex: KeyedMutex;
 }
 
 /** The literals `priority` accepts on the wire; `null` clears it (backlog-cli.md). */
@@ -102,8 +102,8 @@ export function writeRoutes(deps: WriteRouteDeps): Hono {
    * @throws {ApiError} 409 when git has no identity — data-flow §Identity, "the server refuses
    * writes with 409 if either is empty".
    */
-  function context(): OpContext {
-    const by = deps.ops.gitActor(deps.repoRoot);
+  function context(repo: RepoContext): OpContext {
+    const by = deps.ops.gitActor(repo.root);
     if (by === undefined) {
       throw new ApiError(
         409,
@@ -111,25 +111,29 @@ export function writeRoutes(deps: WriteRouteDeps): Hono {
         "git user.name and user.email must be set to record who made this change",
       );
     }
-    return { repoRoot: deps.repoRoot, by };
+    return { repoRoot: repo.root, by };
   }
 
-  /** Run one write under the mutex, mapping its refusal onto the contract's status. */
-  async function write<T>(keys: readonly string[], body: (ctx: OpContext) => Promise<T>): Promise<T> {
-    const ctx = context();
+  /** Run one write under the repo's mutex, mapping its refusal onto the contract's status. */
+  async function write<T>(
+    repo: RepoContext,
+    keys: readonly string[],
+    body: (ctx: OpContext) => Promise<T>,
+  ): Promise<T> {
+    const ctx = context(repo);
     try {
-      return await deps.mutex.run(keys, () => body(ctx));
+      return await repo.mutex.run(keys, () => body(ctx));
     } catch (error) {
       throw toApiError(error);
     }
   }
 
   /** Refresh the read model from the file the op just wrote, and return the fresh view. */
-  function refresh(result: ItemResult): BacklogView {
-    deps.model.invalidateBacklog(result.id);
+  function refresh(repo: RepoContext, result: ItemResult): BacklogView {
+    repo.model.invalidateBacklog(result.id);
     // The op wrote this file a moment ago, so the re-read is what the response carries; the
     // in-hand result is the fallback for a file deleted between the write and the read.
-    return deps.model.getBacklog(result.id) ?? { frontmatter: result.item, body: result.body };
+    return repo.model.getBacklog(result.id) ?? { frontmatter: result.item, body: result.body };
   }
 
   /** The five status transitions, which differ only in the function they call. */
@@ -143,52 +147,58 @@ export function writeRoutes(deps: WriteRouteDeps): Hono {
 
   for (const [name, pick] of Object.entries(TRANSITIONS)) {
     api.post(`/backlog/:id/${name}`, async (c) => {
+      const repo = deps.repo(c);
       const id = c.req.param("id");
-      const result = await write([id], (ctx) => pick(deps.ops)(ctx, id));
-      return c.json(refresh(result));
+      const result = await write(repo, [id], (ctx) => pick(deps.ops)(ctx, id));
+      return c.json(refresh(repo, result));
     });
   }
 
   api.post("/backlog/:id/edit", async (c) => {
+    const repo = deps.repo(c);
     const id = c.req.param("id");
     const patch = readEditPatch(await readBody(c));
-    const result = await write([id], (ctx) => deps.ops.editItem(ctx, id, patch));
-    return c.json(refresh(result));
+    const result = await write(repo, [id], (ctx) => deps.ops.editItem(ctx, id, patch));
+    return c.json(refresh(repo, result));
   });
 
   api.post("/backlog/:id/assign", async (c) => {
+    const repo = deps.repo(c);
     const id = c.req.param("id");
     const body = await readBody(c);
     if (!("owner" in body)) throw badRequest("assign takes { owner: Actor | null }");
     const owner = body["owner"] === null ? null : readActor(body["owner"]);
-    const result = await write([id], (ctx) => deps.ops.assignItem(ctx, id, owner));
-    return c.json(refresh(result));
+    const result = await write(repo, [id], (ctx) => deps.ops.assignItem(ctx, id, owner));
+    return c.json(refresh(repo, result));
   });
 
   api.post("/backlog/:id/rank", async (c) => {
+    const repo = deps.repo(c);
     const id = c.req.param("id");
     const rank = readInteger(await readBody(c), "rank");
-    const result = await write([id], (ctx) => deps.ops.rankItem(ctx, id, rank));
-    return c.json(refresh(result));
+    const result = await write(repo, [id], (ctx) => deps.ops.rankItem(ctx, id, rank));
+    return c.json(refresh(repo, result));
   });
 
   api.post("/backlog/:id/merge", async (c) => {
+    const repo = deps.repo(c);
     const id = c.req.param("id");
     const into = readString(await readBody(c), "into");
-    const merged = await write([id, into], (ctx) => deps.ops.mergeItems(ctx, id, into));
-    return c.json({ source: refresh(merged.source), target: refresh(merged.target) });
+    const merged = await write(repo, [id, into], (ctx) => deps.ops.mergeItems(ctx, id, into));
+    return c.json({ source: refresh(repo, merged.source), target: refresh(repo, merged.target) });
   });
 
   api.post("/notes/resolve", async (c) => {
+    const repo = deps.repo(c);
     const body = await readBody(c);
     const session = readString(body, "session");
     const cp = readInteger(body, "cp", 1);
     const index = readInteger(body, "index", 0);
     const decision = readString(body, "decision");
 
-    await write([session], (ctx) => deps.ops.resolveNote(ctx, session, cp, index, decision));
-    deps.model.invalidateSession(session);
-    const view: SessionView | undefined = deps.model.getSession(session);
+    await write(repo, [session], (ctx) => deps.ops.resolveNote(ctx, session, cp, index, decision));
+    repo.model.invalidateSession(session);
+    const view: SessionView | undefined = repo.model.getSession(session);
     // The op wrote the file this reads, so the only way it is gone is a delete in between.
     if (view === undefined) throw notFound("session", session);
     return c.json(view);

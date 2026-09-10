@@ -4,13 +4,16 @@
  */
 export { LOOPBACK, createApp } from "./app.js";
 export type { CreateAppOptions, RunningServer, ServerApp } from "./app.js";
+export { RepoRegistry, repoId } from "./repos.js";
+export type { Repo, RepoContext, RepoRegistryOptions, ServeMode } from "./repos.js";
+export type { JobAcrossRepos, NoteAcrossRepos } from "./routes/repos.js";
 export { EventBus } from "./events.js";
 export type { LedgerEvent, Listener } from "./events.js";
 export { DEFAULT_LIMIT, ReadModel, parseLimit } from "./read-model.js";
 export type { BacklogQuery, NotesQuery, SessionQuery } from "./read-model.js";
 export { LEDGER_DIR, ledgerPaths } from "./paths.js";
 export type { LedgerPaths } from "./paths.js";
-export { buildHealth, defaultHome } from "./health.js";
+export { buildHealth, buildMachineHealth, configHarnesses, defaultHome } from "./health.js";
 export type { DoctorEntry, Health, HealthEnv } from "./health.js";
 export { briefMaxTokens, renderBrief } from "./brief.js";
 export { IDENTITIES_FILE, identitiesFileName, listIdentities } from "./identities.js";

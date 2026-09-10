@@ -227,9 +227,11 @@ describe("GET /api/health", () => {
     const { status, body } = await getJson<Health>("/api/health");
     expect(status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(
-      ["cli", "config", "harnesses", "index", "lastHookAt", "repo"].sort(),
+      ["cli", "config", "harnesses", "index", "lastHookAt", "repo", "repos"].sort(),
     );
     expect(body.repo).toBe(repo.root);
+    // P8: the served repos ride along, so one call answers "what is on this machine".
+    expect(body.repos.map((r) => r.path)).toEqual([repo.root]);
     expect(body.harnesses[0]!.harness).toBe("claude-code");
     // `env.PATH` is empty in the test app, so `claude` cannot be found.
     expect(body.harnesses[0]!.binary).toBeNull();

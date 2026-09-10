@@ -1,6 +1,14 @@
 /**
  * `LocalServerSource` — `LedgerSource` over a running `workledger serve`, one method per row of
- * `docs/contracts/p2/api.md` §Endpoints.
+ * `docs/contracts/p2/api.md` §Endpoints, plus the machine-wide reads of
+ * `docs/contracts/p8/daemon-and-api.md` (`MachineSource`).
+ *
+ * P8's daemon serves every repo on the machine and requires `?repo=<id>` on each per-repo
+ * route. A source built with `repo` set is scoped to that one repo: it appends the parameter to
+ * every path and drops SSE events stamped for another repo. `forRepo(id)` makes one from an
+ * unscoped source, sharing its `fetch` and `EventSource`. An unscoped source against a machine
+ * daemon can still list repos and read the aggregates; its per-repo calls come back as the
+ * server's 400 `repo-required`, which is the contract, not a client-side guess.
  *
  * There is no caching, no retry on a read and no request coalescing: the server is on loopback
  * and holds the whole ledger in memory, so a round trip is cheaper than the invalidation bugs a
@@ -20,11 +28,15 @@ import type {
   Health,
   Identity,
   Job,
+  JobAcrossRepos,
   LedgerEvent,
   LedgerSource,
+  MachineSource,
+  NoteAcrossRepos,
   NoteRef,
   NoteType,
   ParsedSession,
+  Repo,
   ScanSummary,
   SourceCapabilities,
 } from "./types.js";
@@ -44,6 +56,11 @@ export interface LocalServerSourceOptions {
   /** Reconnect knobs; the defaults are ledger-source.md's 500 ms doubling to a 10 s cap. */
   retryBaseMs?: number;
   retryMaxMs?: number;
+  /**
+   * The repo id (from `GET /api/repos`) every per-repo call is scoped to. Required against a
+   * machine-mode daemon; optional against `serve --repo`, where the server defaults it.
+   */
+  repo?: string;
 }
 
 /** `["a","b"]` → `"a,b"`, and an empty or absent list → `undefined` (send no parameter at all). */
@@ -51,7 +68,7 @@ function commaList(values: readonly string[] | undefined): string | undefined {
   return values === undefined || values.length === 0 ? undefined : values.join(",");
 }
 
-export class LocalServerSource implements LedgerSource {
+export class LocalServerSource implements LedgerSource, MachineSource {
   /**
    * The local server owns the ledger files, so it can write and it watches. `provenance` became
    * true in P3 (docs/contracts/p3/api.md): `GET /api/sessions/:ulid/excerpt` hands back the
@@ -66,13 +83,19 @@ export class LocalServerSource implements LedgerSource {
   readonly #eventSource: EventSourceCtor | undefined;
   readonly #retryBaseMs: number | undefined;
   readonly #retryMaxMs: number | undefined;
+  readonly #options: LocalServerSourceOptions;
+
+  /** The repo id this source is scoped to, or `undefined` for an unscoped one. */
+  readonly repo: string | undefined;
 
   constructor(options: LocalServerSourceOptions) {
+    this.#options = options;
     this.#baseUrl = normalizeBaseUrl(options.baseUrl);
     this.#fetch = options.fetch ?? globalFetch();
     this.#eventSource = options.EventSource;
     this.#retryBaseMs = options.retryBaseMs;
     this.#retryMaxMs = options.retryMaxMs;
+    this.repo = options.repo;
   }
 
   /** One request. Non-2xx becomes the contract's `ApiClientError`; 2xx is decoded by `decode`. */
@@ -83,12 +106,28 @@ export class LocalServerSource implements LedgerSource {
     return await decode(response);
   }
 
+  /**
+   * A per-repo path with the scope's `repo` parameter added (P8), or unchanged when unscoped.
+   * `path` may already carry a query string; the parameter joins it either way.
+   */
+  #scoped(path: string): string {
+    if (this.repo === undefined) return path;
+    const param = `repo=${encodeURIComponent(this.repo)}`;
+    return path.includes("?") ? `${path}&${param}` : `${path}?${param}`;
+  }
+
+  /** A GET on a per-repo route. */
   #get<T>(path: string): Promise<T> {
+    return this.#request(this.#scoped(path), undefined, async (r) => (await r.json()) as T);
+  }
+
+  /** A GET on a machine-wide route, which takes no `repo`. */
+  #getMachine<T>(path: string): Promise<T> {
     return this.#request(path, undefined, async (r) => (await r.json()) as T);
   }
 
   #getText(path: string): Promise<string> {
-    return this.#request(path, undefined, (r) => r.text());
+    return this.#request(this.#scoped(path), undefined, (r) => r.text());
   }
 
   #post<T>(path: string, body?: unknown): Promise<T> {
@@ -98,8 +137,31 @@ export class LocalServerSource implements LedgerSource {
       body === undefined
         ? { method: "POST" }
         : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
-    return this.#request(path, init, async (r) => (await r.json()) as T);
+    return this.#request(this.#scoped(path), init, async (r) => (await r.json()) as T);
   }
+
+  // --- MachineSource (P8) ---------------------------------------------------------------------
+
+  listRepos(): Promise<Repo[]> {
+    return this.#getMachine<Repo[]>("/api/repos");
+  }
+
+  listAllNotes(q: { type?: NoteType[]; open?: boolean } = {}): Promise<NoteAcrossRepos[]> {
+    return this.#getMachine<NoteAcrossRepos[]>(
+      `/api/notes/all${queryString({ type: commaList(q.type), open: q.open === true ? "true" : undefined })}`,
+    );
+  }
+
+  listAllJobs(): Promise<JobAcrossRepos[]> {
+    return this.#getMachine<JobAcrossRepos[]>("/api/jobs/all");
+  }
+
+  /** The same server, scoped to `id`; `fetch`, `EventSource` and the reconnect knobs carry over. */
+  forRepo(id: string): LocalServerSource {
+    return new LocalServerSource({ ...this.#options, fetch: this.#fetch, repo: id });
+  }
+
+  // --- LedgerSource ---------------------------------------------------------------------------
 
   /**
    * The gate every write goes through. ledger-source.md: "writes: reject with
@@ -154,6 +216,7 @@ export class LocalServerSource implements LedgerSource {
     return this.#getText(`/api/brief${queryString({ max_tokens: maxTokens })}`);
   }
 
+  /** Scoped: that repo's report. Unscoped: the machine-wide one on a daemon, the repo's on `serve --repo`. */
   health(): Promise<Health> {
     return this.#get<Health>("/api/health");
   }
@@ -237,11 +300,23 @@ export class LocalServerSource implements LedgerSource {
     return this.#get<Excerpt>(`/api/sessions/${encodeURIComponent(ulid)}/excerpt${queryString({ cp })}`);
   }
 
+  /**
+   * One stream serves the whole machine (P8), so a scoped source drops the frames stamped for
+   * another repo; an unstamped frame — a pre-P8 server — is passed through, and an unscoped
+   * source passes everything, stamp and all, for a view that spans repos.
+   */
   subscribe(handler: (event: LedgerEvent) => void): () => void {
     if (!this.capabilities.live) return () => {};
+    const scope = this.repo;
+    const filtered =
+      scope === undefined
+        ? handler
+        : (event: LedgerEvent): void => {
+            if (event.repo === undefined || event.repo === scope) handler(event);
+          };
     return subscribeSse({
       url: `${this.#baseUrl}/api/events`,
-      handler,
+      handler: filtered,
       EventSource: this.#eventSource ?? globalEventSource(),
       ...(this.#retryBaseMs === undefined ? {} : { retryBaseMs: this.#retryBaseMs }),
       ...(this.#retryMaxMs === undefined ? {} : { retryMaxMs: this.#retryMaxMs }),

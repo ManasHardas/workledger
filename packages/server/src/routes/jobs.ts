@@ -20,17 +20,19 @@
  * is reserved for the call that actually queued work.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 
 import { ApiError, badRequest, notFound, toApiError } from "../errors.js";
 import { buildExcerpt } from "../excerpt.js";
 import { readBody, readBoolean, readInteger, readString, rejectUnknown } from "./body.js";
 import type { BackfillInput, Job, JobOps } from "../jobs.js";
+import type { RepoContext } from "../repos.js";
 
 /** What the job routes need from `createApp`. */
 export interface JobRouteDeps {
   ops: JobOps;
-  /** The repo whose jobs and sessions are addressed; every route is scoped to it. */
-  repoRoot: string;
+  /** The repo whose jobs and sessions are addressed (P8: `?repo=<id>`); every route is scoped to it. */
+  repo: (c: Context) => RepoContext;
   /** `~/.workledger` — where the excerpt cache lives. Never inside the repo. */
   home: string;
 }
@@ -93,21 +95,24 @@ export function jobRoutes(deps: JobRouteDeps): Hono {
   const api = new Hono();
 
   api.get("/jobs", async (c) => {
+    const repoRoot = deps.repo(c).root;
     const status = c.req.query("status");
     if (status !== undefined && !STATUSES.includes(status)) {
       throw badRequest(`status must be one of ${STATUSES.join(", ")}`);
     }
     const jobs = await call(() =>
-      status === undefined
-        ? deps.ops.listJobs(deps.repoRoot)
-        : deps.ops.listJobs(deps.repoRoot, status),
+      status === undefined ? deps.ops.listJobs(repoRoot) : deps.ops.listJobs(repoRoot, status),
     );
     return c.json(jobs);
   });
 
-  api.post("/jobs/scan", async (c) => c.json(await call(() => deps.ops.scan(deps.repoRoot))));
+  api.post("/jobs/scan", async (c) => {
+    const repoRoot = deps.repo(c).root;
+    return c.json(await call(() => deps.ops.scan(repoRoot)));
+  });
 
   api.post("/jobs/repair", async (c) => {
+    const repoRoot = deps.repo(c).root;
     const body = await readBody(c);
     rejectUnknown(body, ["session", "extract", "consent"]);
     const session = readString(body, "session");
@@ -120,7 +125,7 @@ export function jobRoutes(deps: JobRouteDeps): Hono {
       const estimate =
         deps.ops.estimateExtract === undefined
           ? undefined
-          : await call(() => (deps.ops.estimateExtract as NonNullable<JobOps["estimateExtract"]>)(deps.repoRoot, session));
+          : await call(() => (deps.ops.estimateExtract as NonNullable<JobOps["estimateExtract"]>)(repoRoot, session));
       return c.json(
         {
           error: {
@@ -133,15 +138,16 @@ export function jobRoutes(deps: JobRouteDeps): Hono {
       );
     }
 
-    const job = await call(() => deps.ops.repair(deps.repoRoot, { session, extract, consent }));
+    const job = await call(() => deps.ops.repair(repoRoot, { session, extract, consent }));
     return c.json(job, 202);
   });
 
   api.post("/jobs/backfill", async (c) => {
+    const repoRoot = deps.repo(c).root;
     const input = readBackfill(await readBody(c));
     const backfill = deps.ops.backfill;
     if (backfill === undefined) throw notImplemented("backfill");
-    const result = await call(() => backfill(deps.repoRoot, input));
+    const result = await call(() => backfill(repoRoot, input));
     // 200 for the dry estimate, 202 for the call that queued something (api.md).
     return c.json(result, input.consent ? 202 : 200);
   });
@@ -152,15 +158,17 @@ export function jobRoutes(deps: JobRouteDeps): Hono {
   };
   for (const [name, run] of Object.entries(ACTIONS)) {
     api.post(`/jobs/:id/${name}`, async (c) => {
+      const repoRoot = deps.repo(c).root;
       const id = c.req.param("id");
-      return c.json(await call(() => run(deps.ops, id, deps.repoRoot)));
+      return c.json(await call(() => run(deps.ops, id, repoRoot)));
     });
   }
 
   api.get("/sessions/:ulid/excerpt", async (c) => {
+    const repoRoot = deps.repo(c).root;
     const ulid = c.req.param("ulid");
     const cp = readCp(c.req.query("cp"));
-    const span = await call(() => deps.ops.excerptSpan(deps.repoRoot, ulid, cp));
+    const span = await call(() => deps.ops.excerptSpan(repoRoot, ulid, cp));
     if (span === undefined) throw notFound("checkpoint", `${ulid}#${String(cp)}`);
 
     const excerpt = buildExcerpt(deps.home, ulid, cp, span);

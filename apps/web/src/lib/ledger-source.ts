@@ -52,24 +52,35 @@ export type {
   Job,
   LedgerEvent,
   LedgerSource,
+  MachineSource,
   NoteRef,
   NoteType,
   ParsedSession,
+  Repo,
   ScanSummary,
   SessionQuery,
   Turn,
 } from "@workledger/api-client";
+
+import type { MachineSource } from "@workledger/api-client";
 
 /** The rejection every write takes on a source whose `capabilities.write` is false. */
 const readOnly = <T>(): Promise<T> => Promise.reject({ code: "read-only" });
 
 /** The in-memory fixture ledger: read-only, not live. */
 export function createSource(kind: "fixture"): LedgerSource;
-/** `workledger serve` over HTTP + SSE. `baseUrl` is `""` when the server hosts the app. */
-export function createSource(kind: "local", opts: { baseUrl: string }): LedgerSource;
-export function createSource(kind: "fixture" | "local", opts?: { baseUrl: string }): LedgerSource {
+/**
+ * `workledger serve` over HTTP + SSE. With `repo` the source is scoped to that repo (P8's
+ * machine-mode daemon requires it); without, it is the server's one repo under `serve --repo`,
+ * and the `MachineSource` half lists repos and builds scoped sources with `forRepo`.
+ */
+export function createSource(kind: "local", opts: { baseUrl: string; repo?: string }): LedgerSource & MachineSource;
+export function createSource(
+  kind: "fixture" | "local",
+  opts?: { baseUrl: string; repo?: string },
+): LedgerSource | (LedgerSource & MachineSource) {
   if (kind === "fixture") return new FixtureSource();
-  return createApiSource("local", { baseUrl: opts?.baseUrl ?? "" });
+  return createApiSource("local", { baseUrl: opts?.baseUrl ?? "", ...(opts?.repo === undefined ? {} : { repo: opts.repo }) });
 }
 
 class FixtureSource implements LedgerSource {

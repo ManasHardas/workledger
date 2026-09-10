@@ -4,6 +4,8 @@
  */
 import { appendFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+
+import { repoId } from "@workledger/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -53,7 +55,8 @@ describe("live stream", () => {
         "backlog.changed",
       );
       const changed = events.find((e) => e.type === "backlog.changed");
-      expect(changed).toEqual({ type: "backlog.changed", id });
+      // P8: the server stamps its repo id on every frame; the client passes it through.
+      expect(changed).toEqual({ type: "backlog.changed", id, repo: repoId(harness.root) });
     } finally {
       unsubscribe();
     }

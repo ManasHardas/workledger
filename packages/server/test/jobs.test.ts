@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeJobOps, appFor, fakeJob, seedRepo } from "./helpers.js";
 import { startJobWatcher } from "../src/job-watcher.js";
 import { EventBus } from "../src/events.js";
+import { repoId } from "../src/repos.js";
 import type { LedgerEvent } from "../src/events.js";
 import type { ServerApp } from "../src/app.js";
 import type { TempRepo } from "./helpers.js";
@@ -255,7 +256,9 @@ describe("job.changed", () => {
 
       jobs.rows = [fakeJob({ id: "JOB-1", status: "running" })];
       await watcher.tick();
-      expect(watcher.seen).toEqual([{ event: "job.changed", data: { id: "JOB-1", status: "running" } }]);
+      expect(watcher.seen).toEqual([
+        { event: "job.changed", data: { id: "JOB-1", status: "running", repo: repoId(repo.root) } },
+      ]);
 
       await watcher.tick();
       expect(watcher.seen).toHaveLength(1);
@@ -271,7 +274,9 @@ describe("job.changed", () => {
       jobs.rows = [fakeJob({ id: "JOB-2", status: "queued" })];
       await watcher.tick();
 
-      expect(watcher.seen).toEqual([{ event: "job.changed", data: { id: "JOB-2", status: "queued" } }]);
+      expect(watcher.seen).toEqual([
+        { event: "job.changed", data: { id: "JOB-2", status: "queued", repo: repoId(repo.root) } },
+      ]);
     } finally {
       watcher.close();
     }
@@ -298,7 +303,9 @@ describe("job.changed", () => {
 
       jobs.rows = [fakeJob({ id: "JOB-3", status: "failed" })];
       await watcher.tick();
-      expect(seen).toEqual([{ event: "job.changed", data: { id: "JOB-3", status: "failed" } }]);
+      expect(seen).toEqual([
+        { event: "job.changed", data: { id: "JOB-3", status: "failed", repo: repoId(repo.root) } },
+      ]);
     } finally {
       watcher.close();
     }
@@ -311,7 +318,7 @@ describe("job.changed", () => {
     const decoder = new TextDecoder();
 
     jobs.rows = [fakeJob({ id: "JOB-4", status: "done" })];
-    server.events.emit({ event: "job.changed", data: { id: "JOB-4", status: "done" } });
+    server.events.emit({ event: "job.changed", data: { id: "JOB-4", status: "done", repo: repoId(repo.root) } });
 
     let buffer = "";
     for (let i = 0; i < 5 && !buffer.includes("job.changed"); i += 1) {
@@ -322,7 +329,7 @@ describe("job.changed", () => {
     await reader.cancel();
 
     expect(buffer).toContain("event: job.changed");
-    expect(buffer).toContain('{"id":"JOB-4","status":"done"}');
+    expect(buffer).toContain(`{"id":"JOB-4","status":"done","repo":"${repoId(repo.root)}"}`);
   });
 });
 

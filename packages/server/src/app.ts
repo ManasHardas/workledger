@@ -1,7 +1,15 @@
 /**
- * `createApp` — the whole read server: a read model over one repo's `.workledger/`, a watcher
- * that invalidates it per file and pushes the matching SSE event, the GET routes of
- * `docs/contracts/p2/api.md`, and the static fallback that serves the built `apps/web`.
+ * `createApp` — the whole local server: a read model per served repo, a watcher per repo that
+ * invalidates it per file and pushes the matching SSE event, the GET and POST routes of
+ * `docs/contracts/p2/api.md` and `p3/api.md` addressed by `?repo=<id>`
+ * (`docs/contracts/p8/daemon-and-api.md`), the machine-wide reads, and the static fallback that
+ * serves the built `apps/web`.
+ *
+ * Two modes. `repoRoot` is **single-repo mode** — P2's `serve --repo`, kept for debugging — where
+ * `repo` is optional and defaults to the one repo. `repos` is **machine mode** — the P8 daemon —
+ * where every listed root is served and `repo` is required on every per-repo route. The list may
+ * be empty: a machine with nothing enabled yet is exactly what the onboarding wizard is for, and
+ * `addRepo` is how the wizard's `init` joins a repo to a running server.
  *
  * The listener binds `127.0.0.1` and nothing else. There is no auth because there is no remote
  * caller: plans/feature-p2-data-flow.md §Identity is "no accounts, no sessions, loopback only",
@@ -15,34 +23,37 @@ import { Hono } from "hono";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import type { Context } from "hono";
 import type { Server } from "node:http";
 
 import { EventBus } from "./events.js";
-import { KeyedMutex } from "./mutex.js";
-import { ReadModel } from "./read-model.js";
+import { RepoRegistry } from "./repos.js";
 import { briefMaxTokens } from "./brief.js";
 import { defaultHome } from "./health.js";
 import { errorBody } from "./errors.js";
 import { eventRoutes } from "./routes/events.js";
 import { jobRoutes } from "./routes/jobs.js";
-import { ledgerId, ledgerPaths } from "./paths.js";
 import { readRoutes } from "./routes/read.js";
+import { repoRoutes } from "./routes/repos.js";
 import { staticHandler } from "./routes/static.js";
-import { startJobWatcher } from "./job-watcher.js";
-import { startWatcher } from "./watcher.js";
 import { writeRoutes } from "./routes/write.js";
 import type { BacklogOps } from "./ops.js";
 import type { JobOps } from "./jobs.js";
 import type { JobWatcher } from "./job-watcher.js";
 import type { HealthEnv } from "./health.js";
+import type { KeyedMutex } from "./mutex.js";
+import type { ReadModel } from "./read-model.js";
+import type { RepoContext, ServeMode } from "./repos.js";
 import type { Watcher } from "./watcher.js";
 
 /** The only address the server ever binds (api.md preamble). */
 export const LOOPBACK = "127.0.0.1";
 
 export interface CreateAppOptions {
-  /** The repo whose `.workledger/` is served. */
-  repoRoot: string;
+  /** Single-repo mode: the one repo whose `.workledger/` is served. Exclusive with `repos`. */
+  repoRoot?: string;
+  /** Machine mode: every enabled repo to serve, by root. May be empty. Exclusive with `repoRoot`. */
+  repos?: string[];
   /**
    * The backlog and note mutations the POST routes call — `packages/cli/src/backlog-ops.ts`,
    * handed in by `workledger serve`.
@@ -87,55 +98,50 @@ export interface RunningServer {
 /** What `createApp` hands back. */
 export interface ServerApp {
   app: Hono;
-  model: ReadModel;
+  mode: ServeMode;
   events: EventBus;
-  watcher: Watcher;
-  /** The per-id write lock (data-flow §Writes), exposed so a test can observe it. */
-  mutex: KeyedMutex;
-  /** The `job.changed` poller, or `undefined` when no `jobs` ops were injected. */
-  jobWatcher?: JobWatcher;
+  /** Every served repo, and the machinery to add one while the server runs. */
+  repos: RepoRegistry;
+  /** Start serving `root`; the repo it already serves when the root is held. */
+  addRepo(root: string): RepoContext;
+  /** Stop serving a repo. `false` when the id was not held. */
+  removeRepo(id: string): boolean;
+  /**
+   * The first served repo's read model, watcher, write lock and job poller — the whole server in
+   * single-repo mode, and a convenience for the tests of the per-repo routes. Throws when no
+   * repo is held.
+   */
+  readonly model: ReadModel;
+  readonly watcher: Watcher;
+  readonly mutex: KeyedMutex;
+  readonly jobWatcher: JobWatcher | undefined;
   /** Bind `127.0.0.1`. `port` defaults to 0 — a random high port (api.md preamble). */
   start(options?: { port?: number }): Promise<RunningServer>;
-  /** Stop the watcher. Does not touch a server started by {@link ServerApp.start}. */
+  /** Stop every watcher. Does not touch a server started by {@link ServerApp.start}. */
   close(): void;
 }
 
-/** Build the app, load the read model, and start watching. */
+/** Build the app, load every read model, and start watching. */
 export function createApp(options: CreateAppOptions): ServerApp {
-  const repoRoot = path.resolve(options.repoRoot);
-  const paths = ledgerPaths(repoRoot);
+  if ((options.repoRoot === undefined) === (options.repos === undefined)) {
+    throw new TypeError("createApp takes exactly one of repoRoot (single-repo mode) or repos (machine mode)");
+  }
+  const mode: ServeMode = options.repoRoot === undefined ? "machine" : "single";
   const env = options.env ?? process.env;
   const homeDir = options.homeDir ?? os.homedir();
 
-  const model = new ReadModel(paths);
-  model.loadAll();
-
   const bus = new EventBus();
-  const watcher = startWatcher({
-    paths,
+  const registry = new RepoRegistry({
+    mode,
+    bus,
+    jobs: options.jobs,
     debounceMs: options.debounceMs,
     pollMs: options.pollMs,
-    onChange: (files) => {
-      let notesChanged = false;
-      for (const file of files) {
-        const dir = path.dirname(file);
-        const id = ledgerId(file);
-        if (dir === paths.sessions && id !== undefined) {
-          model.invalidateSession(id);
-          bus.emit({ event: "session.changed", data: { ulid: id } });
-          notesChanged = true;
-        } else if (dir === paths.backlog && id !== undefined) {
-          model.invalidateBacklog(id);
-          bus.emit({ event: "backlog.changed", data: { id } });
-        } else if (file === paths.config) {
-          bus.emit({ event: "health.changed", data: {} });
-        }
-      }
-      // Notes live inside session files, so one session write is both events; the notes one is
-      // collapsed to a single emission per flush because its payload carries no id.
-      if (notesChanged) bus.emit({ event: "notes.changed", data: {} });
-    },
+    jobPollMs: options.jobPollMs,
   });
+  for (const root of options.repoRoot === undefined ? (options.repos ?? []) : [options.repoRoot]) {
+    registry.add(root);
+  }
 
   const health: HealthEnv = {
     env,
@@ -144,26 +150,18 @@ export function createApp(options: CreateAppOptions): ServerApp {
     cli: options.cliVersion ?? "0.0.1",
   };
 
-  const mutex = new KeyedMutex();
+  /** The repo a request names — daemon-and-api.md's 400 / 404 when it does not. */
+  const repo = (c: Context): RepoContext => registry.resolve(c.req.query("repo"));
+
   const app = new Hono();
-  app.route("/api", readRoutes({ model, health, maxTokens: () => briefMaxTokens(paths), paths }));
-  app.route("/api", writeRoutes({ model, ops: options.ops, repoRoot, mutex }));
+  app.route("/api", repoRoutes({ registry, health, jobs: options.jobs }));
+  app.route("/api", readRoutes({ repo, maxTokens: briefMaxTokens }));
+  app.route("/api", writeRoutes({ repo, ops: options.ops }));
   app.route("/api", eventRoutes({ bus, ...(options.pingMs === undefined ? {} : { pingMs: options.pingMs }) }));
 
   // The P3 routes exist only when their backend does; see `CreateAppOptions.jobs`.
-  const jobWatcher =
-    options.jobs === undefined
-      ? undefined
-      : startJobWatcher({
-          ops: options.jobs,
-          repoRoot,
-          bus,
-          pollMs: options.jobPollMs,
-          // A locked or half-migrated index must not take the stream down with it.
-          onError: () => {},
-        });
   if (options.jobs !== undefined) {
-    app.route("/api", jobRoutes({ ops: options.jobs, repoRoot, home: health.home }));
+    app.route("/api", jobRoutes({ ops: options.jobs, repo, home: health.home }));
   }
 
   // Every unmatched `/api` path is a 404 in the contract's shape and must never fall through to
@@ -188,13 +186,32 @@ export function createApp(options: CreateAppOptions): ServerApp {
     return c.json(body, status);
   });
 
+  /** The first held repo, for the single-repo conveniences below. */
+  function primary(): RepoContext {
+    const first = registry.list()[0];
+    if (first === undefined) throw new Error("no repo is served");
+    return first;
+  }
+
   return {
     app,
-    model,
+    mode,
     events: bus,
-    watcher,
-    mutex,
-    ...(jobWatcher === undefined ? {} : { jobWatcher }),
+    repos: registry,
+    addRepo: (root) => registry.add(root),
+    removeRepo: (id) => registry.remove(id),
+    get model() {
+      return primary().model;
+    },
+    get watcher() {
+      return primary().watcher;
+    },
+    get mutex() {
+      return primary().mutex;
+    },
+    get jobWatcher() {
+      return primary().jobWatcher;
+    },
     async start(startOptions = {}): Promise<RunningServer> {
       const { serve } = await import("@hono/node-server");
       return await new Promise<RunningServer>((resolve, reject) => {
@@ -220,8 +237,7 @@ export function createApp(options: CreateAppOptions): ServerApp {
       });
     },
     close(): void {
-      watcher.close();
-      jobWatcher?.close();
+      registry.close();
     },
   };
 }

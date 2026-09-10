@@ -8,12 +8,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 
 /**
- * The commands `--help` must list: the six from docs/contracts/p1/cli.md, `serve`
- * (docs/contracts/p2/api.md) and `note` alongside the now-live `backlog`
+ * The commands `--help` must list: `open` and `stop` from P8 (docs/contracts/p8/daemon-and-api.md
+ * §CLI — `open` is also what a bare `workledger` runs), the six from docs/contracts/p1/cli.md,
+ * `serve` (docs/contracts/p2/api.md) and `note` alongside the now-live `backlog`
  * (docs/contracts/p2/backlog-cli.md), and `scan`, `repair`, `backfill` and `jobs` from P3
  * (docs/contracts/p3/cli.md).
  */
 const COMMANDS = [
+  "open",
+  "stop",
   "init",
   "hook",
   "checkpoint",
@@ -34,6 +37,9 @@ const COMMANDS = [
  * introspection instead, and the bodies are driven against temp repos in their own test files.
  */
 const OPTIONS: Record<string, string[]> = {
+  // `--no-browser`, like `serve`'s `--no-open`, defines `browser` defaulted to true.
+  open: ["--port", "--no-browser"],
+  stop: [],
   // `--harness` on both: `init` writes that harness's hook file, `hook` reads that harness's
   // wire format (docs/contracts/p4/hooks-codex.md, hooks-cursor.md).
   init: ["--repo", "--yes", "--no-backfill", "--teammate", "--harness"],
@@ -78,7 +84,7 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the twelve commands", () => {
+  it("registers exactly the fourteen commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 

@@ -119,24 +119,51 @@ export interface Identity {
   dome_user: string | null;
 }
 
-/** `GET /api/health`. */
+/**
+ * `GET /api/repos` element — docs/contracts/p8/daemon-and-api.md §Repo identity. `id` is what
+ * every per-repo call carries as `?repo=`.
+ */
+export interface Repo {
+  id: string;
+  path: string;
+  name: string;
+  enabled: true;
+  harnesses: string[];
+  sessions7d: number;
+  openBacklog: number;
+  openNotes: number;
+  lastHookAt: string | null;
+  health: "ok" | "warn" | "broken";
+}
+
+/**
+ * `GET /api/health`. `repo` is `null` for the machine-wide report a daemon gives when no repo is
+ * named (P8); `repos` is every repo the server serves, in both modes.
+ */
 export interface Health {
   cli: string;
-  repo: string;
+  repo: string | null;
   harnesses: DoctorEntry[];
   index: { path: string; bytes: number; openSessions: number };
   config: { valid: boolean; problems: string[] };
   lastHookAt: string | null;
+  repos: Repo[];
 }
 
-/** The SSE events of api.md §SSE, in the shape the UI subscribes to. */
+/**
+ * The SSE events of api.md §SSE, in the shape the UI subscribes to.
+ *
+ * `repo` is the P8 stamp (daemon-and-api.md: "SSE events gain `repo: <id>`; a client filters").
+ * Optional on the type because a pre-P8 server does not send it; a repo-scoped source drops
+ * events stamped for another repo and passes unstamped ones through.
+ */
 export type LedgerEvent =
-  | { type: "session.changed"; ulid: string }
-  | { type: "backlog.changed"; id: string }
-  | { type: "notes.changed" }
-  | { type: "health.changed" }
+  | { type: "session.changed"; ulid: string; repo?: string }
+  | { type: "backlog.changed"; id: string; repo?: string }
+  | { type: "notes.changed"; repo?: string }
+  | { type: "health.changed"; repo?: string }
   /** docs/contracts/p3/api.md: `job.changed { id, status }`. */
-  | { type: "job.changed"; id: string; status: string };
+  | { type: "job.changed"; id: string; status: string; repo?: string };
 
 /** A `jobs` row on the wire — docs/contracts/p3/cli.md §Jobs, unchanged. */
 export interface Job {
@@ -215,6 +242,28 @@ export interface EditPatch {
   body?: string;
   priority?: "p1" | "p2" | "p3" | null;
   area?: string[];
+}
+
+/** `GET /api/notes/all` element: a note plus the repo it lives in. */
+export type NoteAcrossRepos = NoteRef & { repo: Repo };
+
+/** `GET /api/jobs/all` element: a job plus the repo it lives in. */
+export type JobAcrossRepos = Job & { repo: Repo };
+
+/**
+ * The machine-wide half of a P8 daemon — daemon-and-api.md §Multi-repo endpoints. Not part of
+ * `LedgerSource`, which is one ledger's worth of reads; a Home view holds one of these and hands
+ * each repo card the `LedgerSource` that `forRepo` returns.
+ */
+export interface MachineSource {
+  /** `GET /api/repos`. */
+  listRepos(): Promise<Repo[]>;
+  /** `GET /api/notes/all?type&open`. */
+  listAllNotes(q?: { type?: NoteType[]; open?: boolean }): Promise<NoteAcrossRepos[]>;
+  /** `GET /api/jobs/all`. */
+  listAllJobs(): Promise<JobAcrossRepos[]>;
+  /** A `LedgerSource` over one repo: every call carries `?repo=<id>`, every event is filtered to it. */
+  forRepo(id: string): LedgerSource;
 }
 
 /** What a source can do. A view must degrade rather than assume any of it (design spec §14.2). */

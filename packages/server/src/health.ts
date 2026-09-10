@@ -24,6 +24,7 @@ import { parse } from "yaml";
 import { fileMtimeMs, fileSize, listMarkdown, readTextFile } from "./paths.js";
 import type { LedgerPaths } from "./paths.js";
 import type { ReadModel } from "./read-model.js";
+import type { Repo, RepoRegistry } from "./repos.js";
 
 /** The Claude Code version `docs/contracts/p1/hooks-claude-code.md` was frozen against. */
 export const CONTRACT_TESTED_CLAUDE_VERSION = "2.1.x";
@@ -43,14 +44,22 @@ export interface DoctorEntry {
   last_activity: string | null;
 }
 
-/** api.md §Read models. */
+/**
+ * api.md §Read models, plus P8's `repos` (daemon-and-api.md §Multi-repo endpoints: "`GET
+ * /api/health` returns machine-wide health plus `repos: Repo[]`").
+ *
+ * `repo` is `null` for the machine-wide report — the one `/api/health` gives in machine mode
+ * when no `repo` is named — because there is no single repo it is about; `config` and
+ * `lastHookAt` are then folded over every served repo.
+ */
 export interface Health {
   cli: string;
-  repo: string;
+  repo: string | null;
   harnesses: DoctorEntry[];
   index: { path: string; bytes: number; openSessions: number };
   config: { valid: boolean; problems: string[] };
   lastHookAt: string | null;
+  repos: Repo[];
 }
 
 /** Everything the health probe reads from outside this process. */
@@ -152,6 +161,26 @@ export function checkConfig(paths: LedgerPaths): { valid: boolean; problems: str
   };
 }
 
+/** What `harnesses:` means when `config.yaml` is absent or invalid — the schema's own default. */
+const DEFAULT_HARNESSES: readonly string[] = ["claude-code"];
+
+/**
+ * `harnesses:` from `.workledger/config.yaml` — the schema's default, `["claude-code"]`, when
+ * the file is absent, unreadable or invalid, which is what `hook` assumes for such a file too.
+ */
+export function configHarnesses(paths: LedgerPaths): string[] {
+  const text = readTextFile(paths.config);
+  if (text === undefined) return [...DEFAULT_HARNESSES];
+  let doc: unknown;
+  try {
+    doc = parse(text);
+  } catch {
+    return [...DEFAULT_HARNESSES];
+  }
+  const result = Config.safeParse(doc ?? {});
+  return result.success ? [...result.data.harnesses] : [...DEFAULT_HARNESSES];
+}
+
 /** Newest mtime among the session files, ISO 8601, or `null` when there are none. */
 export function lastHookAt(paths: LedgerPaths): string | null {
   let newest: number | null = null;
@@ -162,8 +191,12 @@ export function lastHookAt(paths: LedgerPaths): string | null {
   return newest === null ? null : new Date(newest).toISOString();
 }
 
-/** The whole report. Files that would not parse land in `config.problems` alongside the config. */
-export function buildHealth(model: ReadModel, env: HealthEnv): Health {
+/**
+ * One repo's report. Files that would not parse land in `config.problems` alongside the config.
+ * `repos` is every repo the server holds, so a client on either mode learns the whole machine
+ * from the one call `workledger open` already waits on.
+ */
+export function buildHealth(model: ReadModel, env: HealthEnv, repos: Repo[]): Health {
   const indexPath = path.join(env.home, INDEX_FILENAME);
   const config = checkConfig(model.paths);
   const problems = [...config.problems];
@@ -179,6 +212,40 @@ export function buildHealth(model: ReadModel, env: HealthEnv): Health {
     },
     config: { valid: config.valid && model.problems.size === 0, problems },
     lastHookAt: lastHookAt(model.paths),
+    repos,
+  };
+}
+
+/**
+ * The machine-wide report: the harness probe and the index once, and `openSessions`, `config`
+ * and `lastHookAt` folded over every served repo. A problem is prefixed with its repo's name so
+ * two repos with a bad `config.yaml` each are two lines, not one ambiguous one.
+ */
+export function buildMachineHealth(registry: RepoRegistry, env: HealthEnv): Health {
+  const indexPath = path.join(env.home, INDEX_FILENAME);
+  const repos = registry.describeAll();
+  let openSessions = 0;
+  let valid = true;
+  let newest: string | null = null;
+  const problems: string[] = [];
+  for (const context of registry.list()) {
+    openSessions += context.model.openSessionCount();
+    const config = checkConfig(context.paths);
+    const name = path.basename(context.root);
+    if (!config.valid || context.model.problems.size > 0) valid = false;
+    for (const problem of config.problems) problems.push(`${name}: ${problem}`);
+    for (const [file, reason] of context.model.problems) problems.push(`${name}: ${file}: ${reason}`);
+    const last = lastHookAt(context.paths);
+    if (last !== null && (newest === null || last > newest)) newest = last;
+  }
+  return {
+    cli: env.cli,
+    repo: null,
+    harnesses: [probeHarness(env)],
+    index: { path: indexPath, bytes: fileSize(indexPath) ?? 0, openSessions },
+    config: { valid, problems },
+    lastHookAt: newest,
+    repos,
   };
 }
 

@@ -252,6 +252,7 @@ export async function runTeammate(
   }
 
   io.stdout("");
+  await recordRepo(root, io);
   io.stdout("you are set — start a session in this repo and SessionStart injects the brief.");
   io.stdout("Run `workledger doctor` to confirm the hooks are live.");
   return EXIT_OK;
@@ -342,6 +343,7 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   ];
   const created = scaffold(root, configYaml(harnesses));
   for (const entry of created) io.stdout(`  created ${entry}`);
+  await recordRepo(root, io);
 
   // Step 4 — the hook-file merges, the only writes outside `.workledger/`. One per enabled
   // harness, each additive, each diffed and confirmed before it writes.
@@ -398,6 +400,27 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   io.stdout("Privacy:");
   for (const line of PRIVACY_SUMMARY) io.stdout(`  · ${line}`);
   return EXIT_OK;
+}
+
+/**
+ * Record the repo in the index's `repos` table (`0003_repos.sql`), so `workledger serve` in
+ * machine mode and the home page list it before any hook has run in it
+ * (docs/contracts/p8/daemon-and-api.md §CLI). Best effort: the ledger on disk is what "enabled"
+ * means, and an index that will not open is `doctor`'s finding, not a reason to fail `init`.
+ */
+async function recordRepo(root: string, io: InitIo): Promise<void> {
+  const home = io.env["WORKLEDGER_HOME"]?.trim();
+  try {
+    const { openIndex } = await import("../index/db.js");
+    const db = openIndex(home ? { home } : {});
+    try {
+      db.upsertRepo(root);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    io.stderr(`workledger init: could not record ${root} in the index (${error instanceof Error ? error.message : String(error)}); \`workledger serve\` lists it once a session runs`);
+  }
 }
 
 /** @returns the process exit code. */
