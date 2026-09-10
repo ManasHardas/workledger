@@ -23,3 +23,7 @@ coverage/
 
 # Parked by packages/cli `prepack`, removed by `postpack` (scripts/bundle-cli.mjs).
 packages/cli/package.json.prepack-backup
+
+# Playwright output (apps/web/playwright.config.ts)
+test-results/
+playwright-report/
