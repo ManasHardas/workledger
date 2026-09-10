@@ -18,6 +18,7 @@ import { INITIAL_STATE, parseWizardHash, wizardHref } from "../src/features/onbo
 import { outcomeLine } from "../src/features/onboarding/steps/done.js";
 import { RESUME_QUESTION, explainRunFailure } from "../src/features/onboarding/steps/method.js";
 import { jobsOfRun, progressByRepo } from "../src/features/onboarding/use-backfill-progress.js";
+import { formatLocalTime } from "../src/features/jobs/format.js";
 import { OnboardingWizard, reachableStep } from "../src/features/onboarding/wizard.js";
 import { FIXTURE_DISCOVER, FIXTURE_HISTORY, FIXTURE_REPOS, FIXTURE_TRUST_STEP } from "../src/lib/fixtures.js";
 import { createSource } from "../src/lib/ledger-source.js";
@@ -53,6 +54,8 @@ function job(overrides: Partial<Job> = {}): Job {
     error: null,
     cost_estimate_usd: null,
     log_path: null,
+    error_code: null,
+    retry_after: null,
     ...overrides,
   };
 }
@@ -486,8 +489,8 @@ describe("running step", () => {
     // Three repos in the run; mentat had no session in the window, so it queued nothing.
     startBackfillRun([DASHERO, KUBERA, MENTAT], [job({ id: "a" }), job({ id: "b", repo_path: KUBERA })]);
     let statuses: OnboardingStatus[] = [
-      { total: 2, done: 0, failed: 0, running: 2, complete: false },
-      { total: 2, done: 1, failed: 1, running: 0, complete: true },
+      { total: 2, done: 0, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false },
+      { total: 2, done: 1, failed: 1, running: 0, waiting: 0, retryAfter: null, complete: true },
     ];
     let jobs: JobAcrossRepos[] = [
       { ...job({ id: "a" }), repo: FIXTURE_REPOS[0]! },
@@ -567,8 +570,8 @@ describe("Home", () => {
   it("watches a run left behind and announces it when the daemon says complete", async () => {
     startBackfillRun([DASHERO], [job({ id: "a" })]);
     const statuses: OnboardingStatus[] = [
-      { total: 1, done: 0, failed: 0, running: 1, complete: false },
-      { total: 1, done: 1, failed: 0, running: 0, complete: true },
+      { total: 1, done: 0, failed: 0, running: 1, waiting: 0, retryAfter: null, complete: false },
+      { total: 1, done: 1, failed: 0, running: 0, waiting: 0, retryAfter: null, complete: true },
     ];
     const { source } = stubSource({ status: async () => statuses.length > 1 ? statuses.shift()! : statuses[0]! });
     render(
@@ -599,5 +602,57 @@ describe("Home", () => {
     expect(banner.textContent).toBe("Backfilled 2 of 3 sessions; 1 failed — see Jobs.Dismiss");
     expect(banner.className).toContain("bg-warning");
     expect(within(banner).getByRole("link", { name: "see Jobs" }).getAttribute("href")).toBe("#/jobs");
+  });
+});
+
+describe("usage-window waits in the wizard (#100)", () => {
+  const RESET = new Date(Date.now() + 60 * 60_000).toISOString();
+  const SENTENCE = `Waiting for your Claude usage window to reset at ${formatLocalTime(RESET, Date.now())}`;
+
+  it("the running step counts a held job as waiting, not failed, and names the reset", async () => {
+    startBackfillRun([DASHERO], [job({ id: "a" }), job({ id: "b" })]);
+    const { source } = stubSource({
+      status: async () => ({ total: 2, done: 1, failed: 0, running: 0, waiting: 1, retryAfter: RESET, complete: false }),
+      listAllJobs: async () => [
+        { ...job({ id: "a", status: "done" }), repo: FIXTURE_REPOS[0]! },
+        { ...job({ id: "b", error_code: "harness-usage-limit", retry_after: RESET }), repo: FIXTURE_REPOS[0]! },
+      ],
+    });
+    renderWizard(
+      source,
+      wizardHref({ ...INITIAL_STATE, step: "running", repos: [DASHERO], since: "7d", method: "resume" }),
+    );
+    await screen.findByRole("heading", { name: "Backfilling" });
+    expect((await screen.findByRole("status")).textContent).toBe("1 of 2 sessions finished · 1 waiting");
+    expect(screen.getByText(SENTENCE, { exact: false })).toBeTruthy();
+    // Not complete: the step stays.
+    expect(screen.getByRole("heading", { name: "Backfilling" })).toBeTruthy();
+    const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    expect(rows.map((row) => row.textContent)).toEqual(["dashero102"]);
+  });
+
+  it("the done step says the same and does not call the held job a failure", async () => {
+    const { source } = stubSource({
+      status: async () => ({ total: 2, done: 1, failed: 0, running: 0, waiting: 1, retryAfter: RESET, complete: false }),
+    });
+    renderWizard(
+      source,
+      wizardHref({ ...INITIAL_STATE, step: "done", repos: [DASHERO], since: "7d", method: "resume" }),
+    );
+    await screen.findByRole("heading", { name: "Backfilled 1 session across 1 repo" });
+    expect(screen.getByRole("status").textContent).toBe(`1 session waiting. ${SENTENCE}; Home announces the finish.`);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("the method step says replay spends subscription usage and may pause", async () => {
+    const { source } = stubSource();
+    renderWizard(
+      source,
+      wizardHref({ ...INITIAL_STATE, step: "method", repos: [DASHERO], since: "7d", method: "resume" }),
+    );
+    await screen.findByRole("heading", { name: "Resume in your harness" });
+    expect(
+      screen.getByText("Replay uses your Claude/Codex subscription usage; a large backfill may pause until your usage window resets.", { exact: false }),
+    ).toBeTruthy();
   });
 });

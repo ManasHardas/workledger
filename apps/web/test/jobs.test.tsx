@@ -8,8 +8,10 @@ import {
   elapsed,
   formatBytes,
   formatDuration,
+  formatLocalTime,
   formatUsd,
   shortId,
+  waitingUntil,
 } from "../src/features/jobs/format.js";
 import { estimateFrom } from "../src/features/jobs/repair-sheet.js";
 import { createSource } from "../src/lib/ledger-source.js";
@@ -37,6 +39,8 @@ function job(overrides: Partial<Job> = {}): Job {
     error: null,
     cost_estimate_usd: null,
     log_path: null,
+    error_code: null,
+    retry_after: null,
     ...overrides,
   };
 }
@@ -500,3 +504,36 @@ describe("repair and the extraction consent", () => {
 // The clock behind `elapsed` is real; nothing above waits on it, and this keeps a stray timer from
 // leaking into the next file.
 afterEach(() => vi.useRealTimers());
+
+describe("usage-window waits (#100)", () => {
+  const NOW = Date.parse("2026-09-10T20:00:00.000Z");
+
+  it("a queued job is waiting only while its retry_after is still ahead", () => {
+    expect(waitingUntil(job({ retry_after: "2026-09-11T08:00:00.000Z" }), NOW)).toBe("2026-09-11T08:00:00.000Z");
+    expect(waitingUntil(job({ retry_after: "2026-09-10T19:00:00.000Z" }), NOW)).toBeUndefined();
+    expect(waitingUntil(job({ status: "running", retry_after: "2026-09-11T08:00:00.000Z" }), NOW)).toBeUndefined();
+    expect(waitingUntil(job({ retry_after: null }), NOW)).toBeUndefined();
+  });
+
+  it("says when the Claude usage window resets, in the viewer's local time, instead of an error", async () => {
+    const reset = new Date(Date.now() + 60 * 60_000).toISOString();
+    const { source } = stubSource({}, [
+      job({
+        error: "claude-code hit its usage limit; waiting for the window to reset",
+        error_code: "harness-usage-limit",
+        retry_after: reset,
+      }),
+    ]);
+    renderJobs(source);
+
+    const row = await screen.findByRole("listitem", { name: /repair/ });
+    expect(row.textContent).toContain("waiting");
+    expect(within(row).getByRole("status").textContent).toBe(
+      `Waiting for your Claude usage window to reset at ${formatLocalTime(reset, Date.now())}`,
+    );
+    expect(row.textContent).not.toContain("hit its usage limit");
+    // Still a queued job: it can be cancelled, not retried.
+    expect(within(row).getByRole("button", { name: "Cancel" }).hasAttribute("disabled")).toBe(false);
+    expect(within(row).getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
+  });
+});

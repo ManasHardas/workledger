@@ -137,15 +137,20 @@ export interface RunResult {
  * `GET /api/onboarding/status` — the wizard's jobs, by lifecycle state.
  *
  * `running` counts `queued` as well as `running` (the work still ahead), `failed` counts
- * `cancelled` too (the work that will not be done), so `total = done + failed + running` always
- * holds and `complete` is simply "nothing is still ahead" — which makes a wizard that queued
- * nothing complete at once.
+ * `cancelled` too (the work that will not be done), and `waiting` (P8 amendment 7, #100) is the
+ * queued rows held back for the harness's usage window, so `total = done + failed + running +
+ * waiting` always holds and `complete` is simply "nothing is still ahead" — which makes a wizard
+ * that queued nothing complete at once.
  */
 export interface OnboardingStatus {
   total: number;
   done: number;
   failed: number;
   running: number;
+  /** Queued jobs whose `retry_after` is still ahead — waiting for a usage window, not failed. */
+  waiting: number;
+  /** The earliest of those `retry_after` instants, or `null` when nothing is waiting. */
+  retryAfter: string | null;
   complete: boolean;
 }
 

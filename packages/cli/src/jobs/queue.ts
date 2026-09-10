@@ -41,7 +41,35 @@ export interface JobRow {
    * (docs/contracts/p8/daemon-and-api.md §Onboarding endpoints), `null` for every P3 command.
    */
   source: string | null;
+  /** Machine-readable reason beside `error`: {@link USAGE_LIMIT_CODE}, or `null` (#100). */
+  error_code: string | null;
+  /** ISO instant before which a `queued` row is not claimed; `null` when it may run now. */
+  retry_after: string | null;
+  /** How many usage-window waits the row has taken; {@link MAX_USAGE_WAITS} is the last. */
+  retry_waits: number;
 }
+
+/**
+ * The `error_code` of a job the harness refused for its subscription window — #100. The job is
+ * put back on the queue with `retry_after` rather than failed; see {@link deferJob}.
+ */
+export const USAGE_LIMIT_CODE = "harness-usage-limit";
+
+/**
+ * How many usage-window waits one job may take before it is failed for good.
+ *
+ * Three, like {@link MAX_ATTEMPTS}: a window that has reset three times without the resume
+ * getting through is not a window problem, and an operator should see the row rather than a
+ * queue that waits forever.
+ */
+export const MAX_USAGE_WAITS = 3;
+
+/**
+ * How many jobs may be `running` at once across every runner on the machine — cli.md §Jobs
+ * (amended 2026-09-10, #100). One backfill of four repos at once spent a whole usage window on
+ * exit-1 lines; two is the most that share a window without one starving the other.
+ */
+export const MAX_RUNNING_MACHINE = 2;
 
 /**
  * How many times a job may be *claimed* before the queue stops handing it out.
@@ -75,7 +103,8 @@ export interface EnqueueInput {
 
 const COLUMNS =
   "id, kind, session_ulid, repo_path, status, attempts, created_at, started_at, " +
-  "finished_at, heartbeat_at, error, cost_estimate_usd, log_path, source";
+  "finished_at, heartbeat_at, error, cost_estimate_usd, log_path, source, error_code, " +
+  "retry_after, retry_waits";
 
 /** Every job for one repo, newest first (cli.md: "list jobs for the repo (newest first)"). */
 export function listJobs(db: IndexDb, repoPath: string): JobRow[] {
@@ -134,12 +163,15 @@ export function enqueueJob(db: IndexDb, input: EnqueueInput): { job: JobRow; cre
       cost_estimate_usd: null,
       log_path: null,
       source: input.source ?? null,
+      error_code: null,
+      retry_after: null,
+      retry_waits: 0,
     };
     db.connection
       .prepare<JobRow>(
         `INSERT INTO jobs (${COLUMNS}) VALUES (@id, @kind, @session_ulid, @repo_path, @status, ` +
           "@attempts, @created_at, @started_at, @finished_at, @heartbeat_at, @error, " +
-          "@cost_estimate_usd, @log_path, @source)",
+          "@cost_estimate_usd, @log_path, @source, @error_code, @retry_after, @retry_waits)",
       )
       .run(row);
     return { job: row, created: true };
@@ -200,50 +232,132 @@ export function requeueDeadJobs(
   });
 }
 
+/** Which queued rows a runner is asking for. */
+export interface ClaimFilter {
+  repoPath: string;
+  now: Date;
+  /** Restrict to these kinds; every kind when omitted. */
+  kinds?: readonly JobKind[] | undefined;
+  /**
+   * Restrict to one session — `repair <ulid>` runs that session's job and must not pick up the
+   * one a concurrent `scan` queued for another.
+   */
+  sessionUlid?: string | undefined;
+}
+
+/**
+ * The `WHERE` tail and its bindings for one {@link ClaimFilter}: repo, kinds, session.
+ *
+ * Kinds are interpolated rather than bound because the list length varies; every value comes
+ * from the `JobKind` union, never from user input.
+ */
+function filterSql(filter: ClaimFilter): { sql: string; params: string[] } {
+  const kinds =
+    filter.kinds === undefined
+      ? ""
+      : ` AND kind IN (${filter.kinds.map((kind) => `'${kind}'`).join(", ")})`;
+  const bySession = filter.sessionUlid === undefined ? "" : " AND session_ulid = ?";
+  const params =
+    filter.sessionUlid === undefined ? [filter.repoPath] : [filter.repoPath, filter.sessionUlid];
+  return { sql: `repo_path = ? AND status = 'queued'${kinds}${bySession}`, params };
+}
+
+/**
+ * How many jobs are `running` with a live heartbeat, across every repo and every kind.
+ *
+ * Live, not merely `running`: a row a dead process left behind is {@link requeueDeadJobs}'s to
+ * put back, and until it does the row must not hold a slot against the machine-wide cap.
+ */
+export function countRunningJobs(db: IndexDb, now: Date, staleMs: number = DEAD_JOB_MS): number {
+  const cutoff = new Date(now.getTime() - staleMs).toISOString();
+  const row = db.connection
+    .prepare<[string], { count: number }>(
+      "SELECT COUNT(*) AS count FROM jobs WHERE status = 'running' AND heartbeat_at >= ?",
+    )
+    .get(cutoff);
+  return row?.count ?? 0;
+}
+
 /**
  * Claim the oldest queued job for a repo, moving it to `running` and incrementing `attempts`.
  *
  * The whole thing is one `BEGIN IMMEDIATE`, so the row two runners race for is handed to exactly
  * one of them: SQLite serializes the write transactions and the loser's `SELECT` re-runs against
- * the winner's committed state.
+ * the winner's committed state. The machine-wide cap is checked inside the same transaction for
+ * the same reason — two runners in two processes cannot both count one free slot.
  *
- * @param options.kinds restrict the claim to these kinds; every kind when omitted.
- * @param options.sessionUlid restrict the claim to one session — `repair <ulid>` runs that
- * session's job and must not pick up the one a concurrent `scan` queued for another.
- * @returns the claimed row, or `undefined` when the queue is empty for this repo.
+ * A row whose `retry_after` is still ahead is not offered (#100): the harness said when its
+ * window resets, and running the job sooner spends an attempt on the same line.
+ *
+ * @param options.maxRunning refuse when this many jobs are already running machine-wide
+ * ({@link countRunningJobs}); no cap when omitted.
+ * @returns the claimed row, or `undefined` when nothing may be claimed — the queue is empty for
+ * this filter, every match is waiting on its `retry_after`, or the cap is reached. Ask
+ * {@link queueWait} which.
  */
 export function claimJob(
   db: IndexDb,
-  options: { repoPath: string; now: Date; kinds?: readonly JobKind[]; sessionUlid?: string },
+  options: ClaimFilter & { maxRunning?: number | undefined },
 ): JobRow | undefined {
-  const kinds = options.kinds;
   const at = options.now.toISOString();
   return db.transaction(() => {
-    // Kinds are interpolated rather than bound because the list length varies; every value comes
-    // from the `JobKind` union, never from user input.
-    const filter =
-      kinds === undefined
-        ? ""
-        : ` AND kind IN (${kinds.map((kind) => `'${kind}'`).join(", ")})`;
-    const bySession = options.sessionUlid === undefined ? "" : " AND session_ulid = ?";
-    const params: string[] =
-      options.sessionUlid === undefined ? [options.repoPath] : [options.repoPath, options.sessionUlid];
+    if (options.maxRunning !== undefined && countRunningJobs(db, options.now) >= options.maxRunning) {
+      return undefined;
+    }
+    const { sql, params } = filterSql(options);
     const next = db.connection
       .prepare<string[], JobRow>(
-        `SELECT ${COLUMNS} FROM jobs WHERE repo_path = ? AND status = 'queued'${filter}${bySession} ` +
+        `SELECT ${COLUMNS} FROM jobs WHERE ${sql} AND (retry_after IS NULL OR retry_after <= ?) ` +
           "ORDER BY created_at, id LIMIT 1",
       )
-      .get(...params);
+      .get(...params, at);
     if (next === undefined) return undefined;
 
     db.connection
       .prepare<[string, string, string]>(
         "UPDATE jobs SET status = 'running', attempts = attempts + 1, started_at = ?, " +
-          "heartbeat_at = ?, error = NULL WHERE id = ?",
+          "heartbeat_at = ?, error = NULL, error_code = NULL, retry_after = NULL WHERE id = ?",
       )
       .run(at, at, next.id);
-    return { ...next, status: "running", attempts: next.attempts + 1, started_at: at, heartbeat_at: at };
+    return {
+      ...next,
+      status: "running",
+      attempts: next.attempts + 1,
+      started_at: at,
+      heartbeat_at: at,
+      error: null,
+      error_code: null,
+      retry_after: null,
+    };
   });
+}
+
+/** Why a claim came back empty while the queue still holds work for this filter. */
+export type QueueWait =
+  /** A claimable row exists; the machine-wide cap (or a race) kept it. Ask again shortly. */
+  | { kind: "busy" }
+  /** Every matching row is waiting on its `retry_after`; the earliest is `until`. */
+  | { kind: "deferred"; until: string };
+
+/**
+ * What a runner whose {@link claimJob} returned nothing should do next: poll, sleep until a
+ * window resets, or stop because there is nothing left for it.
+ *
+ * @returns `undefined` when no queued row matches the filter at all.
+ */
+export function queueWait(db: IndexDb, filter: ClaimFilter): QueueWait | undefined {
+  const at = filter.now.toISOString();
+  const { sql, params } = filterSql(filter);
+  const row = db.connection
+    .prepare<string[], { ready: number; until: string | null }>(
+      "SELECT SUM(CASE WHEN retry_after IS NULL OR retry_after <= ? THEN 1 ELSE 0 END) AS ready, " +
+        "MIN(CASE WHEN retry_after > ? THEN retry_after END) AS until " +
+        `FROM jobs WHERE ${sql}`,
+    )
+    .get(at, at, ...params);
+  if (row !== undefined && row.ready > 0) return { kind: "busy" };
+  if (row?.until !== null && row?.until !== undefined) return { kind: "deferred", until: row.until };
+  return undefined;
 }
 
 /** Refresh a running job's liveness signal. A no-op for a job that is no longer running. */
@@ -256,6 +370,8 @@ export function heartbeat(db: IndexDb, id: string, now: Date): void {
 /** What a finished job records beyond its status. */
 export interface JobOutcome {
   error?: string | undefined;
+  /** {@link USAGE_LIMIT_CODE} when the harness refused for its window; absent otherwise. */
+  errorCode?: string | undefined;
   costEstimateUsd?: number | undefined;
   logPath?: string | undefined;
 }
@@ -264,8 +380,8 @@ export interface JobOutcome {
 export function completeJob(db: IndexDb, id: string, now: Date, outcome: JobOutcome = {}): void {
   db.connection
     .prepare<[string, string | null, number | null, string]>(
-      "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, log_path = ?, " +
-        "cost_estimate_usd = ? WHERE id = ?",
+      "UPDATE jobs SET status = 'done', finished_at = ?, error = NULL, error_code = NULL, " +
+        "retry_after = NULL, log_path = ?, cost_estimate_usd = ? WHERE id = ?",
     )
     .run(now.toISOString(), outcome.logPath ?? null, outcome.costEstimateUsd ?? null, id);
 }
@@ -280,10 +396,34 @@ export function completeJob(db: IndexDb, id: string, now: Date, outcome: JobOutc
  */
 export function failJob(db: IndexDb, id: string, now: Date, outcome: JobOutcome = {}): void {
   db.connection
-    .prepare<[string, string | null, string | null, string]>(
-      "UPDATE jobs SET status = 'failed', finished_at = ?, error = ?, log_path = ? WHERE id = ?",
+    .prepare<[string, string | null, string | null, string | null, string]>(
+      "UPDATE jobs SET status = 'failed', finished_at = ?, error = ?, error_code = ?, " +
+        "retry_after = NULL, log_path = ? WHERE id = ?",
     )
-    .run(now.toISOString(), outcome.error ?? null, outcome.logPath ?? null, id);
+    .run(now.toISOString(), outcome.error ?? null, outcome.errorCode ?? null, outcome.logPath ?? null, id);
+}
+
+/**
+ * `running` → `queued`, to be claimed no earlier than `retryAfter` — #100.
+ *
+ * The automatic re-queue the contract otherwise reserves for a dead runner, extended to the one
+ * reported failure that is not the job's fault: the harness's subscription window is spent and
+ * it said when the window resets. `attempts` is handed back — a wait is not an attempt — and
+ * `retry_waits` counts instead, so {@link MAX_USAGE_WAITS} bounds how long a row can keep
+ * coming back.
+ */
+export function deferJob(
+  db: IndexDb,
+  id: string,
+  outcome: { retryAfter: string; error?: string | undefined; logPath?: string | undefined },
+): void {
+  db.connection
+    .prepare<[string, string | null, string, string | null, string]>(
+      "UPDATE jobs SET status = 'queued', attempts = MAX(attempts - 1, 0), started_at = NULL, " +
+        "finished_at = NULL, heartbeat_at = NULL, error_code = ?, error = ?, retry_after = ?, " +
+        "retry_waits = retry_waits + 1, log_path = ? WHERE id = ?",
+    )
+    .run(USAGE_LIMIT_CODE, outcome.error ?? null, outcome.retryAfter, outcome.logPath ?? null, id);
 }
 
 /** Why a cancel or retry could not be applied. */
@@ -332,9 +472,20 @@ export function retryJob(db: IndexDb, id: string): JobRow | JobActionError {
     db.connection
       .prepare<[string]>(
         "UPDATE jobs SET status = 'queued', attempts = 0, started_at = NULL, " +
-          "finished_at = NULL, heartbeat_at = NULL, error = NULL WHERE id = ?",
+          "finished_at = NULL, heartbeat_at = NULL, error = NULL, error_code = NULL, " +
+          "retry_after = NULL, retry_waits = 0 WHERE id = ?",
       )
       .run(id);
-    return { ...job, status: "queued", attempts: 0, started_at: null, finished_at: null, error: null };
+    return {
+      ...job,
+      status: "queued",
+      attempts: 0,
+      started_at: null,
+      finished_at: null,
+      error: null,
+      error_code: null,
+      retry_after: null,
+      retry_waits: 0,
+    };
   });
 }

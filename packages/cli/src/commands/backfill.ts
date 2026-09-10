@@ -27,7 +27,7 @@ import { claudeCodeAdapter } from "../adapters/claude-code.js";
 import { SINCE_WINDOWS, loadConfig } from "../config.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { DEFAULT_TIMEOUT_S, resumeSession } from "./repair.js";
-import { enqueueJob } from "../jobs/queue.js";
+import { MAX_USAGE_WAITS, enqueueJob } from "../jobs/queue.js";
 import { jobLogDir, runJobs } from "../jobs/runner.js";
 import { findRepoRoot, isEnabled, listOpenBacklogIds, sessionFile, writeFileAtomic } from "../ledger-fs.js";
 import { statSize } from "../adapters/types.js";
@@ -547,6 +547,11 @@ async function runOneJob(
     outcomes.set(session.ulid, "done");
     return result;
   }
+
+  // The harness's usage window, not this session (#100): the runner puts the job back for the
+  // reset, so the session's outcome is not decided here and no extraction is spent on a
+  // condition that clears by itself — until the row has waited its last time.
+  if (result.code !== undefined && job.retry_waits < MAX_USAGE_WAITS) return result;
 
   if (options.extractFallback !== true) {
     outcomes.set(session.ulid, "failed");

@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader } from "../../components/ui/card.js";
 import { messageOf } from "../../lib/errors.js";
 import { repoHref } from "../../lib/router.js";
 import { detailHref } from "../ledger/detail-route.js";
-import { canCancel, canRetry, elapsed, formatWhen, shortId, statusVariant } from "./format.js";
+import { canCancel, canRetry, elapsed, formatWhen, shortId, statusVariant, waitingSentence, waitingUntil } from "./format.js";
 
 import type { Job, Repo } from "../../lib/ledger-source.js";
 
@@ -26,6 +26,10 @@ import type { Job, Repo } from "../../lib/ledger-source.js";
  * read through `readLog` only when opened — it is the one record of why a resume that exited 0
  * recorded nothing, and the parent supplies the read so the machine-wide tab can scope it to the
  * row's repo.
+ *
+ * A queued job with a `retry_after` still ahead is waiting for the harness's usage window
+ * (#100): it says so with the reset in local time, in place of the error line that would
+ * otherwise read as a failure.
  */
 export function JobRow({
   job,
@@ -50,12 +54,14 @@ export function JobRow({
   readLog: () => Promise<string>;
   canWrite: boolean;
 }) {
+  const waitUntil = waitingUntil(job, now);
   return (
     <li aria-label={`${job.kind} ${shortId(job.id)}`}>
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+            {waitUntil === undefined ? null : <Badge variant="outline">waiting</Badge>}
             <Badge variant="secondary">{job.kind}</Badge>
             {job.attempts > 1 ? (
               <Badge variant="outline">{`${String(job.attempts)} attempts`}</Badge>
@@ -86,7 +92,11 @@ export function JobRow({
             <Field label="elapsed" value={elapsed(job, now)} />
           </dl>
 
-          {job.error === null || job.error === "" ? null : (
+          {waitUntil !== undefined ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {waitingSentence(waitUntil, now)}
+            </p>
+          ) : job.error === null || job.error === "" ? null : (
             <p className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs text-destructive">
               {job.error}
             </p>

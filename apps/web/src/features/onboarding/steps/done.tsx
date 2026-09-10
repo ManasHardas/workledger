@@ -6,6 +6,7 @@ import { cn } from "../../../lib/cn.js";
 import type { AppSource, OnboardingStatus } from "../../../lib/ledger-source.js";
 import { HOME_HREF, machineHref } from "../../../lib/router.js";
 import { useAsync } from "../../../lib/use-async.js";
+import { waitingSentence } from "../../jobs/format.js";
 import { finishBackfillRun } from "../flags.js";
 import { plural } from "../format.js";
 import type { WizardState } from "../state.js";
@@ -86,7 +87,12 @@ function RunSummary({ source, repos }: { source: AppSource; repos: number }) {
           for the log and a retry.
         </p>
       ) : null}
-      {!value.complete ? (
+      {value.waiting > 0 && value.retryAfter !== null ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {plural(value.waiting, "session")} waiting. {waitingSentence(value.retryAfter, Date.now())}; Home announces the finish.
+        </p>
+      ) : null}
+      {value.running > 0 ? (
         <p className="text-sm text-muted-foreground">
           {String(value.running)} still running; Home announces the finish.
         </p>

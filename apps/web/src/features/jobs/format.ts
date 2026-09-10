@@ -105,6 +105,42 @@ export function formatUsd(usd: number): string {
   return usd > 0 && usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
+/**
+ * When a queued job is waiting for the harness's usage window (#100), or `undefined`.
+ *
+ * `retry_after` is only a wait while it is still ahead of `now`: a row whose instant has passed
+ * is an ordinary queued job the runner will claim on its next pass.
+ */
+export function waitingUntil(job: Pick<Job, "status" | "retry_after">, now: number): string | undefined {
+  if (job.status !== "queued" || job.retry_after === null) return undefined;
+  const at = Date.parse(job.retry_after);
+  if (Number.isNaN(at) || at <= now) return undefined;
+  return job.retry_after;
+}
+
+/**
+ * `1:00 AM`, or `Sep 11, 1:00 AM` when that is not today — in the *viewer's* zone, the one
+ * exception to this file's UTC rule. The harness names the reset in the operator's own zone
+ * ("resets 1am (America/Los_Angeles)"), and "wait until 08:00 UTC" would send them to a
+ * converter to learn what they were just told.
+ */
+export function formatLocalTime(iso: string, now: number): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const sameDay = at.toDateString() === new Date(now).toDateString();
+  return at.toLocaleString(
+    undefined,
+    sameDay
+      ? { hour: "numeric", minute: "2-digit" }
+      : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" },
+  );
+}
+
+/** The one sentence the Jobs card and the wizard share for a usage-window wait (#100). */
+export function waitingSentence(retryAfter: string, now: number): string {
+  return `Waiting for your Claude usage window to reset at ${formatLocalTime(retryAfter, now)}`;
+}
+
 /** The tail of a ULID — enough to tell two rows apart without a column of 26 characters. */
 export function shortId(id: string): string {
   return id.length <= 8 ? id : `…${id.slice(-8)}`;

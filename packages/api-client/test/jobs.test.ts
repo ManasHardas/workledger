@@ -40,6 +40,8 @@ function job(over: Partial<Job> = {}): Job {
     error: null,
     cost_estimate_usd: null,
     log_path: null,
+    error_code: null,
+    retry_after: null,
     ...over,
   };
 }

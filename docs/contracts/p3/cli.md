@@ -15,6 +15,26 @@ runner writes a job's output — the resumed session's stdout and stderr, capped
 `~/.workledger/logs/<job id>.log` on success and on failure and records the path in `log_path`;
 `GET /api/jobs/:id/log` serves it (`docs/contracts/p8/daemon-and-api.md` amendment 5).
 
+Amendment (2026-09-10, #100) — the harness usage limit and the machine-wide cap:
+
+- **Cap.** At most **2 jobs `running` at once machine-wide**, across every runner (`repair`,
+  `backfill`, the daemon's resume and onboarding drains) and every kind (`extract` counts too);
+  `--concurrency` bounds one process on top of that. The cap is checked inside the claim
+  transaction; a runner whose claim is refused for the cap polls and claims again.
+- **Detection.** When a resume records no checkpoint and its output carries Claude Code's limit
+  line (`/session limit|usage limit|resets \d/i`, e.g. "You've hit your session limit · resets
+  1am (America/Los_Angeles)"), the job's `error_code` is `harness-usage-limit`, `error` quotes the
+  line and the reset instant, and `retry_after` is that instant — the named wall-clock time in the
+  named IANA zone resolved to the next occurrence (ISO 8601 UTC), or now + 1 h when the line names
+  no time the CLI can read. Codex has no known wording and is not detected.
+- **Automatic requeue.** Such a job goes back to `queued` with `retry_after` set and `attempts`
+  handed back (a wait is not an attempt); `retry_waits` counts instead and after **3** waits the
+  job is `failed` for good with the same `error_code`. A `queued` job whose `retry_after` is ahead
+  is never claimed; a runner with nothing else to claim sleeps until the earliest `retry_after`
+  and finishes the job itself, so a backfill that met the window completes without a retry.
+  `jobs --retry` clears the wait. New columns: `error_code`, `retry_after`, `retry_waits`
+  (migration `0005_job_retry_after.sql`).
+
 ```
 workledger jobs [--json] [--repo <path>]        list jobs for the repo (newest first)
 workledger jobs --cancel <job-id>               queued → cancelled; running → best-effort kill, then cancelled

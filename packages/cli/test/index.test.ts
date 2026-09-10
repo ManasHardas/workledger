@@ -125,6 +125,9 @@ describe("openIndex", () => {
       "cost_estimate_usd",
       "log_path",
       "source",
+      "error_code",
+      "retry_after",
+      "retry_waits",
     ]);
   });
 
@@ -176,20 +179,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0004_job_source.sql` is the latest.
-    expect(row?.value).toBe("4");
+    // Bumped by every migration that lands; `0005_job_retry_after.sql` is the latest.
+    expect(row?.value).toBe("5");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0006_sixth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0005_fifth.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0007_seventh.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0006_sixth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0005_fifth.sql", "0006_sixth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(6);
+    expect(migrate(db.connection, dir)).toEqual(["0006_sixth.sql", "0007_seventh.sql"]);
+    expect(schemaVersion(db.connection)).toBe(7);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -212,7 +215,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql", "0005_job_retry_after.sql"]);
   });
 });
 
@@ -296,10 +299,13 @@ describe("repos (0003_repos.sql)", () => {
   it("is seeded from the sessions an older index already had", () => {
     const db = open();
     // Roll the schema back to before the table existed, re-insert the way 0002 left things,
-    // and let `openIndex` apply 0003 (and 0004, whose column has to go too) over it.
+    // and let `openIndex` apply 0003 (and 0004 and 0005, whose columns have to go too) over it.
     db.connection.exec("DROP TABLE repos");
     db.connection.exec("DROP INDEX jobs_by_source_status");
     db.connection.exec("ALTER TABLE jobs DROP COLUMN source");
+    db.connection.exec("ALTER TABLE jobs DROP COLUMN error_code");
+    db.connection.exec("ALTER TABLE jobs DROP COLUMN retry_after");
+    db.connection.exec("ALTER TABLE jobs DROP COLUMN retry_waits");
     db.connection.prepare("UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'").run();
     db.connection
       .prepare(
