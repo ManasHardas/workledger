@@ -1,0 +1,8 @@
+{
+  "session_id": "0199c3f1-4a2b-7c3d-8e4f-5a6b7c8d9e0f",
+  "transcript_path": "/home/user/.codex/sessions/2026/09/09/rollout-2026-09-09T12-00-00-0199c3f1.jsonl",
+  "cwd": "/home/user/Projects/workledger",
+  "hook_event_name": "SessionStart",
+  "source": "clear",
+  "model": "gpt-5.3-codex"
+}

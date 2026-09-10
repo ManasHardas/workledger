@@ -1,0 +1,11 @@
+{
+  "conversation_id": "conv_01JQ8ZK4T0000000000000000",
+  "workspace_roots": [
+    "/home/user/Projects/workledger"
+  ],
+  "user_email": "<redacted:email>",
+  "transcript_path": "/home/user/.cursor/transcripts/conv_01JQ8ZK4T0000000000000000.jsonl",
+  "hook_event_name": "stop",
+  "status": "completed",
+  "loop_count": 0
+}

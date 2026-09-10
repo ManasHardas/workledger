@@ -20,13 +20,16 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 
-import { DEFAULT_CONFIG_YAML } from "../config.js";
+import { configYaml } from "../config.js";
+import { CODEX_HOOKS_PATH, mergeCodexHooksFile } from "../codex-hooks.js";
+import { CURSOR_HOOKS_PATH, mergeCursorHooksFile } from "../cursor-hooks.js";
 import { EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { LEDGER_DIR, findRepoRoot } from "../ledger-fs.js";
 import { gitDir, parseIni } from "../git-info.js";
 import { SETTINGS_PATH, SettingsError, mergeSettingsFile } from "../settings-merge.js";
-import { probeHarness, processHealthIo } from "./doctor.js";
+import { isInstalled, probeCodex, probeCursor, probeHarness, processHealthIo } from "./doctor.js";
 import type { HealthIo } from "./doctor.js";
+import type { SettingsOutcome } from "../settings-merge.js";
 
 /** Options commander parses for `init`. */
 export interface InitOptions {
@@ -36,6 +39,12 @@ export interface InitOptions {
   yes?: boolean;
   /** Accepted and ignored until P3. Commander sets this to `false` for `--no-backfill`. */
   backfill?: boolean;
+  /**
+   * Harnesses to enable regardless of what is detected on this machine — `--harness cursor` is
+   * how a repo gets `.cursor/hooks.json` on a machine where Cursor is not installed but a
+   * teammate's is. Detected harnesses are always enabled on top of these.
+   */
+  harness?: string[];
 }
 
 /** {@link HealthIo} plus the one thing only `init` needs: a way to ask. */
@@ -134,7 +143,7 @@ function createIfAbsent(file: string, content: string): boolean {
 }
 
 /** Everything step 3 creates, in the order it is reported. */
-function scaffold(root: string): string[] {
+function scaffold(root: string, config: string): string[] {
   const ledger = path.join(root, LEDGER_DIR);
   const created: string[] = [];
   for (const dir of [ledger, path.join(ledger, "sessions"), path.join(ledger, "backlog")]) {
@@ -144,7 +153,7 @@ function scaffold(root: string): string[] {
     }
   }
   const files: Array<[string, string]> = [
-    [path.join(ledger, "config.yaml"), DEFAULT_CONFIG_YAML],
+    [path.join(ledger, "config.yaml"), config],
     [path.join(ledger, "README.md"), LEDGER_README],
     // `backlog/` ships empty, and an empty directory does not survive `git add`; the ledger has
     // to reach a teammate's clone with the directory the checkpoint writer expects.
@@ -176,7 +185,16 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   }
 
   // Step 1 — detect harnesses (metadata only; no transcript is ever opened).
+  const forced = new Set((options.harness ?? []).map((name) => name.trim()).filter((name) => name !== ""));
   const probe = probeHarness(io);
+  const codex = probeCodex(io);
+  const cursor = probeCursor(io);
+  // Claude Code's hooks are always written: it is the harness workledger was built against, and
+  // an absent `claude` binary is a hook file that activates the day one is installed. The other
+  // two are written when this machine has them, or when `--harness` names them.
+  const enableCodex = isInstalled(codex) || forced.has("codex");
+  const enableCursor = isInstalled(cursor) || forced.has("cursor");
+
   io.stdout(`workledger init: ${root}`);
   io.stdout(
     probe.binary === null
@@ -188,6 +206,21 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
       ? `  claude-code store: ${probe.store} — ${probe.projects ?? 0} project(s), last activity ${probe.last_activity ?? "unknown"}`
       : `  claude-code store: ${probe.store} not found`,
   );
+  if (enableCodex) {
+    io.stdout(
+      codex.binary === null
+        ? "  codex: `codex` not found on PATH — the hooks are still written and activate once it is"
+        : `  codex: ${codex.binary}${codex.version === null ? "" : ` (${codex.version})`}`,
+    );
+    io.stdout(
+      codex.store_readable
+        ? `  codex store: ${codex.store} — ${codex.projects ?? 0} rollout(s), last activity ${codex.last_activity ?? "unknown"}`
+        : `  codex store: ${codex.store} not found`,
+    );
+  }
+  if (enableCursor) {
+    io.stdout(`  cursor: ${cursor.binary ?? (cursor.store_readable ? cursor.store : "not found")}`);
+  }
 
   // Step 2 — identity. The one refusal.
   const identity = gitIdentity(root, io);
@@ -204,28 +237,46 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   }
   io.stdout(`  identity: ${identity.name} <${identity.email}>`);
 
-  // Step 3 — scaffold.
-  const created = scaffold(root);
+  // Step 3 — scaffold. `harnesses` records what this run enabled, so `doctor` reports a row for
+  // each of them even on a machine where the harness is not installed.
+  const harnesses = [
+    "claude-code",
+    ...(enableCodex ? ["codex"] : []),
+    ...(enableCursor ? ["cursor"] : []),
+  ];
+  const created = scaffold(root, configYaml(harnesses));
   for (const entry of created) io.stdout(`  created ${entry}`);
 
-  // Step 4 — the settings merge, the only write outside `.workledger/`.
-  let merge;
-  try {
-    merge = await mergeSettingsFile(root, io, options.yes !== true);
-  } catch (error) {
-    if (!(error instanceof SettingsError)) throw error;
-    io.stderr(`workledger init: ${error.message}`);
-    return EXIT_USAGE;
-  }
-  if (merge.status === "declined") {
-    io.stderr(`workledger init: declined; ${SETTINGS_PATH} was not written`);
-    return EXIT_USAGE;
-  }
-  if (merge.status === "written") {
-    io.stdout(`  wrote ${SETTINGS_PATH}${merge.backup === undefined ? "" : ` (backup: ${path.basename(merge.backup)})`}`);
+  // Step 4 — the hook-file merges, the only writes outside `.workledger/`. One per enabled
+  // harness, each additive, each diffed and confirmed before it writes.
+  const ask = options.yes !== true;
+  const merges: Array<[string, () => Promise<SettingsOutcome>]> = [
+    [SETTINGS_PATH, () => mergeSettingsFile(root, io, ask)],
+  ];
+  if (enableCodex) merges.push([CODEX_HOOKS_PATH, () => mergeCodexHooksFile(root, io, ask)]);
+  if (enableCursor) merges.push([CURSOR_HOOKS_PATH, () => mergeCursorHooksFile(root, io, ask)]);
+
+  let allUnchanged = true;
+  for (const [label, run] of merges) {
+    let merge: SettingsOutcome;
+    try {
+      merge = await run();
+    } catch (error) {
+      if (!(error instanceof SettingsError)) throw error;
+      io.stderr(`workledger init: ${error.message}`);
+      return EXIT_USAGE;
+    }
+    if (merge.status === "declined") {
+      io.stderr(`workledger init: declined; ${label} was not written`);
+      return EXIT_USAGE;
+    }
+    if (merge.status === "written") {
+      allUnchanged = false;
+      io.stdout(`  wrote ${label}${merge.backup === undefined ? "" : ` (backup: ${path.basename(merge.backup)})`}`);
+    }
   }
 
-  if (created.length === 0 && merge.status === "unchanged") {
+  if (created.length === 0 && allUnchanged) {
     io.stdout("already enabled");
     return EXIT_OK;
   }
@@ -233,9 +284,20 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   // Step 5 — next steps and the privacy summary.
   io.stdout("");
   io.stdout("Next steps:");
-  io.stdout("  1. Start a Claude Code session in this repo; SessionStart injects the brief.");
-  io.stdout("  2. Run `workledger doctor` to confirm the hooks are live.");
-  io.stdout("  3. Commit `.workledger/` and `.claude/settings.json`.");
+  const steps = [
+    "Start a Claude Code session in this repo; SessionStart injects the brief.",
+    // Codex will not run a project's hooks until the operator has trusted them once. `init`
+    // cannot do it for them — the whole point of the prompt is that a person read the file —
+    // so it names the step rather than leaving a silently inert hook file behind.
+    ...(enableCodex
+      ? [
+          `Trust the hooks in ${CODEX_HOOKS_PATH}: Codex prompts once, on the next \`codex\` run in this repo. Until then it runs none of them.`,
+        ]
+      : []),
+    "Run `workledger doctor` to confirm the hooks are live.",
+    `Commit \`.workledger/\` and ${[SETTINGS_PATH, ...(enableCodex ? [CODEX_HOOKS_PATH] : []), ...(enableCursor ? [CURSOR_HOOKS_PATH] : [])].join(", ")}.`,
+  ];
+  steps.forEach((step, index) => io.stdout(`  ${index + 1}. ${step}`));
   io.stdout("");
   io.stdout("Privacy:");
   for (const line of PRIVACY_SUMMARY) io.stdout(`  · ${line}`);

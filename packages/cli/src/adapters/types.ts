@@ -34,6 +34,24 @@ export interface HookInput {
   stopHookActive: boolean;
   /** `SessionEnd` only. */
   reason: EndReasonInput | undefined;
+  /**
+   * The harness told us this session must never be blocked, whatever the thresholds say.
+   *
+   * Distinct from {@link HookInput.stopHookActive}, which means "a Stop hook has already blocked
+   * this attempt": this one is a property of the session, not of the attempt. Cursor's background
+   * agents are the case it exists for — nobody is at the keyboard to read a `followup_message`,
+   * so the contract records them and never blocks them (docs/contracts/p4/hooks-cursor.md
+   * §Inputs consumed).
+   */
+  neverBlock: boolean;
+  /**
+   * The author's email as the harness reported it, when it reports one.
+   *
+   * Cursor's payloads carry `user_email`; the ledger prefers it over git's `user.email` because
+   * it is the identity the session actually ran as (hooks-cursor.md §Inputs consumed). Absent for
+   * every other harness, where git config is the only source.
+   */
+  userEmail: string | undefined;
 }
 
 /** A required field the payload did not carry. The hook logs one line and allows. */
@@ -72,6 +90,18 @@ export interface ResumeResult {
   spawnError?: string;
 }
 
+/**
+ * The two streams a block may be written to.
+ *
+ * Claude Code and Codex block with exit 2 and the reason on stderr; Cursor blocks with a JSON
+ * object on *stdout* and exit 0 (docs/contracts/p4/hooks-cursor.md §Outputs). The state machine
+ * hands an adapter both and lets it choose, rather than encoding either convention in `hook.ts`.
+ */
+export interface BlockOutput {
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+}
+
 /** What one harness's hook protocol looks like on the wire. */
 export interface HarnessAdapter {
   /** The `harness` value written to the ledger and to the index. */
@@ -86,11 +116,12 @@ export interface HarnessAdapter {
   /**
    * How this harness is told to keep going instead of stopping.
    *
-   * For Claude Code that is exit code 2 with the reason on stderr, never a JSON decision field
-   * (docs/contracts/p1/hooks-claude-code.md §Outputs emitted → Stop). Returns the exit code and
-   * writes the reason; the caller returns the code unchanged.
+   * For Claude Code and Codex that is exit code 2 with the reason on stderr, never a JSON
+   * decision field (docs/contracts/p1/hooks-claude-code.md §Outputs emitted → Stop); for Cursor
+   * it is `{ "followup_message": … }` on stdout with exit 0. Returns the exit code and writes the
+   * reason; the caller returns the code unchanged.
    */
-  blockStop(reason: string, stderr: (line: string) => void): number;
+  blockStop(reason: string, out: BlockOutput): number;
 
   /**
    * How this harness is handed extra context at session start. Returns the stdout text — the
@@ -100,6 +131,15 @@ export interface HarnessAdapter {
 
   /** Byte size of a transcript, or `undefined` when it cannot be measured. */
   transcriptSize(transcriptPath: string | undefined): number | undefined;
+
+  /**
+   * Why this harness has no headless resume, in the words `repair` should print.
+   *
+   * Set only on an adapter that omits {@link HarnessAdapter.resumeHeadless}; `repair` prefers it
+   * over its own generic wording so a harness can name its own fallback
+   * (docs/contracts/p4/hooks-cursor.md §Repair and backfill).
+   */
+  readonly noResumeMessage?: string;
 
   /**
    * Resume one of this harness's sessions headlessly and run `instruction` in it.
@@ -112,6 +152,24 @@ export interface HarnessAdapter {
    * Never throws: a harness that is not installed comes back as `spawnError`.
    */
   resumeHeadless?(sessionId: string, options: ResumeOptions): Promise<ResumeResult>;
+}
+
+/** A non-empty string field, or `undefined` for anything else (including a wrong type). */
+export function textField(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** One member of `allowed`, or `undefined` — an unrecognized value is treated as absent. */
+export function oneOfField<T extends string>(
+  payload: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const value = payload[key];
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
 }
 
 /**

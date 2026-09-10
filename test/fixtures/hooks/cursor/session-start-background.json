@@ -1,0 +1,12 @@
+{
+  "conversation_id": "conv_01JQ8ZK4T0000000000000000",
+  "workspace_roots": [
+    "/home/user/Projects/workledger"
+  ],
+  "user_email": "<redacted:email>",
+  "transcript_path": null,
+  "hook_event_name": "sessionStart",
+  "session_id": "sess_7f3b",
+  "is_background_agent": true,
+  "composer_mode": "agent"
+}

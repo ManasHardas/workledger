@@ -24,7 +24,7 @@
 import process from "node:process";
 import os from "node:os";
 
-import { claudeCodeAdapter } from "../adapters/claude-code.js";
+import { DEFAULT_HARNESS, adapterFor } from "../adapters/registry.js";
 import { isPrivatePath, loadConfig } from "../config.js";
 import { EXIT_OK } from "../exit-codes.js";
 import { checkpointInstruction } from "../instruction.js";
@@ -68,8 +68,8 @@ export interface HookIo {
   adapter: HarnessAdapter;
 }
 
-/** The real environment. */
-function processIo(): HookIo {
+/** The real environment, speaking one harness's wire format. */
+function processIo(adapter: HarnessAdapter): HookIo {
   return {
     readStdin: () => readAll(process.stdin),
     stdout: (line) => void process.stdout.write(`${line}\n`),
@@ -78,7 +78,7 @@ function processIo(): HookIo {
     env: process.env,
     homeDir: os.homedir(),
     now: () => new Date(),
-    adapter: claudeCodeAdapter,
+    adapter,
   };
 }
 
@@ -260,6 +260,11 @@ async function createSession(ctx: Context, size: number | undefined): Promise<st
 
   const ulid = newSessionId();
   const git = gitInfo(root, io.homeDir);
+  // A harness that reports the signed-in user's address knows something git config does not:
+  // whose session this actually was. Cursor's `user_email` is the only such field in P4
+  // (docs/contracts/p4/hooks-cursor.md §Inputs consumed); `author.name` still comes from git.
+  const author =
+    input.userEmail === undefined ? git.author : { ...git.author, email: input.userEmail };
   const text = createSessionText({
     schema_version: SCHEMA_VERSION,
     id: ulid,
@@ -267,7 +272,7 @@ async function createSession(ctx: Context, size: number | undefined): Promise<st
     harness_session_id: input.harnessSessionId,
     repo: git.repo,
     branch: git.branch,
-    author: git.author,
+    author,
     started: nowIso,
     status: "open",
     private: ctx.private,
@@ -379,10 +384,12 @@ async function stop(ctx: Context): Promise<number> {
     return EXIT_OK;
   };
 
-  // A private session records boundaries only, and `stop_hook_active` is the harness telling us
-  // a Stop hook has already blocked this attempt — the documented loop guard, which is in
-  // addition to the index's never-twice rule (hooks-claude-code.md §Outputs emitted → Stop).
-  if (ctx.private || input.stopHookActive) return allow();
+  // A private session records boundaries only; `stop_hook_active` is the harness telling us a
+  // Stop hook has already blocked this attempt — the documented loop guard, which is in addition
+  // to the index's never-twice rule (hooks-claude-code.md §Outputs emitted → Stop); and
+  // `neverBlock` is a session nobody is watching, so a block would be a prompt into an empty
+  // room (Cursor background agents, hooks-cursor.md §Inputs consumed).
+  if (ctx.private || input.stopHookActive || input.neverBlock) return allow();
 
   const blocks = session.blocks_since_checkpoint;
 
@@ -441,7 +448,7 @@ async function stop(ctx: Context): Promise<number> {
 async function block(ctx: Context, ulid: string, previousErrors: string | undefined): Promise<number> {
   const openIds = await listOpenBacklogIds(ctx.root);
   const reason = checkpointInstruction({ sessionId: ulid, openIds, previousErrors });
-  return ctx.io.adapter.blockStop(reason, ctx.io.stderr);
+  return ctx.io.adapter.blockStop(reason, { stdout: ctx.io.stdout, stderr: ctx.io.stderr });
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +545,25 @@ export async function runHook(event: HookEvent, io: HookIo): Promise<number> {
   }
 }
 
-/** @returns the process exit code. */
-export async function hookCommand(event: HookEvent): Promise<number> {
-  return runHook(event, processIo());
+/** Options commander parses for `hook`. */
+export interface HookOptions {
+  /** Which harness's wire format stdin speaks. Defaults to `claude-code`. */
+  harness?: string;
+}
+
+/**
+ * @returns the process exit code.
+ *
+ * An unknown `--harness` is one stderr line and exit 0, not a usage error: the flag is written
+ * into a hook file that outlives the CLI that wrote it, and a hook that failed loudly because the
+ * binary was downgraded would wedge every session in the repo.
+ */
+export async function hookCommand(event: HookEvent, options: HookOptions = {}): Promise<number> {
+  const name = options.harness?.trim() || DEFAULT_HARNESS;
+  const adapter = adapterFor(name);
+  if (adapter === undefined) {
+    process.stderr.write(`workledger: hook ${event}: unknown harness ${name}; allowing\n`);
+    return EXIT_OK;
+  }
+  return runHook(event, processIo(adapter));
 }
