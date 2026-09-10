@@ -374,7 +374,7 @@ describe("session detail — gists, drawer, notes split, memory", () => {
   it("shows a Memory section with each entry and its file badge", async () => {
     renderLedger();
     expect(await screen.findByRole("heading", { name: "Memory", level: 3 })).toBeDefined();
-    for (const entry of ENDED_SESSION.memory!) {
+    for (const entry of ENDED_SESSION.memory) {
       expect(screen.getByText(entry.text)).toBeDefined();
       if (entry.file) expect(screen.getByText(entry.file)).toBeDefined();
     }
@@ -386,7 +386,8 @@ describe("session detail — gists, drawer, notes split, memory", () => {
     expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
     cleanup();
 
-    renderLedger(sessionSource(() => ({ memory: undefined })));
+    // A daemon older than amendment 11 sends no `memory` key at all; the view must not throw.
+    renderLedger(sessionSource(() => ({ memory: undefined as unknown as [] })));
     expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
     expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
   });

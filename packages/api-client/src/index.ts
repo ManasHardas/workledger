@@ -57,7 +57,7 @@ export type {
   LedgerSource,
   Line,
   MachineSource,
-  MemoryEntry,
+  MemoryLine,
   NoteAcrossRepos,
   NoteBy,
   NoteLine,

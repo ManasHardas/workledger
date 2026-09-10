@@ -94,6 +94,8 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
           text: "Should a watcher failure fall back to polling silently, or surface in Health?",
         },
       ],
+      // Nothing was committed to a memory file this session, so the view shows no Memory section.
+      memory: [],
     },
   ),
   session(
@@ -150,8 +152,8 @@ export const FIXTURE_SESSIONS: ParsedSession[] = [
         },
       ],
       memory: [
-        { text: "workledger pushes to origin via the personal SSH alias without asking", file: "MEMORY.md" },
-        { text: "Never run a worktree build against the real ~/.workledger" },
+        { cp: 2, text: "workledger pushes to origin via the personal SSH alias without asking", file: "MEMORY.md" },
+        { cp: 2, text: "Never run a worktree build against the real ~/.workledger" },
       ],
     },
     // Started in the workspace folder above the repos, about this repo and a sibling.

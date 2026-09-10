@@ -36,7 +36,11 @@ import type {
   Verified,
 } from "@workledger/core";
 
-/** A `## Done` line on the wire. `text` is the human gist; `detail` the specifics for agents (amendment 11). */
+/**
+ * A `## Done` line on the wire. `text` is the gist a human reads; `detail` the specifics for
+ * agents, off the indented continuation (P8 amendment 11). `detail` is absent on a line written
+ * before the amendment, which carried its evidence inline and no `detail` at all.
+ */
 export interface Line {
   cp: number;
   text: string;
@@ -46,8 +50,9 @@ export interface Line {
   verified?: Verified;
 }
 
-/** A fact the session committed to a memory file (p8 daemon-and-api.md amendment 11). */
-export interface MemoryEntry {
+/** A `## Memory` line on the wire: one fact the session saved to a memory file (amendment 11). */
+export interface MemoryLine {
+  cp: number;
   text: string;
   file?: string;
 }
@@ -84,8 +89,8 @@ export interface ParsedSession {
   done: Line[];
   remaining: RemainingLine[];
   notes: NoteLine[];
-  /** Absent on ledgers written before amendment 11; the UI treats absent and empty alike. */
-  memory?: MemoryEntry[];
+  /** `## Memory`; `[]` for a file written before amendment 11, which has no such section. */
+  memory: MemoryLine[];
   unparsed: UnparsedLine[];
   /** Where the harness session was started (P8 amendment 10); `null` when not recorded. */
   startedIn: string | null;

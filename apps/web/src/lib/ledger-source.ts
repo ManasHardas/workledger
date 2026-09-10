@@ -88,7 +88,7 @@ export type {
   LedgerSource,
   Line,
   MachineSource,
-  MemoryEntry,
+  MemoryLine,
   NoteAcrossRepos,
   NoteLine,
   NoteRef,
