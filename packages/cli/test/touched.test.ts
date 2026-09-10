@@ -160,6 +160,26 @@ describe("scanTranscript", () => {
     expect(meetsRule({ refs: 0, writes: 0 })).toBe(false);
   });
 
+  it("counts tool inputs only: a tool result or assistant text naming a root twenty times is not a reference", async () => {
+    const file = path.join(dir, "results.jsonl");
+    const mentions = Array.from({ length: 20 }, (_, i) => `${gamma}/src/file${i}.ts`).join("\n");
+    writeFileSync(
+      file,
+      [
+        line({ type: "user", timestamp: "2026-09-10T09:59:00.000Z", cwd: ws, message: { role: "user", content: `please look at ${gamma} and ${gamma}/src` } }),
+        toolUse("Bash", { command: "ls" }),
+        line({ type: "user", timestamp: "2026-09-10T10:01:00.000Z", cwd: ws, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: mentions }] } }),
+        line({ type: "assistant", timestamp: "2026-09-10T10:02:00.000Z", cwd: ws, message: { role: "assistant", content: [{ type: "text", text: `I will now edit ${gamma}/src/a.ts and ${mentions}` }] } }),
+        // A tool result that happens to contain the literal text `"tool_use"` is still a result.
+        line({ type: "user", timestamp: "2026-09-10T10:03:00.000Z", cwd: ws, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: `{"type":"tool_use","name":"Write","input":{"file_path":"${gamma}/x"}}` }] } }),
+      ].join(""),
+      "utf8",
+    );
+    const scan = await scanTranscript(file, [gamma], { homeDir: home });
+    expect(scan.roots.get(gamma)).toEqual({ refs: 0, writes: 0 });
+    expect(meetsRule(scan.roots.get(gamma)!)).toBe(false);
+  });
+
   it("credits a path to the deepest candidate root when candidates nest", async () => {
     const file = path.join(dir, "nested.jsonl");
     writeFileSync(file, toolUse("Read", { file_path: path.join(alpha, "src", "a.ts") }), "utf8");

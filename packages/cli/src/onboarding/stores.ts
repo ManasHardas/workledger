@@ -9,8 +9,8 @@
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { CLAUDE_STORE, firstRecord, projectSlug, readFirstLine } from "../commands/backfill.js";
-import { findRepoRoot } from "../ledger-fs.js";
+import { CLAUDE_STORE, firstRecord, readFirstLine } from "../commands/backfill.js";
+import { isDirectory, sessionRepoOf, slugToPath } from "./session-cwd.js";
 import type { StoreSession } from "../commands/backfill.js";
 
 /** Where Codex keeps its rollouts, relative to the home directory (hooks-codex.md §Headless resume). */
@@ -48,55 +48,9 @@ export interface CodexMeta {
   startedIso: string | null;
 }
 
-/**
- * The directory a Claude Code project slug stands for, or `undefined`.
- *
- * The slug replaces every character that is not a letter or a digit with `-` (`projectSlug`), so
- * it cannot be inverted by string work alone: `-Users-x-my-repo` is `/Users/x/my-repo` or
- * `/Users/x/my/repo` or `/Users/x/my_repo`. It can be inverted against the filesystem, though —
- * at each level, the entries whose own slug is a prefix of what remains are the only ways down.
- * One `readdir` per level, the longest matching name tried first so `repo-a` beats `repo` when
- * both exist, and a match that dead-ends backtracks to the next.
- *
- * POSIX paths only: the slug of an absolute path begins with `-`, standing for the root.
- */
-export function slugToPath(slug: string): string | undefined {
-  if (!slug.startsWith("-") || slug === "-") return undefined;
-  return descend("/", slug.slice(1));
-}
-
-/** The recursion of {@link slugToPath}: `rest` is the slug still to be matched under `dir`. */
-function descend(dir: string, rest: string): string | undefined {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-      .map((entry) => entry.name)
-      .sort((a, b) => b.length - a.length);
-  } catch {
-    return undefined;
-  }
-  for (const name of entries) {
-    const slug = projectSlug(name);
-    if (slug === "") continue;
-    const child = path.join(dir, name);
-    if (rest === slug) return isDirectory(child) ? child : undefined;
-    if (rest.startsWith(`${slug}-`)) {
-      const found = descend(child, rest.slice(slug.length + 1));
-      if (found !== undefined) return found;
-    }
-  }
-  return undefined;
-}
-
-/** `true` for a directory, following symlinks; `false` for anything else or nothing. */
-export function isDirectory(file: string): boolean {
-  try {
-    return statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
+// Moved to `./session-cwd.ts` (#105 review) so `commands/backfill.ts` can invert slugs without a
+// cycle; re-exported so the one import path the tests and `discover.ts` use stays.
+export { isDirectory, slugToPath } from "./session-cwd.js";
 
 /** Every project directory in `<homeDir>/.claude/projects`, resolved to the path it names. */
 export function claudeProjects(homeDir: string): ClaudeProject[] {
@@ -279,7 +233,7 @@ export function enumerateCodexStore(homeDir: string, repoPath: string): StoreSes
   const sessions: StoreSession[] = [];
   for (const session of codexSessions(homeDir)) {
     if (session.cwd === null || session.id === null || !isDirectory(session.cwd)) continue;
-    if ((findRepoRoot(session.cwd) ?? path.resolve(session.cwd)) !== root) continue;
+    if (sessionRepoOf(session.cwd) !== root) continue;
     sessions.push({
       harnessSessionId: session.id,
       file: session.file,

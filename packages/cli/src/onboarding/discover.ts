@@ -29,11 +29,11 @@ import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { configFile } from "../config.js";
-import { findRepoRoot } from "../ledger-fs.js";
 import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
-import { claudeProjects, codexSessions, isDirectory } from "./stores.js";
+import { isDirectory, sessionRepoOf } from "./session-cwd.js";
+import { claudeProjects, codexSessions } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
 import type { DiscoverResult, RepoCandidate } from "@workledger/server";
 
@@ -79,7 +79,7 @@ function candidate(repo: string): RepoCandidate {
  */
 function repoOf(cwd: string, tempDirs: readonly string[]): string | undefined {
   if (!isDirectory(cwd) || underTempDir(cwd, tempDirs)) return undefined;
-  return findRepoRoot(cwd) ?? path.resolve(cwd);
+  return sessionRepoOf(cwd);
 }
 
 /**

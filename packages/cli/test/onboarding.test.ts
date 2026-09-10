@@ -125,6 +125,9 @@ beforeEach(() => {
   writeFileSync(path.join(rollouts, "rollout-odd.jsonl"), '{"type":"event_msg"}\n', "utf8");
   // One transcript far outside every dated window, so `all` (amendment 9) has something to add.
   writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(repoB), "hs-old.jsonl"), "hs-alpha", repoB, new Date(NOW.getTime() - 200 * DAY_MS));
+  // One started in a subdirectory of repo A — its own slug, the repo's session (#105 review).
+  mkdirSync(path.join(repoA, "src"), { recursive: true });
+  writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(path.join(repoA, "src")), "hs-sub.jsonl"), "hs-gamma", path.join(repoA, "src"), new Date(NOW.getTime() - 45 * DAY_MS));
   // Only `packages/` is a subdirectory session; the directory has to exist for the cwd to resolve.
   mkdirSync(path.join(repoA, "packages"), { recursive: true });
   const at = new Date(NOW.getTime() - 1 * DAY_MS);
@@ -157,11 +160,11 @@ describe("the harness stores", () => {
   it("counts transcripts per project directory from metadata", () => {
     const projects = claudeProjects(home).sort((x, y) => x.slug.localeCompare(y.slug));
     expect(projects.map((p) => [p.cwd, p.sessions])).toEqual(
-      [[repoB, 2], [repoA, 2]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+      [[repoB, 2], [repoA, 2], [path.join(repoA, "src"), 1]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
     );
     const files = claudeTranscripts(home).sort((x, y) => x.file.localeCompare(y.file));
     expect(files.map((t) => [t.harnessSessionId, t.cwd]).sort()).toEqual(
-      [["hs-alpha", repoB], ["hs-beta", repoA], ["hs-gamma", repoA], ["hs-old", repoB]].sort(),
+      [["hs-alpha", repoB], ["hs-beta", repoA], ["hs-gamma", repoA], ["hs-old", repoB], ["hs-sub", path.join(repoA, "src")]].sort(),
     );
     expect(files.every((t) => t.bytes > 0 && t.mtimeMs > 0)).toBe(true);
   });
@@ -205,8 +208,9 @@ describe("discoverRepos", () => {
       hasGit: true,
       enabled: false,
       suggested: true,
-      // The Codex session in `repo-a/packages` counts for the repo above it.
-      harnessSessions: { "claude-code": 2, codex: 1 },
+      // The Codex session in `repo-a/packages` and the Claude Code one in `repo-a/src` count
+      // for the repo above them.
+      harnessSessions: { "claude-code": 3, codex: 1 },
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
       startedIn: [],
       touchedSessions: 0,
@@ -287,9 +291,11 @@ describe("historyWindows", () => {
 
     expect(windows["7d"]).toEqual({ sessions: 2, bytes: bytes("hs-gamma") + codex });
     expect(windows["30d"]).toEqual({ sessions: 3, bytes: bytes("hs-gamma") + bytes("hs-beta") + codex });
-    expect(windows["90d"]).toEqual({ sessions: 4, bytes: bytes("hs-gamma") + bytes("hs-beta") + bytes("hs-alpha") + codex });
+    // The 45-day-old session started in `repo-a/src` is repo A's, as discover counts it.
+    const sub = statSync(path.join(home, CLAUDE_STORE, projectSlug(path.join(repoA, "src")), "hs-sub.jsonl")).size;
+    expect(windows["90d"]).toEqual({ sessions: 5, bytes: bytes("hs-gamma") + bytes("hs-beta") + bytes("hs-alpha") + codex + sub });
     // `all` (amendment 9): the 200-day-old transcript in repo B, which no dated window sees.
-    expect(windows.all).toEqual({ sessions: 5, bytes: bytes("hs-gamma") + bytes("hs-beta") + 2 * bytes("hs-alpha") + codex });
+    expect(windows.all).toEqual({ sessions: 6, bytes: bytes("hs-gamma") + bytes("hs-beta") + 2 * bytes("hs-alpha") + codex + sub });
     expect((await historyWindows([repoC], io)).windows["90d"]).toEqual({ sessions: 0, bytes: 0 });
   });
 });
@@ -379,20 +385,21 @@ describe("backfillPlan", () => {
 
   it("prices a resume in seconds from each repo's config, Codex sessions included", async () => {
     // Repo A's 2 Claude Code sessions at 45 s over concurrency 2 → 45, plus its Codex session's
-    // ceil(45 / 2) = 23; repo B's one (60 days old) is outside 30d and adds 23 inside 90d.
+    // ceil(45 / 2) = 23; repo B's one (60 days old) is outside 30d and adds 23 inside 90d, where
+    // repo A's third Claude Code session (45 days old, started in `src/`) makes ceil(135 / 2) = 68.
     expect(await backfillPlan({ repos: [repoA, repoB], since: "30d", method: "resume" }, io)).toEqual({
       sessions: 3,
       estimate: { seconds: 45 + 23 },
     });
     expect(await backfillPlan({ repos: [repoA, repoB], since: "90d", method: "resume" }, io)).toEqual({
-      sessions: 4,
-      estimate: { seconds: 45 + 23 + 23 },
+      sessions: 5,
+      estimate: { seconds: 68 + 23 + 23 },
     });
   });
 
   it("prices an extraction in tokens and USD, says whether the key is missing, and reports Codex as unsupported", async () => {
     const without = await backfillPlan({ repos: [repoA, repoB], since: "90d", method: "extract" }, io);
-    expect(without.sessions).toBe(3);
+    expect(without.sessions).toBe(4);
     expect(without.unsupported).toEqual({ codex: 1 });
     expect(await backfillPlan({ repos: [repoB], since: "90d", method: "extract" }, io)).not.toHaveProperty("unsupported");
     expect(without.estimate).toMatchObject({ needsApiKey: true });
@@ -458,11 +465,13 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     );
 
     expect(queued.repos).toEqual([repoA, repoB]);
-    expect(queued.jobs).toHaveLength(4);
+    expect(queued.jobs).toHaveLength(5);
     expect(queued.jobs.map((job) => [job.kind, job.status, job.source])).toEqual(
-      Array.from({ length: 4 }, () => ["repair", "queued", ONBOARDING_SOURCE]),
+      Array.from({ length: 5 }, () => ["repair", "queued", ONBOARDING_SOURCE]),
     );
-    expect(queued.jobs.filter((job) => job.repo_path === repoA)).toHaveLength(3);
+    expect(queued.jobs.filter((job) => job.repo_path === repoA)).toHaveLength(4);
+    // The subdirectory session is repo A's row, with its own cwd kept.
+    expect(withDb((db) => db.getSessionByHarnessId("claude-code", "hs-sub", repoA))).toMatchObject({ repo_path: repoA, cwd: path.join(repoA, "src") });
     // The ledger side of each row: a `source: backfill` session file, as `workledger backfill` writes.
     for (const job of queued.jobs) {
       expect(readFileSync(path.join(job.repo_path, ".workledger", "sessions", `${job.session_ulid}.md`), "utf8")).toContain("source: backfill");
@@ -473,7 +482,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     expect(codexRow).toMatchObject({ repo_path: repoA, harness: "codex", status: "ended" });
     expect(queued.jobs.map((job) => job.session_ulid)).toContain(codexRow?.ulid);
     expect(readFileSync(path.join(repoA, ".workledger", "sessions", `${codexRow?.ulid}.md`), "utf8")).toContain("harness: codex");
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 0, failed: 0, running: 4, waiting: 0, retryAfter: null, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 5, done: 0, failed: 0, running: 5, waiting: 0, retryAfter: null, complete: false });
 
     // A second run finds nothing fresh: the sessions are in the index now.
     const again = await queueOnboardingBackfill({ repos: [repoA, repoB], since: "90d", method: "resume", consent: true }, io);
@@ -491,7 +500,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     } finally {
       db.close();
     }
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 1, failed: 1, running: 2, waiting: 0, retryAfter: null, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 5, done: 1, failed: 1, running: 3, waiting: 0, retryAfter: null, complete: false });
   });
 
   it("queues extract jobs for method extract once a key is present, and none for a Codex session", async () => {
@@ -501,7 +510,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
 
     // Repo A's Codex session is left for a later resume: no row, no job.
     const forA = await queueOnboardingBackfill({ repos: [repoA], since: "90d", method: "extract", consent: true }, keyed);
-    expect(forA.jobs.map((job) => job.kind)).toEqual(["extract", "extract"]);
+    expect(forA.jobs.map((job) => job.kind)).toEqual(["extract", "extract", "extract"]);
     expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID, repoA))).toBeUndefined();
   });
 
@@ -544,7 +553,7 @@ describe("the injected OnboardingOps", () => {
     const discovered = await ops.discover();
     expect(discovered.known).toEqual([]);
     expect(discovered.found.map((c) => [c.path, c.suggested])).toEqual([[repoB, false], [repoA, false], [repoC, false]]);
-    expect((await ops.history([repoA])).windows["90d"].sessions).toBe(3);
+    expect((await ops.history([repoA])).windows["90d"].sessions).toBe(4);
     expect((await ops.init({ repos: [repoA] })).results[0]?.ok).toBe(true);
     expect((await ops.plan({ repos: [repoA], since: "7d", method: "resume" })).sessions).toBe(2);
     const run = await ops.run({ repos: [repoA], since: "7d", method: "resume", consent: true });
@@ -602,7 +611,7 @@ describe("workledger onboard --json", () => {
 
     const plain = terminal();
     expect(await runOnboard({}, plain)).toBe(EXIT_OK);
-    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 2 claude-code · 1 codex)`);
+    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 3 claude-code · 1 codex)`);
     expect(plain.out.join("\n")).toContain(`[3] ${repoC}  (found; no agent sessions)`);
 
     for (const repo of [repoA, repoB, repoC]) expect(existsSync(path.join(repo, ".workledger"))).toBe(false);

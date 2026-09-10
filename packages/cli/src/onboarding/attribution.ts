@@ -14,11 +14,10 @@
  * what makes the repair instruction say `--repo`.
  */
 import { realpathSync } from "node:fs";
-import path from "node:path";
 
-import { findRepoRoot } from "../ledger-fs.js";
 import { OS_TEMP_DIRS, underTempDir } from "./repo-path.js";
-import { claudeTranscripts, codexSessions, isDirectory } from "./stores.js";
+import { isDirectory, sessionRepoOf } from "./session-cwd.js";
+import { claudeTranscripts, codexSessions } from "./stores.js";
 import { meetsRule, touchedRoots } from "./touched.js";
 import type { StoreSession } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
@@ -94,7 +93,7 @@ function transcripts(homeDir: string, tempDirs: readonly string[]): Transcript[]
 /**
  * The touched-path attribution of every transcript in both stores to `repos`.
  *
- * Every transcript is scanned against every repo but the one its cwd is in (`findRepoRoot`, the
+ * Every transcript is scanned against every repo but the one its cwd is in (`sessionRepoOf`, the
  * cwd rule's own reckoning), through the index cache, so the second call over an unchanged store
  * reads no transcript at all. Repos are keyed as given; the comparison is on resolved paths, so
  * a symlinked spelling is the same repo.
@@ -119,7 +118,7 @@ export async function attributeTranscripts(
 
   const all = transcripts(homeDir, tempDirs).sort((a, b) => b.session.mtimeMs - a.session.mtimeMs);
   for (const { harness, session } of all) {
-    const own = realOr(findRepoRoot(session.cwd) ?? path.resolve(session.cwd));
+    const own = realOr(sessionRepoOf(session.cwd));
     const candidates = keys.filter((key) => key !== own);
     if (candidates.length === 0) continue;
     const tallies = await touchedRoots(db, session.file, candidates, { cwd: session.cwd, homeDir });
