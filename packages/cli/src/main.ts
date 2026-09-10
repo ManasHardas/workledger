@@ -4,6 +4,7 @@ import { Argument, Command, CommanderError, InvalidArgumentError } from "command
 
 import { HOOK_EVENTS } from "./commands/hook-events.js";
 import { EXIT_OK, EXIT_USAGE } from "./exit-codes.js";
+import type { BackfillOptions } from "./commands/backfill.js";
 import type { BriefOptions } from "./commands/brief.js";
 import type { CheckpointOptions } from "./commands/checkpoint.js";
 import type { DoctorOptions } from "./commands/doctor.js";
@@ -155,13 +156,31 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .command("repair")
     .description("record the missing digest for a crashed session by resuming it")
     .addArgument(new Argument("<ulid>", "the session to repair"))
-    .option("--extract", "reconstruct from the transcript instead of resuming (arrives with #54)")
+    .option("--extract", "reconstruct the digest from the transcript instead of resuming")
     .option("--yes", "skip the extraction spend prompt")
     .option("--timeout <s>", "seconds before the resumed session is killed", positiveInteger)
     .option("--force", "repair a session that is still open, or ended without needs_repair")
     .action(async (ulid: string, options: RepairOptions) => {
       const { repairCommand } = await import("./commands/repair.js");
       exit.code = await repairCommand(ulid, options);
+    });
+
+  program
+    .command("backfill")
+    .description("record digests for harness sessions that predate workledger")
+    .option("--repo <path>", "repo to backfill (default: the repo root above cwd)")
+    .option("--since <window>", "7d, 14d, 30d or all (default: config.backfill.since)")
+    .option(
+      "--concurrency <n>",
+      "sessions digested at once (default: config.backfill.concurrency)",
+      positiveInteger,
+    )
+    .option("--dry-run", "print the table and the estimate, then stop")
+    .option("--yes", "skip the confirmation prompt")
+    .option("--extract-fallback", "reconstruct a session from its transcript when it will not resume")
+    .action(async (options: BackfillOptions) => {
+      const { backfillCommand } = await import("./commands/backfill.js");
+      exit.code = await backfillCommand(options);
     });
 
   program

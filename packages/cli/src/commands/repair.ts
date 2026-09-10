@@ -2,8 +2,9 @@
  * `workledger repair <ulid> [--extract] [--yes] [--timeout <s>] [--force]` —
  * docs/contracts/p3/cli.md §`workledger repair`.
  *
- * The resume path only; the extraction fallback (step 4 of the contract) is #54 and is refused
- * here with the exit code the contract gives a failed job.
+ * Steps 1–3 (the resume path) live here; step 4, the extraction fallback, lives under
+ * `src/extract/` and is reached from here with a dynamic import so the resume path never loads
+ * a transcript parser it does not use.
  *
  * What makes this cheap is that workledger never reads the transcript: the harness is asked to
  * resume the session it already holds and to run one `workledger checkpoint`, so the digest is
@@ -15,6 +16,7 @@
 import process from "node:process";
 
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
+import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
 import { enqueueJob } from "../jobs/queue.js";
@@ -33,9 +35,9 @@ import type { JobResult } from "../jobs/runner.js";
 
 /** Options commander parses for `repair`. */
 export interface RepairOptions {
-  /** Reconstruct the digest from the transcript instead of resuming. Arrives with #54. */
+  /** Reconstruct the digest from the transcript instead of resuming (contract step 4). */
   extract?: boolean;
-  /** Skip the extraction spend prompt. Consumed by the `--extract` path (#54). */
+  /** Skip the extraction spend prompt. Consumed by the `--extract` path. */
   yes?: boolean;
   /** Seconds before the resumed harness is killed. */
   timeout?: number;
@@ -64,7 +66,26 @@ export interface RepairIo {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
   now: () => Date;
+  /** Mints job ids: a bare ULID. */
   newId: () => string;
+  /**
+   * Mints the `WL-<ulid>` of a `new: true` Remaining item — `--extract` only, and never
+   * {@link RepairIo.newId}, which is a *job* id and would fail the backlog-id rule. The resume
+   * path needs none of this: the resumed agent runs its own `workledger checkpoint` process,
+   * which mints its own.
+   */
+  newBacklogId?: (() => string) | undefined;
+  /**
+   * Ask the operator a yes/no question. Only the `--extract` path asks one — the spend prompt —
+   * and `--yes` replaces this with a function that never prompts.
+   */
+  confirm?: (question: string) => Promise<boolean>;
+  /** `ANTHROPIC_API_KEY`, read per call. `--extract` only; never stored anywhere. */
+  apiKey?: () => string | undefined;
+  /** Injected so the extraction test can drive the whole path without a network. */
+  fetchImpl?: typeof globalThis.fetch;
+  /** Overrides `WORKLEDGER_HOME` for the checkpoint the extraction writes through. */
+  home?: string | undefined;
 }
 
 /** Why a session may be repaired, or why it may not. */
@@ -118,7 +139,7 @@ async function readFrontmatter(
 }
 
 /** Mark the session repaired in the ledger, atomically (cli.md: "status `repaired`"). */
-async function markRepaired(root: string, ulid: string, nowIso: string): Promise<void> {
+export async function markRepaired(root: string, ulid: string, nowIso: string): Promise<void> {
   const parsed = await readFrontmatter(root, ulid);
   if (parsed === undefined) return;
   const { stringifyFrontmatter } = await import("@workledger/core/frontmatter");
@@ -139,11 +160,91 @@ function failureReason(
   return "the resumed session recorded no checkpoint";
 }
 
+/** What {@link resumeSession} needs: the index, the repo, the harness, and a clock. */
+export interface ResumeSessionIo {
+  db: IndexDb;
+  root: string;
+  adapter: HarnessAdapter;
+  now: () => Date;
+}
+
+/** The rest of what one resume attempt needs. */
+export interface ResumeSessionOptions {
+  /** Why the session is being repaired, as one clause — goes into the instruction. */
+  reason: string;
+  /** Open `WL-` ids the resumed agent may reference. Passed in so a batch reads them once. */
+  openIds: readonly string[];
+  timeoutS: number;
+}
+
+/**
+ * Resume one session and see whether a checkpoint came out of it — contract step 2, as a job
+ * handler.
+ *
+ * Exported because `backfill` runs exactly this for every session it enumerates
+ * (docs/contracts/p3/cli.md §`workledger backfill` step 4: "queue a `repair` job (resume path)").
+ * Sharing the function rather than the shape is what keeps the two commands' notion of "repaired"
+ * from drifting: the `pending_trigger` write, the checkpoint-count comparison that decides the
+ * outcome, and the frontmatter update are all here, once.
+ *
+ * Never throws. The runner records a throw as a failure, but the states this can leave behind —
+ * a `pending_trigger` on a session whose checkpoint never landed above all — are cleaned up in
+ * the `finally` rather than left to it.
+ */
+export async function resumeSession(
+  session: SessionRow,
+  options: ResumeSessionOptions,
+  io: ResumeSessionIo,
+): Promise<JobResult> {
+  const { db, root } = io;
+  const ulid = session.ulid;
+  const resume = io.adapter.resumeHeadless?.bind(io.adapter);
+  if (resume === undefined) {
+    return { ok: false, error: `${io.adapter.harness} cannot resume a session headlessly` };
+  }
+
+  const before = db.countCheckpoints(ulid);
+  const instruction = repairInstruction({
+    sessionId: ulid,
+    openIds: options.openIds,
+    sinceCheckpoint: before,
+    reason: options.reason,
+  });
+
+  // Set *before* the spawn: the resumed agent's checkpoint reads it off the session row, which
+  // is what keeps `--session <ulid>` the only thing on its command line
+  // (plans/feature-p3-data-flow.md §Repair by resume).
+  db.updateSession(ulid, { pending_trigger: "repair", updated_at: io.now().toISOString() });
+  try {
+    const result = await resume(session.harness_session_id, {
+      cwd: root,
+      instruction,
+      allowedTools: REPAIR_ALLOWED_TOOLS,
+      timeoutMs: options.timeoutS * 1000,
+    });
+
+    // The outcome is measured by what landed in the ledger, not by the harness's exit code: a
+    // session that exits 0 without running the checkpoint has repaired nothing.
+    if (db.countCheckpoints(ulid) > before) {
+      await markRepaired(root, ulid, io.now().toISOString());
+      db.updateSession(ulid, { status: "repaired", updated_at: io.now().toISOString() });
+      return { ok: true };
+    }
+    return { ok: false, error: failureReason(result, options.timeoutS) };
+  } finally {
+    // Whatever happened, the next checkpoint in this session is an ordinary one. `checkpoint`
+    // clears the column itself when it consumes it; this is the path where it never did.
+    if (db.getSessionByUlid(ulid)?.pending_trigger !== null) {
+      db.updateSession(ulid, { pending_trigger: null, updated_at: io.now().toISOString() });
+    }
+  }
+}
+
 /**
  * The whole command, with its environment injected.
  *
  * @returns the process exit code: `0`, `1` for a session that may not be repaired, `5` when the
- * job did not produce a checkpoint.
+ * job did not produce a checkpoint, `6` when the extraction spend was refused.
  */
 export async function runRepair(
   ulid: string,
@@ -170,15 +271,14 @@ export async function runRepair(
   }
 
   if (options.extract === true) {
-    // Step 4 of the contract. Refused rather than silently ignored: an operator who reached for
-    // `--extract` did so because the resume already failed, and a command that quietly resumed
-    // again would spend the same minutes on the same failure.
-    io.stderr("repair: extraction arrives with #54");
-    return EXIT_JOB_FAILED;
+    // Step 4 of the contract, in its own module: an operator reaches for `--extract` because the
+    // resume already failed, so this path never resumes again — it reads the transcript itself.
+    // Imported dynamically so the resume path never loads the parser or the API client.
+    const { runExtract } = await import("../extract/run.js");
+    return await runExtract(session, { yes: options.yes === true }, io);
   }
 
-  const resume = io.adapter.resumeHeadless?.bind(io.adapter);
-  if (resume === undefined) {
+  if (io.adapter.resumeHeadless === undefined) {
     io.stderr(`repair: ${io.adapter.harness} cannot resume a session headlessly`);
     io.stderr(`run \`workledger repair ${ulid} --extract\` to reconstruct the digest instead`);
     return EXIT_JOB_FAILED;
@@ -189,42 +289,13 @@ export async function runRepair(
   let reason = "";
 
   const handler = async (): Promise<JobResult> => {
-    const before = db.countCheckpoints(ulid);
-    const instruction = repairInstruction({
-      sessionId: ulid,
-      openIds,
-      sinceCheckpoint: before,
-      reason: eligible.reason,
-    });
-
-    // Set *before* the spawn: the resumed agent's checkpoint reads it off the session row, which
-    // is what keeps `--session <ulid>` the only thing on its command line
-    // (plans/feature-p3-data-flow.md §Repair by resume).
-    db.updateSession(ulid, { pending_trigger: "repair", updated_at: io.now().toISOString() });
-    try {
-      const result = await resume(session.harness_session_id, {
-        cwd: root,
-        instruction,
-        allowedTools: REPAIR_ALLOWED_TOOLS,
-        timeoutMs: timeoutS * 1000,
-      });
-
-      // The outcome is measured by what landed in the ledger, not by the harness's exit code: a
-      // session that exits 0 without running the checkpoint has repaired nothing.
-      if (db.countCheckpoints(ulid) > before) {
-        await markRepaired(root, ulid, io.now().toISOString());
-        db.updateSession(ulid, { status: "repaired", updated_at: io.now().toISOString() });
-        return { ok: true };
-      }
-      reason = failureReason(result, timeoutS);
-      return { ok: false, error: reason };
-    } finally {
-      // Whatever happened, the next checkpoint in this session is an ordinary one. `checkpoint`
-      // clears the column itself when it consumes it; this is the path where it never did.
-      if (db.getSessionByUlid(ulid)?.pending_trigger !== null) {
-        db.updateSession(ulid, { pending_trigger: null, updated_at: io.now().toISOString() });
-      }
-    }
+    const result = await resumeSession(
+      session,
+      { reason: eligible.reason, openIds, timeoutS },
+      io,
+    );
+    if (!result.ok) reason = result.error ?? "";
+    return result;
   };
 
   enqueueJob(db, {
@@ -265,7 +336,7 @@ export async function repairCommand(ulid: string, options: RepairOptions): Promi
     return EXIT_NOT_ENABLED;
   }
 
-  const { newSessionId } = await import("@workledger/core/ids");
+  const { newBacklogId, newSessionId } = await import("@workledger/core/ids");
   const { openIndex } = await import("../index/db.js");
   const home = process.env["WORKLEDGER_HOME"]?.trim();
   const db = openIndex(home ? { home } : {});
@@ -278,8 +349,31 @@ export async function repairCommand(ulid: string, options: RepairOptions): Promi
       stderr: (line) => void process.stderr.write(`${line}\n`),
       now: () => new Date(),
       newId: newSessionId,
+      newBacklogId,
+      confirm: terminalConfirm,
+      // Read per call, from the environment only (cli.md step 4). Never cached in a variable
+      // that outlives the request and never written anywhere.
+      apiKey: () => process.env[API_KEY_ENV]?.trim() || undefined,
+      home,
     });
   } finally {
     db.close();
+  }
+}
+
+/**
+ * The spend prompt, on stderr so a `--json` consumer's stdout stays parseable.
+ *
+ * Imported lazily for the same reason every other body in the CLI is: `readline/promises` is
+ * module-init cost that a `repair` without `--extract` should never pay.
+ */
+async function terminalConfirm(question: string): Promise<boolean> {
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await rl.question(`${question} [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
   }
 }
