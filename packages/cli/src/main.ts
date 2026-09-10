@@ -12,6 +12,7 @@ import type { HookEvent } from "./commands/hook-events.js";
 import type { HookOptions } from "./commands/hook.js";
 import type { InitOptions } from "./commands/init.js";
 import type { JobsOptions } from "./commands/jobs.js";
+import type { OnboardOptions } from "./commands/onboard.js";
 import type { OpenOptions } from "./commands/open.js";
 import type { RepairOptions } from "./commands/repair.js";
 import type { ScanOptions } from "./commands/scan.js";
@@ -231,6 +232,21 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .action(async (options: JobsOptions) => {
       const { jobsCommand } = await import("./commands/jobs.js");
       exit.code = await jobsCommand(options);
+    });
+
+  // P8 (docs/contracts/p8/daemon-and-api.md §CLI): terminal parity for the onboarding wizard.
+  program
+    .command("onboard")
+    .description("pick repos to track, enable them, and backfill their agent sessions")
+    .option("--json", "emit the six onboarding API objects as one JSON document")
+    .option("--roots <dirs>", "comma-separated directories to search for repos (default: ~/Projects)")
+    .option("--select <paths>", "comma-separated repos to enable (default: every repo with agent sessions)")
+    .option("--since <window>", "backfill window: 7d, 30d, 90d or none")
+    .option("--method <method>", "how to digest past sessions: resume, extract or none")
+    .option("--yes", "take every default and consent to the backfill")
+    .action(async (options: OnboardOptions) => {
+      const { onboardCommand } = await import("./commands/onboard.js");
+      exit.code = await onboardCommand(options);
     });
 
   // `backlog` and `note` are pass-throughs: the sub-command tables, their flags and their help

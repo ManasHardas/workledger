@@ -8,11 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 
 /**
- * The commands `--help` must list: `open` and `stop` from P8 (docs/contracts/p8/daemon-and-api.md
- * §CLI — `open` is also what a bare `workledger` runs), the six from docs/contracts/p1/cli.md,
- * `serve` (docs/contracts/p2/api.md) and `note` alongside the now-live `backlog`
- * (docs/contracts/p2/backlog-cli.md), and `scan`, `repair`, `backfill` and `jobs` from P3
- * (docs/contracts/p3/cli.md).
+ * The commands `--help` must list: `open`, `stop` and `onboard` from P8
+ * (docs/contracts/p8/daemon-and-api.md §CLI — `open` is also what a bare `workledger` runs), the
+ * six from docs/contracts/p1/cli.md, `serve` (docs/contracts/p2/api.md) and `note` alongside the
+ * now-live `backlog` (docs/contracts/p2/backlog-cli.md), and `scan`, `repair`, `backfill` and
+ * `jobs` from P3 (docs/contracts/p3/cli.md).
  */
 const COMMANDS = [
   "open",
@@ -27,6 +27,7 @@ const COMMANDS = [
   "repair",
   "backfill",
   "jobs",
+  "onboard",
   "backlog",
   "note",
 ];
@@ -53,6 +54,7 @@ const OPTIONS: Record<string, string[]> = {
   repair: ["--extract", "--yes", "--timeout", "--force"],
   backfill: ["--repo", "--since", "--concurrency", "--dry-run", "--yes", "--extract-fallback"],
   jobs: ["--repo", "--json", "--cancel", "--retry"],
+  onboard: ["--json", "--roots", "--select", "--since", "--method", "--yes"],
   // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
   // is registered here beyond the pass-through argument.
   backlog: [],
@@ -84,7 +86,7 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the fourteen commands", () => {
+  it("registers exactly the fifteen commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 

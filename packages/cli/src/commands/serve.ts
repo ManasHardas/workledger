@@ -539,10 +539,11 @@ export async function serveCommand(
   options: ServeOptions = {},
   io: ServeIo = processIo(),
 ): Promise<number> {
-  const [{ LOOPBACK, createApp }, ops, { VERSION }] = await Promise.all([
+  const [{ LOOPBACK, createApp }, ops, { VERSION }, { onboardingOps }] = await Promise.all([
     import("@workledger/server"),
     import("../backlog-ops.js"),
     import("../main.js"),
+    import("./onboarding-ops.js"),
   ]);
 
   // Which repos. `--repo` is single-repo mode; without it, the machine.
@@ -574,6 +575,7 @@ export async function serveCommand(
     ...(single === undefined ? { repos: roots } : { repoRoot: single }),
     ops,
     jobs,
+    onboarding: onboardingOps(io),
     cliVersion: VERSION,
     env: io.env,
     ...(home ? { home } : {}),
