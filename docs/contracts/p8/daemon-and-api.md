@@ -20,14 +20,16 @@ workledger onboard [--json] [--roots <a,b>] [--select <paths>] [--since 7d|30d|9
 
 ## Repo identity
 
-`repoId` = first 12 hex chars of sha256 of the absolute `.workledger` root path. `GET /api/repos` →
+`repoId` = first 12 hex chars of sha256 of the absolute path of the repo's `.workledger` directory (`<root>/.workledger`). `GET /api/repos` →
 `Repo[]`: `{ id, path, name (basename), enabled: true, harnesses: string[], sessions7d, openBacklog,
 openNotes, lastHookAt, health: "ok"|"warn"|"broken" }`, from the index and each repo's ledger.
 
 ## Multi-repo endpoints
 
 Every P2/P3 endpoint gains a required `repo` query parameter (`?repo=<id>`) in machine mode; a
-missing or unknown id → 400 `{ code: "repo-required" }` / 404 `{ code: "repo-not-found" }`. In
+missing or unknown id → 400 `{ code: "repo-required" }` / 404 `{ code: "repo-not-found" }`.
+Exempt (machine-wide by nature): `/api/health`, `/api/repos`, `/api/notes/all`, `/api/jobs/all`,
+`/api/events`, `/api/onboarding/*`. `Health.repo` is `null` in machine mode. (Amendment 1, 2026-09-09.) In
 single-repo mode the parameter is optional and defaults to the one repo. New aggregate endpoints:
 `GET /api/notes/all?type&open` → `NoteRef & { repo: Repo }[]`, `GET /api/jobs/all` → `Job & { repo }[]`.
 SSE events gain `repo: <id>`; a client filters. `GET /api/health` returns machine-wide health plus
