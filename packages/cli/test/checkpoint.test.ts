@@ -111,6 +111,10 @@ function setup(ulids: readonly string[] = [ULID_A]): Fixture {
   const backlog = path.join(root, ".workledger", "backlog");
   mkdirSync(sessions, { recursive: true });
   mkdirSync(backlog, { recursive: true });
+  // `.workledger/config.yaml` is what makes the directory a repo's ledger rather than the
+  // daemon's index home (#119 review): `findRepoRoot` looks for the file, not the directory.
+  // Every key is omitted, so the parse is the default config this fixture has always run on.
+  writeFileSync(path.join(root, ".workledger", "config.yaml"), "schema_version: 1\n", "utf8");
 
   const db = openIndex({ home });
   try {

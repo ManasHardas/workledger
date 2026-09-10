@@ -6,7 +6,7 @@ import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { formatRelative } from "../src/features/home/format.js";
 import { REPOS_REFRESH_MS, announceReposChanged } from "../src/features/home/live.js";
 import { FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
-import { createSource, type AppSource, type InitInput, type LedgerEvent, type Repo, type Workspace } from "../src/lib/ledger-source.js";
+import { createSource, type AppSource, type InitInput, type InitResult, type LedgerEvent, type Repo, type Workspace } from "../src/lib/ledger-source.js";
 import { repoHref } from "../src/lib/router.js";
 
 const [WORKLEDGER, DASHERO] = FIXTURE_REPOS as [Repo, Repo];
@@ -73,7 +73,7 @@ describe("relative time", () => {
  * Amendment 11's second group: the folders `GET /api/workspaces` reports. A fixture source answers
  * `FIXTURE_WORKSPACES`; these override it where the case needs a different machine.
  */
-function withWorkspaces(list: Workspace[], init?: (input: InitInput) => Promise<unknown>): AppSource {
+function withWorkspaces(list: Workspace[], init?: (input: InitInput) => Promise<InitResult>): AppSource {
   const base = createSource("fixture");
   return Object.assign(Object.create(base) as AppSource, {
     workspaces: () => Promise.resolve(list),
@@ -147,6 +147,43 @@ describe("Home — folders with sessions (amendment 11)", () => {
     // The re-read replaces the action with the installed badge; nothing needs a reload.
     expect(await screen.findByText("hooks installed")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Install hooks" })).toBeNull();
+  });
+
+  it("reports an init that answered 200 with ok:false, and keeps the button actionable (#119 review)", async () => {
+    // `init` is a per-path batch: the request succeeds and each row carries its own verdict. A
+    // folder with no tracked repo under it — which this group lists on purpose — is refused
+    // exactly that way, so reading only the promise would make the click a silent no-op.
+    const source = withWorkspaces([NOTES], () =>
+      Promise.resolve({
+        results: [],
+        workspaces: [{ path: NOTES.path, ok: false, hooksWritten: [], trustSteps: [], error: `${NOTES.path} holds no tracked repo` }],
+      }),
+    );
+    renderHome(source);
+    const button = await screen.findByRole("button", { name: "Install hooks" });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("holds no tracked repo");
+    // Still "no hooks", and still clickable: the operator can add a repo under the folder and retry.
+    expect(screen.getByText("no hooks")).toBeDefined();
+    const retry = screen.getByRole("button", { name: "Install hooks" });
+    expect((retry as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("reports an init that said nothing at all about the folder", async () => {
+    const source = withWorkspaces([NOTES], () => Promise.resolve({ results: [] }));
+    renderHome(source);
+    const button = await screen.findByRole("button", { name: "Install hooks" });
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("reported nothing for this folder");
+    expect(screen.getByRole("button", { name: "Install hooks" })).toBeDefined();
   });
 
   it("reports a failed install beside the folder and leaves the rest of Home alone", async () => {

@@ -4,7 +4,7 @@ import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
 import { messageOf } from "../../lib/errors.js";
-import type { AppSource, Workspace } from "../../lib/ledger-source.js";
+import type { AppSource, InitResult, Workspace } from "../../lib/ledger-source.js";
 import { announceReposChanged } from "./live.js";
 import { formatRelative } from "./format.js";
 
@@ -60,11 +60,29 @@ export function WorkspaceCard({
 }
 
 /**
+ * A refusal `init` reports *inside* a 200, or `null` when the folder was hooked.
+ *
+ * `POST /api/onboarding/init` is a per-path batch: the transport succeeds and each row carries
+ * its own `ok` and `error`. A folder that holds no tracked repo is refused exactly that way
+ * ("… holds no tracked repo …") — and amendment 12 lists precisely such folders, so this is the
+ * common case here, not the rare one. Reading only the promise would make the click a silent
+ * no-op (#119 review). A response with no row for the folder is a refusal too: the daemon was
+ * asked to hook it and said nothing about it.
+ */
+function refusalIn(result: InitResult, folder: string): string | null {
+  const row = result.workspaces?.find((each) => each.path === folder);
+  if (row === undefined) return "the daemon reported nothing for this folder";
+  return row.ok ? null : (row.error ?? "the daemon refused without a reason");
+}
+
+/**
  * The action. `repos: []` with the folder in `workspaces` is amendment 12's relaxation: the repos
  * under it are already tracked, and `init` must never touch one the operator did not select.
  *
  * The button reports its own failure beside itself rather than through the page's error panel —
- * the rest of Home is still perfectly readable when one folder cannot be hooked.
+ * the rest of Home is still perfectly readable when one folder cannot be hooked — and it stays
+ * enabled, because every refusal here is one the operator can act on (add a repo under the
+ * folder, fix the permissions) and then retry.
  */
 function InstallHooks({
   path,
@@ -82,8 +100,13 @@ function InstallHooks({
     setBusy(true);
     setError(null);
     source.initRepos({ repos: [], workspaces: [path] }).then(
-      () => {
+      (result) => {
         setBusy(false);
+        const refused = refusalIn(result, path);
+        if (refused !== null) {
+          setError(refused);
+          return;
+        }
         // The wizard's belt (#94): whoever else is listing folders or repos re-reads too.
         announceReposChanged();
         onInstalled();
