@@ -175,7 +175,7 @@ describe("workledger init --teammate", () => {
     expect(await sessionStart(fixture)).toBe(EXIT_OK);
     const db = openIndex({ home: fixture.wlHome });
     try {
-      const row = db.getSessionByHarnessId("claude-code", HARNESS_ID);
+      const row = db.getSessionByHarnessId("claude-code", HARNESS_ID, fixture.clone);
       expect(row?.repo_path).toBe(fixture.clone);
       expect(row?.status).toBe("open");
     } finally {

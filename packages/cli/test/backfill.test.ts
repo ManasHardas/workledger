@@ -224,6 +224,31 @@ describe("--since filtering and the plan", () => {
     expect(names("all")).toEqual(["hs-gamma", "hs-beta", "hs-alpha"]);
   });
 
+  it("counts a session started in a subdirectory of the repo, under its own slug (#105 review)", async () => {
+    const sub = path.join(repo, "src");
+    mkdirSync(sub, { recursive: true });
+    const store = path.join(fakeHome, CLAUDE_STORE, projectSlug(sub));
+    mkdirSync(store, { recursive: true });
+    const file = path.join(store, "hs-sub.jsonl");
+    writeFileSync(file, readFileSync(path.join(FIXTURES, "hs-gamma.jsonl"), "utf8").replaceAll("__CWD__", sub), "utf8");
+    const at = new Date(NOW.getTime() - 2 * 24 * 60 * 60 * 1000);
+    utimesSync(file, at, at);
+    // A sibling repo's session under a slug that only *looks* nested is not ours.
+    const other = path.join(dir, "repo-src");
+    mkdirSync(path.join(other, ".git"), { recursive: true });
+    const otherStore = path.join(fakeHome, CLAUDE_STORE, projectSlug(other));
+    mkdirSync(otherStore, { recursive: true });
+    writeFileSync(path.join(otherStore, "hs-other.jsonl"), readFileSync(path.join(FIXTURES, "hs-gamma.jsonl"), "utf8").replaceAll("__CWD__", other), "utf8");
+
+    const found = enumerateStore(fakeHome, repo).map((session) => [session.harnessSessionId, session.cwd]);
+    expect(found).toContainEqual(["hs-sub", sub]);
+    expect(found.map(([id]) => id)).not.toContain("hs-other");
+
+    const code = await runBackfill({ since: "7d", dryRun: true }, backfillIo(checkpointingAdapter()));
+    expect(code).toBe(EXIT_OK);
+    expect(out).toContain("sessions   2");
+  });
+
   it("splits the window into fresh and already-indexed, and prices the fresh half", () => {
     db.insertSession({
       ulid: "01JBQK0000000000000000000A",
@@ -234,6 +259,7 @@ describe("--since filtering and the plan", () => {
     });
 
     const plan = planBackfill(enumerateStore(fakeHome, repo), {
+      repoPath: repo,
       db,
       harness: "claude-code",
       since: "all",

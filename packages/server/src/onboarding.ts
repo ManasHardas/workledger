@@ -16,8 +16,8 @@ import path from "node:path";
 
 import type { Job } from "./jobs.js";
 
-/** The backfill windows the wizard offers; `none` is "no backfill". */
-export const ONBOARDING_WINDOWS = ["7d", "30d", "90d", "none"] as const;
+/** The backfill windows the wizard offers; `all` (amendment 9) has no cutoff, `none` is "no backfill". */
+export const ONBOARDING_WINDOWS = ["7d", "30d", "90d", "all", "none"] as const;
 export type OnboardingWindow = (typeof ONBOARDING_WINDOWS)[number];
 
 /** How the backfill digests each session; `none` is "no backfill". */
@@ -38,10 +38,31 @@ export interface RepoCandidate {
    * another candidate — a `~/Projects` that is itself a git repo holds repos, it is not one to track.
    */
   suggested: boolean;
-  /** Sessions per harness store that name this repo as their working directory. */
+  /**
+   * Sessions per harness store attributed to this repo: started in it, or (amendment 8, #105)
+   * started elsewhere and touching it — `touchedSessions` of them.
+   */
   harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
   lastSessionAt: string | null;
+  /**
+   * Distinct directories the touched-path sessions were started in, none of them this repo — a
+   * workspace folder above it, typically. Empty when every session started inside the repo.
+   */
+  startedIn: string[];
+  /** How many of `harnessSessions` were attributed by touched paths rather than by their cwd. */
+  touchedSessions: number;
+}
+
+/**
+ * A start directory that is not a repo but holds selected candidates — where `init --workspace`
+ * would put hooks (amendment 8). Filled by the workspace-hooks slot of #105.
+ */
+export interface WorkspaceCandidate {
+  path: string;
+  /** The candidate repos under it, absolute. */
+  repos: string[];
+  hooksInstalled: boolean;
 }
 
 /** `GET /api/onboarding/discover`. `found` never repeats a path already in `known`. */
@@ -52,6 +73,8 @@ export interface DiscoverResult {
   found: RepoCandidate[];
   /** The roots that were walked, absolute. */
   roots: string[];
+  /** Start directories holding selected candidates (amendment 8); `[]` until that slot lands. */
+  workspaces: WorkspaceCandidate[];
 }
 
 /** One backfill window's size. */
@@ -61,9 +84,9 @@ export interface HistoryWindow {
   bytes: number;
 }
 
-/** `GET /api/onboarding/history`. */
+/** `GET /api/onboarding/history`. `all` (amendment 9) counts every attributed session. */
 export interface HistoryResult {
-  windows: { "7d": HistoryWindow; "30d": HistoryWindow; "90d": HistoryWindow };
+  windows: { "7d": HistoryWindow; "30d": HistoryWindow; "90d": HistoryWindow; all: HistoryWindow };
 }
 
 /** `POST /api/onboarding/init` body. */

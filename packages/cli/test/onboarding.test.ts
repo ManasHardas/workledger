@@ -37,7 +37,7 @@ import {
 import { discoverRepos } from "../src/onboarding/discover.js";
 import { historyWindows } from "../src/onboarding/history.js";
 import { initRepos } from "../src/onboarding/init.js";
-import { CODEX_STORE, claudeProjects, codexSessions, enumerateCodexStore, slugToPath } from "../src/onboarding/stores.js";
+import { CODEX_STORE, claudeProjects, claudeTranscripts, codexSessions, enumerateCodexStore, slugToPath } from "../src/onboarding/stores.js";
 import { SETTINGS_PATH } from "../src/settings-merge.js";
 import type { OnboardIo } from "../src/commands/onboard.js";
 import type { OnboardingIo } from "../src/onboarding/io.js";
@@ -123,6 +123,11 @@ beforeEach(() => {
   writeFileSync(path.join(rollouts, "rollout-a.jsonl"), meta(path.join(repoA, "packages")), "utf8");
   writeFileSync(path.join(rollouts, "rollout-gone.jsonl"), meta(path.join(dir, "gone")), "utf8");
   writeFileSync(path.join(rollouts, "rollout-odd.jsonl"), '{"type":"event_msg"}\n', "utf8");
+  // One transcript far outside every dated window, so `all` (amendment 9) has something to add.
+  writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(repoB), "hs-old.jsonl"), "hs-alpha", repoB, new Date(NOW.getTime() - 200 * DAY_MS));
+  // One started in a subdirectory of repo A — its own slug, the repo's session (#105 review).
+  mkdirSync(path.join(repoA, "src"), { recursive: true });
+  writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(path.join(repoA, "src")), "hs-sub.jsonl"), "hs-gamma", path.join(repoA, "src"), new Date(NOW.getTime() - 45 * DAY_MS));
   // Only `packages/` is a subdirectory session; the directory has to exist for the cwd to resolve.
   mkdirSync(path.join(repoA, "packages"), { recursive: true });
   const at = new Date(NOW.getTime() - 1 * DAY_MS);
@@ -155,8 +160,13 @@ describe("the harness stores", () => {
   it("counts transcripts per project directory from metadata", () => {
     const projects = claudeProjects(home).sort((x, y) => x.slug.localeCompare(y.slug));
     expect(projects.map((p) => [p.cwd, p.sessions])).toEqual(
-      [[repoB, 1], [repoA, 2]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+      [[repoB, 2], [repoA, 2], [path.join(repoA, "src"), 1]].sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
     );
+    const files = claudeTranscripts(home).sort((x, y) => x.file.localeCompare(y.file));
+    expect(files.map((t) => [t.harnessSessionId, t.cwd]).sort()).toEqual(
+      [["hs-alpha", repoB], ["hs-beta", repoA], ["hs-gamma", repoA], ["hs-old", repoB], ["hs-sub", path.join(repoA, "src")]].sort(),
+    );
+    expect(files.every((t) => t.bytes > 0 && t.mtimeMs > 0)).toBe(true);
   });
 
   it("reads the cwd, id and timestamp off a Codex rollout's session_meta and nothing else", () => {
@@ -187,8 +197,8 @@ describe("the harness stores", () => {
 });
 
 describe("discoverRepos", () => {
-  it("lists store-known repos, then .git repos under the roots, skipping node_modules and dot dirs", () => {
-    const result = discoverRepos({}, io);
+  it("lists store-known repos, then .git repos under the roots, skipping node_modules and dot dirs", async () => {
+    const result = await discoverRepos({}, io);
 
     expect(result.roots).toEqual([path.join(home, "Projects")]);
     expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
@@ -198,21 +208,25 @@ describe("discoverRepos", () => {
       hasGit: true,
       enabled: false,
       suggested: true,
-      // The Codex session in `repo-a/packages` counts for the repo above it.
-      harnessSessions: { "claude-code": 2, codex: 1 },
+      // The Codex session in `repo-a/packages` and the Claude Code one in `repo-a/src` count
+      // for the repo above them.
+      harnessSessions: { "claude-code": 3, codex: 1 },
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      startedIn: [],
+      touchedSessions: 0,
     });
-    expect(result.known[1]?.harnessSessions).toEqual({ "claude-code": 1 });
+    expect(result.known[1]?.harnessSessions).toEqual({ "claude-code": 2 });
+    expect(result.workspaces).toEqual([]);
     expect(result.found.map((c) => c.path)).toEqual([repoC]);
     expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, suggested: true, harnessSessions: {}, lastSessionAt: null });
   });
 
-  it("walks a root that is itself a repo, lists it unsuggested, and still does not enter nested repos", () => {
+  it("walks a root that is itself a repo, lists it unsuggested, and still does not enter nested repos", async () => {
     const mono = path.join(dir, "mono");
     const one = path.join(mono, "one");
     const two = path.join(mono, "lib", "two");
     for (const repo of [mono, one, two, path.join(one, "inner")]) makeRepo(repo);
-    const result = discoverRepos({ roots: [mono] }, io);
+    const result = await discoverRepos({ roots: [mono] }, io);
 
     expect(result.found.map((c) => [c.path, c.suggested])).toEqual([
       [mono, false],
@@ -221,41 +235,41 @@ describe("discoverRepos", () => {
     ]);
   });
 
-  it("resolves and dedupes roots, so a trailing slash or a symlink never repeats a known repo", () => {
+  it("resolves and dedupes roots, so a trailing slash or a symlink never repeats a known repo", async () => {
     const projects = path.join(home, "Projects");
     const link = path.join(dir, "projects-link");
     symlinkSync(projects, link);
-    const result = discoverRepos({ roots: [`${projects}/`, link, projects] }, io);
+    const result = await discoverRepos({ roots: [`${projects}/`, link, projects] }, io);
 
     expect(result.roots).toEqual([projects]);
     expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
     expect(result.found.map((c) => [c.path, c.suggested])).toEqual([[repoC, true]]);
   });
 
-  it("drops a store cwd under the temp dir from known, resolved through symlinks", () => {
+  it("drops a store cwd under the temp dir from known, resolved through symlinks", async () => {
     const scratch = path.join(tempDir, "scratch");
     makeRepo(scratch);
     writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(scratch), "hs-gamma.jsonl"), "hs-gamma", scratch, NOW);
-    const result = discoverRepos({}, io);
+    const result = await discoverRepos({}, io);
 
     expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
     // Named as a root it is still found, and still not worth pre-checking.
-    expect(discoverRepos({ roots: [tempDir] }, io).found).toMatchObject([{ path: scratch, suggested: false }]);
+    expect((await discoverRepos({ roots: [tempDir] }, io)).found).toMatchObject([{ path: scratch, suggested: false }]);
   });
 
-  it("refuses a root that is relative, missing, or not a directory", () => {
+  it("refuses a root that is relative, missing, or not a directory", async () => {
     for (const [root, reason] of [
       ["Projects", "not an absolute path"],
       [path.join(dir, "nowhere"), "does not exist"],
       [path.join(repoA, ".git", "config"), "not a directory"],
     ]) {
-      expect(() => discoverRepos({ roots: [root as string] }, io)).toThrow(reason);
+      await expect(discoverRepos({ roots: [root as string] }, io)).rejects.toThrow(reason);
     }
   });
 
   it("takes explicit roots, expands ~, and reports enabled repos as such", async () => {
     await initRepos({ repos: [repoC] }, io);
-    const result = discoverRepos({ roots: ["~/Projects/repo-c", path.join(home, "Projects", "1")] }, io);
+    const result = await discoverRepos({ roots: ["~/Projects/repo-c", path.join(home, "Projects", "1")] }, io);
 
     expect(result.roots).toEqual([repoC, path.join(home, "Projects", "1")]);
     // `1/2/3/deep` is four levels under `Projects` and three under `Projects/1`: out of reach
@@ -268,8 +282,8 @@ describe("discoverRepos", () => {
 });
 
 describe("historyWindows", () => {
-  it("counts Claude Code and Codex sessions and bytes per window across the selected repos, on file mtime", () => {
-    const { windows } = historyWindows([repoA, repoB], io);
+  it("counts Claude Code and Codex sessions and bytes per window across the selected repos, on file mtime", async () => {
+    const { windows } = await historyWindows([repoA, repoB], io);
     const bytes = (id: string): number =>
       Buffer.byteLength(readFileSync(path.join(FIXTURES, `${id}.jsonl`), "utf8").replaceAll("__CWD__", id === "hs-alpha" ? repoB : repoA));
     // The one-day-old Codex rollout in repo A is inside every window.
@@ -277,8 +291,12 @@ describe("historyWindows", () => {
 
     expect(windows["7d"]).toEqual({ sessions: 2, bytes: bytes("hs-gamma") + codex });
     expect(windows["30d"]).toEqual({ sessions: 3, bytes: bytes("hs-gamma") + bytes("hs-beta") + codex });
-    expect(windows["90d"]).toEqual({ sessions: 4, bytes: bytes("hs-gamma") + bytes("hs-beta") + bytes("hs-alpha") + codex });
-    expect(historyWindows([repoC], io).windows["90d"]).toEqual({ sessions: 0, bytes: 0 });
+    // The 45-day-old session started in `repo-a/src` is repo A's, as discover counts it.
+    const sub = statSync(path.join(home, CLAUDE_STORE, projectSlug(path.join(repoA, "src")), "hs-sub.jsonl")).size;
+    expect(windows["90d"]).toEqual({ sessions: 5, bytes: bytes("hs-gamma") + bytes("hs-beta") + bytes("hs-alpha") + codex + sub });
+    // `all` (amendment 9): the 200-day-old transcript in repo B, which no dated window sees.
+    expect(windows.all).toEqual({ sessions: 6, bytes: bytes("hs-gamma") + bytes("hs-beta") + 2 * bytes("hs-alpha") + codex + sub });
+    expect((await historyWindows([repoC], io)).windows["90d"]).toEqual({ sessions: 0, bytes: 0 });
   });
 });
 
@@ -349,7 +367,7 @@ describe("initRepos", () => {
       expect((refusal as OnboardingRefusalError).code).toBe("invalid-repo");
       expect((refusal as OnboardingRefusalError).message).toContain(reason);
       // Every op refuses the same way, and the plan and run before they open the index.
-      expect(() => historyWindows([given], io)).toThrow(reason);
+      await expect(historyWindows([given], io)).rejects.toThrow(reason);
       await expect(backfillPlan({ repos: [given], since: "7d", method: "none" }, io)).rejects.toThrow(reason);
       await expect(queueOnboardingBackfill({ repos: [given], since: "7d", method: "none", consent: true }, io)).rejects.toThrow(reason);
     }
@@ -367,20 +385,21 @@ describe("backfillPlan", () => {
 
   it("prices a resume in seconds from each repo's config, Codex sessions included", async () => {
     // Repo A's 2 Claude Code sessions at 45 s over concurrency 2 → 45, plus its Codex session's
-    // ceil(45 / 2) = 23; repo B's one (60 days old) is outside 30d and adds 23 inside 90d.
+    // ceil(45 / 2) = 23; repo B's one (60 days old) is outside 30d and adds 23 inside 90d, where
+    // repo A's third Claude Code session (45 days old, started in `src/`) makes ceil(135 / 2) = 68.
     expect(await backfillPlan({ repos: [repoA, repoB], since: "30d", method: "resume" }, io)).toEqual({
       sessions: 3,
       estimate: { seconds: 45 + 23 },
     });
     expect(await backfillPlan({ repos: [repoA, repoB], since: "90d", method: "resume" }, io)).toEqual({
-      sessions: 4,
-      estimate: { seconds: 45 + 23 + 23 },
+      sessions: 5,
+      estimate: { seconds: 68 + 23 + 23 },
     });
   });
 
   it("prices an extraction in tokens and USD, says whether the key is missing, and reports Codex as unsupported", async () => {
     const without = await backfillPlan({ repos: [repoA, repoB], since: "90d", method: "extract" }, io);
-    expect(without.sessions).toBe(3);
+    expect(without.sessions).toBe(4);
     expect(without.unsupported).toEqual({ codex: 1 });
     expect(await backfillPlan({ repos: [repoB], since: "90d", method: "extract" }, io)).not.toHaveProperty("unsupported");
     expect(without.estimate).toMatchObject({ needsApiKey: true });
@@ -446,22 +465,24 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     );
 
     expect(queued.repos).toEqual([repoA, repoB]);
-    expect(queued.jobs).toHaveLength(4);
+    expect(queued.jobs).toHaveLength(5);
     expect(queued.jobs.map((job) => [job.kind, job.status, job.source])).toEqual(
-      Array.from({ length: 4 }, () => ["repair", "queued", ONBOARDING_SOURCE]),
+      Array.from({ length: 5 }, () => ["repair", "queued", ONBOARDING_SOURCE]),
     );
-    expect(queued.jobs.filter((job) => job.repo_path === repoA)).toHaveLength(3);
+    expect(queued.jobs.filter((job) => job.repo_path === repoA)).toHaveLength(4);
+    // The subdirectory session is repo A's row, with its own cwd kept.
+    expect(withDb((db) => db.getSessionByHarnessId("claude-code", "hs-sub", repoA))).toMatchObject({ repo_path: repoA, cwd: path.join(repoA, "src") });
     // The ledger side of each row: a `source: backfill` session file, as `workledger backfill` writes.
     for (const job of queued.jobs) {
       expect(readFileSync(path.join(job.repo_path, ".workledger", "sessions", `${job.session_ulid}.md`), "utf8")).toContain("source: backfill");
     }
     // The Codex row is opened under its own harness with the rollout's id, which is what makes
     // the drain's `resumeSession` pick `codex exec resume` for it.
-    const codexRow = withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID));
+    const codexRow = withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID, repoA));
     expect(codexRow).toMatchObject({ repo_path: repoA, harness: "codex", status: "ended" });
     expect(queued.jobs.map((job) => job.session_ulid)).toContain(codexRow?.ulid);
     expect(readFileSync(path.join(repoA, ".workledger", "sessions", `${codexRow?.ulid}.md`), "utf8")).toContain("harness: codex");
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 0, failed: 0, running: 4, waiting: 0, retryAfter: null, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 5, done: 0, failed: 0, running: 5, waiting: 0, retryAfter: null, complete: false });
 
     // A second run finds nothing fresh: the sessions are in the index now.
     const again = await queueOnboardingBackfill({ repos: [repoA, repoB], since: "90d", method: "resume", consent: true }, io);
@@ -479,7 +500,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     } finally {
       db.close();
     }
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 1, failed: 1, running: 2, waiting: 0, retryAfter: null, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 5, done: 1, failed: 1, running: 3, waiting: 0, retryAfter: null, complete: false });
   });
 
   it("queues extract jobs for method extract once a key is present, and none for a Codex session", async () => {
@@ -489,8 +510,8 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
 
     // Repo A's Codex session is left for a later resume: no row, no job.
     const forA = await queueOnboardingBackfill({ repos: [repoA], since: "90d", method: "extract", consent: true }, keyed);
-    expect(forA.jobs.map((job) => job.kind)).toEqual(["extract", "extract"]);
-    expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID))).toBeUndefined();
+    expect(forA.jobs.map((job) => job.kind)).toEqual(["extract", "extract", "extract"]);
+    expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_ID, repoA))).toBeUndefined();
   });
 
   it("queues nothing for method none or window none", async () => {
@@ -532,7 +553,7 @@ describe("the injected OnboardingOps", () => {
     const discovered = await ops.discover();
     expect(discovered.known).toEqual([]);
     expect(discovered.found.map((c) => [c.path, c.suggested])).toEqual([[repoB, false], [repoA, false], [repoC, false]]);
-    expect((await ops.history([repoA])).windows["90d"].sessions).toBe(3);
+    expect((await ops.history([repoA])).windows["90d"].sessions).toBe(4);
     expect((await ops.init({ repos: [repoA] })).results[0]?.ok).toBe(true);
     expect((await ops.plan({ repos: [repoA], since: "7d", method: "resume" })).sessions).toBe(2);
     const run = await ops.run({ repos: [repoA], since: "7d", method: "resume", consent: true });
@@ -559,7 +580,7 @@ describe("workledger onboard --json", () => {
 
   it("emits the six API objects, byte-for-byte what the ops return", async () => {
     // Discovery runs before `init`, so the snapshot to compare against is taken before it too.
-    const discovered = JSON.parse(JSON.stringify(discoverRepos({}, io))) as DiscoverResult;
+    const discovered = JSON.parse(JSON.stringify(await discoverRepos({}, io))) as DiscoverResult;
     const tty = terminal();
     const code = await runOnboard(
       { json: true, select: `${repoA},${repoB}`, since: "30d", method: "none", yes: true },
@@ -570,7 +591,7 @@ describe("workledger onboard --json", () => {
     expect(tty.out).toHaveLength(1);
     const report = JSON.parse(tty.out[0] as string) as OnboardReport;
     expect(report.discover).toEqual(discovered);
-    expect(report.history).toEqual(historyWindows([repoA, repoB], io));
+    expect(report.history).toEqual(await historyWindows([repoA, repoB], io));
     expect(report.init.results.map((r) => [r.path, r.ok, r.hooksWritten])).toEqual([
       [repoA, true, [SETTINGS_PATH, CODEX_HOOKS_PATH]],
       [repoB, true, [SETTINGS_PATH, CODEX_HOOKS_PATH]],
@@ -581,7 +602,7 @@ describe("workledger onboard --json", () => {
   });
 
   it("without a terminal and without --select prints the discovery, writes nothing, and exits 0", async () => {
-    const discovered = JSON.parse(JSON.stringify(discoverRepos({}, io))) as DiscoverResult;
+    const discovered = JSON.parse(JSON.stringify(await discoverRepos({}, io))) as DiscoverResult;
     const tty = terminal();
     expect(await runOnboard({ json: true }, tty)).toBe(EXIT_OK);
     expect(tty.out).toHaveLength(1);
@@ -590,7 +611,7 @@ describe("workledger onboard --json", () => {
 
     const plain = terminal();
     expect(await runOnboard({}, plain)).toBe(EXIT_OK);
-    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 2 claude-code · 1 codex)`);
+    expect(plain.out.join("\n")).toContain(`[1] ${repoA}  (known; 3 claude-code · 1 codex)`);
     expect(plain.out.join("\n")).toContain(`[3] ${repoC}  (found; no agent sessions)`);
 
     for (const repo of [repoA, repoB, repoC]) expect(existsSync(path.join(repo, ".workledger"))).toBe(false);
@@ -604,6 +625,16 @@ describe("workledger onboard --json", () => {
     expect(err.at(-1)).toContain("pass --select <paths> (and --yes to skip confirmation)");
     expect(existsSync(path.join(repoA, ".workledger"))).toBe(false);
     expect(listJobsAll()).toEqual([]);
+  });
+
+  it("accepts --since all (amendment 9): every attributed transcript, whatever its age", async () => {
+    const tty = terminal();
+    expect(await runOnboard({ json: true, select: repoB, since: "all", method: "none", yes: true }, tty)).toBe(EXIT_OK);
+    const report = JSON.parse(tty.out[0] as string) as OnboardReport;
+    // Repo B: the 60-day-old session and the 200-day-old one.
+    expect(report.history.windows.all.sessions).toBe(2);
+    expect(report.history.windows["90d"].sessions).toBe(1);
+    expect(report.plan).toEqual({ sessions: 2, estimate: null });
   });
 
   it("rejects a window or method it does not know, and an empty selection", async () => {
@@ -649,6 +680,137 @@ describe("workledger onboard --json", () => {
     expect(tty.out.join("\n")).toContain("not started");
     expect(existsSync(path.join(repoA, ".workledger"))).toBe(true);
     expect(existsSync(path.join(repoB, ".workledger"))).toBe(false);
+  });
+});
+
+describe("touched-path attribution (amendment 8, #105)", () => {
+  let ws: string;
+  let cardA: string;
+  let cardB: string;
+  let claudeFile: string;
+  let codexFile: string;
+  const CLAUDE_ID = "hs-ws";
+  const CODEX_WS_ID = "01a0ffff-0000-7000-8000-000000000001";
+
+  /** A Claude Code assistant record carrying one tool call, recorded in the workspace. */
+  function toolUse(name: string, input: Record<string, unknown>): string {
+    return `${JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-09-08T10:00:00.000Z",
+      cwd: ws,
+      message: { role: "assistant", content: [{ type: "tool_use", id: "t", name, input }] },
+    })}\n`;
+  }
+
+  /** A Codex `exec` call, recorded in the workspace. */
+  function exec(cmd: string): string {
+    return `${JSON.stringify({
+      timestamp: "2026-09-08T10:00:00.000Z",
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", input: `const r = await tools.exec_command(${JSON.stringify({ cmd, workdir: ws })});` },
+    })}\n`;
+  }
+
+  beforeEach(() => {
+    // A workspace folder that is not a repo, holding two repos — the dome_workspace shape.
+    ws = path.join(home, "Projects", "ws");
+    cardA = path.join(ws, "card-a");
+    cardB = path.join(ws, "card-b");
+    for (const root of [cardA, cardB]) makeRepo(root);
+    mkdirSync(path.join(cardA, "src"), { recursive: true });
+
+    // Started in the workspace: writes in both repos, so it counts for both.
+    claudeFile = path.join(home, CLAUDE_STORE, projectSlug(ws), `${CLAUDE_ID}.jsonl`);
+    mkdirSync(path.dirname(claudeFile), { recursive: true });
+    writeFileSync(
+      claudeFile,
+      `${JSON.stringify({ type: "user", timestamp: "2026-09-08T09:59:00.000Z", cwd: ws, message: { role: "user", content: "go" } })}\n` +
+        toolUse("Edit", { file_path: "card-a/src/a.ts", old_string: "a", new_string: "b" }) +
+        toolUse("Read", { file_path: path.join(cardB, "README.md") }) +
+        toolUse("Bash", { command: "cd card-b && echo note >> README.md" }),
+      "utf8",
+    );
+    const claudeAt = new Date(NOW.getTime() - 2 * DAY_MS);
+    utimesSync(claudeFile, claudeAt, claudeAt);
+
+    // A Codex rollout started there too: five reads of card-a (enough), three of card-b (not).
+    codexFile = path.join(home, CODEX_STORE, "2026", "09", "08", "rollout-ws.jsonl");
+    writeFileSync(
+      codexFile,
+      `${JSON.stringify({ timestamp: "2026-09-08T10:00:00.000Z", type: "session_meta", payload: { id: CODEX_WS_ID, cwd: ws, timestamp: "2026-09-08T10:00:00.000Z" } })}\n` +
+        ["cat card-a/src/a.ts", "ls card-a", "rg x card-a/src", "wc -l card-a/src/a.ts", "head card-a/README.md"].map(exec).join("") +
+        ["ls card-b", "cat card-b/README.md", "rg y card-b"].map(exec).join(""),
+      "utf8",
+    );
+    const codexAt = new Date(NOW.getTime() - 1 * DAY_MS);
+    utimesSync(codexFile, codexAt, codexAt);
+  });
+
+  it("discover lists a repo the workspace session touched as known, with startedIn and touchedSessions", async () => {
+    const result = await discoverRepos({}, io);
+    const a = result.known.find((c) => c.path === cardA);
+    const b = result.known.find((c) => c.path === cardB);
+
+    expect(a).toEqual({
+      path: cardA,
+      name: "card-a",
+      hasGit: true,
+      enabled: false,
+      suggested: true,
+      harnessSessions: { "claude-code": 1, codex: 1 },
+      lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      startedIn: [ws],
+      touchedSessions: 2,
+    });
+    expect(b).toMatchObject({ harnessSessions: { "claude-code": 1 }, startedIn: [ws], touchedSessions: 1 });
+    expect(result.found.map((c) => c.path)).toEqual([repoC]);
+    // The workspace itself is where the sessions started, so the cwd rule lists it as it always
+    // has — a directory with no `.git`, never suggested; amendment 8's `workspaces` is the sibling
+    // slot's. Its sessions are not touched sessions.
+    expect(result.known.find((c) => c.path === ws)).toMatchObject({ hasGit: false, suggested: false, startedIn: [], touchedSessions: 0 });
+    // The other repos' sessions started inside them and are not touched sessions.
+    expect(result.known.find((c) => c.path === repoA)).toMatchObject({ startedIn: [], touchedSessions: 0 });
+  });
+
+  it("history counts the touched session once per repo it touched", async () => {
+    const { windows } = await historyWindows([cardA, cardB], io);
+    const claude = statSync(claudeFile).size;
+    const codex = statSync(codexFile).size;
+    expect(windows["7d"]).toEqual({ sessions: 3, bytes: 2 * claude + codex });
+    expect(windows.all).toEqual(windows["7d"]);
+    expect((await historyWindows([cardB], io)).windows["7d"]).toEqual({ sessions: 1, bytes: claude });
+    // Scanned once: a second call is served from the index cache with the same answer.
+    expect((await historyWindows([cardA, cardB], io)).windows["90d"]).toEqual(windows["90d"]);
+  });
+
+  it("run queues one repair job per (session, repo), each row carrying the session's own cwd", async () => {
+    await initRepos({ repos: [cardA, cardB] }, io);
+    expect((await backfillPlan({ repos: [cardA, cardB], since: "7d", method: "resume" }, io)).sessions).toBe(3);
+
+    const queued = await queueOnboardingBackfill({ repos: [cardA, cardB], since: "7d", method: "resume", consent: true }, io);
+
+    expect(queued.repos).toEqual([cardA, cardB]);
+    expect(queued.jobs.map((job) => [job.kind, job.repo_path]).sort()).toEqual([
+      ["repair", cardA],
+      ["repair", cardA],
+      ["repair", cardB],
+    ]);
+    const forA = withDb((db) => db.getSessionByHarnessId("claude-code", CLAUDE_ID, cardA));
+    const forB = withDb((db) => db.getSessionByHarnessId("claude-code", CLAUDE_ID, cardB));
+    const codexA = withDb((db) => db.getSessionByHarnessId("codex", CODEX_WS_ID, cardA));
+    expect(forA).toMatchObject({ repo_path: cardA, cwd: ws, transcript_path: claudeFile, status: "ended" });
+    expect(forB).toMatchObject({ repo_path: cardB, cwd: ws, transcript_path: claudeFile });
+    expect(forA?.ulid).not.toBe(forB?.ulid);
+    expect(codexA).toMatchObject({ repo_path: cardA, cwd: ws, harness: "codex" });
+    expect(withDb((db) => db.getSessionByHarnessId("codex", CODEX_WS_ID, cardB))).toBeUndefined();
+    expect(new Set(queued.jobs.map((job) => job.session_ulid))).toEqual(new Set([forA?.ulid, forB?.ulid, codexA?.ulid]));
+    for (const job of queued.jobs) {
+      expect(existsSync(path.join(job.repo_path, ".workledger", "sessions", `${job.session_ulid}.md`))).toBe(true);
+    }
+    expect(await onboardingStatus(io)).toMatchObject({ total: 3, running: 3 });
+
+    // Indexed now, for each repo: nothing fresh a second time.
+    expect(await queueOnboardingBackfill({ repos: [cardA, cardB], since: "7d", method: "resume", consent: true }, io)).toEqual({ jobs: [], repos: [] });
   });
 });
 

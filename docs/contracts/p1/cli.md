@@ -38,7 +38,7 @@ Stdin: the Claude Code hook JSON. Behavior per `docs/contracts/p1/hooks-claude-c
 exits non-zero except the deliberate `2` on Stop-block. Any internal error: one line on stderr
 prefixed `workledger:`, exit 0.
 
-## `workledger checkpoint [--session <ulid>] [--payload <json> | --payload-file <path>] [--dry-run]`
+## `workledger checkpoint [--session <ulid>] [--repo <path>] [--payload <json> | --payload-file <path>] [--dry-run]`
 
 Input: a `CheckpointPayload` (`docs/contracts/p1/checkpoint-payload.schema.json`), at most 16,384
 bytes, from exactly one source: the `--payload <json>` argument, the file named by
@@ -50,6 +50,16 @@ Claude Code's headless permission matcher denies a heredoc and a heredoc-fed pip
 `Bash(workledger checkpoint*)`, so a resumed session could not feed stdin at all, and a 100-turn
 session's digest did not fit in 4 KB. Instruction v3 prescribes `--payload '<json>'`
 (`docs/contracts/p1/hooks-claude-code.md` §Stop).
+
+*Amendment (2026-09-10, #105; `docs/contracts/p8/daemon-and-api.md` amendment 8).* `--repo <path>`
+names the repo whose ledger takes the checkpoint regardless of the process cwd — a session started
+in a workspace folder above its repos, resumed where it started, writes into the repo it touched.
+The path is resolved against the cwd and must be an enabled repo (exit `4` otherwise); a
+`--session` row that belongs to a different repo is a usage error naming both (the index row is
+keyed by `(harness, harness_session_id, repo_path)`, so one harness session may have a row — and a
+digest — per repo it touched). Without `--repo` the repo above the cwd is used as before. The
+repair instruction adds `--repo <root>` to the pinned command whenever the session's cwd is not
+the repo, and the resume is spawned in that cwd.
 
 Steps, in order, each failing fast:
 

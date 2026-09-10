@@ -18,6 +18,11 @@
  * under method `extract` Codex sessions are not counted, not priced and not queued; the plan
  * reports them as `unsupported.codex` and the run leaves them for a later `resume`.
  *
+ * Sessions attributed by touched paths (`./attribution.ts`, amendment 8) join each harness's
+ * list before it is planned: one row and one job per (session, repo), the row keyed by the wider
+ * `(harness, harness_session_id, repo_path)` and carrying the session's own start directory as
+ * `cwd`, which is where the drain resumes it and why its instruction says `--repo`.
+ *
  * Two refusals have their own wire status (`../../server/src/onboarding.ts`): `run` without
  * `consent: true`, and `run` with method `extract` when `ANTHROPIC_API_KEY` is absent. Both are
  * raised *before* a row is written.
@@ -36,6 +41,7 @@ import { API_KEY_ENV } from "../extract/api.js";
 import { estimateExtraction } from "../extract/run.js";
 import { enqueueJob } from "../jobs/queue.js";
 import { isEnabled } from "../ledger-fs.js";
+import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OnboardingRefusalError, assertRepoPaths } from "./repo-path.js";
 import { enumerateCodexStore } from "./stores.js";
@@ -80,17 +86,27 @@ interface RepoPlan {
 /** The P3 plan for each repo, in the wizard's window. */
 async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promise<RepoPlan[]> {
   const plans: RepoPlan[] = [];
-  for (const root of assertRepoPaths(input.repos)) {
+  const roots = assertRepoPaths(input.repos);
+  const touched = await attributeTranscripts(io.homeDir, roots, db, { tempDirs: io.tempDirs });
+  for (const root of roots) {
+    const attribution = touched.get(root);
     const config = loadConfig(root);
     const options = {
       db,
+      repoPath: root,
       since: input.since,
       now: io.now(),
       concurrency: config.backfill.concurrency,
       secondsPerSession: config.backfill.seconds_per_session,
     };
-    const plan = planBackfill(enumerateStore(io.homeDir, root), { ...options, harness: claudeCodeAdapter.harness });
-    const codex = planBackfill(enumerateCodexStore(io.homeDir, root), { ...options, harness: codexAdapter.harness });
+    const plan = planBackfill(
+      [...enumerateStore(io.homeDir, root), ...(attribution?.claude ?? [])],
+      { ...options, harness: claudeCodeAdapter.harness },
+    );
+    const codex = planBackfill(
+      [...enumerateCodexStore(io.homeDir, root), ...(attribution?.codex ?? [])],
+      { ...options, harness: codexAdapter.harness },
+    );
     let tokens = 0;
     let usd = 0;
     for (const session of plan.fresh) {

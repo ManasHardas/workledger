@@ -156,7 +156,7 @@ function grow(fixture: Fixture, bytes: number): void {
 function row(fixture: Fixture, harnessId = HARNESS_ID): SessionRow | undefined {
   const db = openIndex({ home: fixture.home });
   try {
-    return db.getSessionByHarnessId("claude-code", harnessId);
+    return db.getSessionByHarnessId("claude-code", harnessId, fixture.root);
   } finally {
     db.close();
   }

@@ -7,7 +7,7 @@
  * `trigger: repair` stamp is the one thing this issue exists to produce, and only the whole path
  * from `pending_trigger` through `stampTrigger` to the rendered frontmatter can establish it.
  */
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -98,13 +98,16 @@ function checkpointingAdapter(): HarnessAdapter & { seen: ResumeOptions[] } {
     seen,
     async resumeHeadless(_sessionId: string, options: ResumeOptions): Promise<ResumeResult> {
       seen.push(options);
+      // As the real resumed agent does: the command line is read off the instruction, and the
+      // process runs where the harness was spawned.
+      const target = /--repo (\S+)/.exec(options.instruction)?.[1];
       const code = await runCheckpoint(
-        { session: ULID },
+        { session: ULID, ...(target === undefined ? {} : { repo: target }) },
         {
           readStdin: stdinFrom(PAYLOAD),
           stdout: () => {},
           stderr: (line) => err.push(line),
-          cwd: repo,
+          cwd: options.cwd,
           home,
           now: () => new Date("2026-09-09T13:00:00.000Z"),
           newId: () => "WL-01JBQK0000000000000000000B",
@@ -231,6 +234,24 @@ describe("runRepair — resume path", () => {
     expect(options.timeoutMs).toBe(42_000);
     expect(options.instruction).toContain(`workledger checkpoint --session ${ULID}`);
     expect(options.instruction).toContain("crashed");
+  });
+
+  it("resumes a workspace-root session where it started and names the repo with --repo (p8 amendment 8)", async () => {
+    crashedSession();
+    const workspace = path.join(dir, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    db.updateSession(ULID, { cwd: workspace });
+    const adapter = checkpointingAdapter();
+
+    const code = await runRepair(ULID, {}, repairIo(adapter));
+
+    expect(code, err.join("\n")).toBe(EXIT_OK);
+    const options = adapter.seen[0] as ResumeOptions;
+    expect(options.cwd).toBe(workspace);
+    expect(options.instruction).toContain(`workledger checkpoint --session ${ULID} --repo ${repo} --payload '<json>'`);
+    // The digest landed in the repo's ledger, not anywhere near the workspace.
+    expect(frontmatter().frontmatter.checkpoints).toHaveLength(1);
+    expect(existsSync(path.join(workspace, ".workledger"))).toBe(false);
   });
 
   it("names the span when the session already has checkpoints", async () => {

@@ -318,12 +318,13 @@ export function jobOps(
      */
     backfill: (repoRoot, input) =>
       withDb(async (db): Promise<{ jobs: Job[]; estimate: BackfillEstimate }> => {
-        const [{ createBackfilledSession, enumerateStore, planBackfill }, { SINCE_WINDOWS, loadConfig }, { claudeCodeAdapter }, { newSessionId }] =
+        const [{ createBackfilledSession, enumerateStore, planBackfill }, { SINCE_WINDOWS, loadConfig }, { claudeCodeAdapter }, { newSessionId }, { attributeTranscripts }] =
           await Promise.all([
             import("./backfill.js"),
             import("../config.js"),
             import("../adapters/claude-code.js"),
             import("@workledger/core/ids"),
+            import("../onboarding/attribution.js"),
           ]);
         if (!(SINCE_WINDOWS as readonly string[]).includes(input.since)) {
           throw new BacklogOpError(
@@ -334,9 +335,11 @@ export function jobOps(
         const config = loadConfig(repoRoot);
         const concurrency = input.concurrency ?? config.backfill.concurrency;
         const homeDir = harnessStoreHome(io);
-        const plan = planBackfill(enumerateStore(homeDir, repoRoot), {
+        const touched = (await attributeTranscripts(homeDir, [repoRoot], db)).get(repoRoot);
+        const plan = planBackfill([...enumerateStore(homeDir, repoRoot), ...(touched?.claude ?? [])], {
           db,
           harness: claudeCodeAdapter.harness,
+          repoPath: repoRoot,
           since: input.since,
           now: new Date(),
           concurrency,

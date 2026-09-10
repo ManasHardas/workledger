@@ -51,13 +51,14 @@ class FakeOnboardingOps implements OnboardingOps {
 
   discover = async (roots?: string[]): Promise<DiscoverResult> =>
     this.#record("discover", [roots], {
-      known: [{ path: "/r/a", name: "a", hasGit: true, enabled: false, harnessSessions: { "claude-code": 2 }, lastSessionAt: null }],
+      known: [{ path: "/r/a", name: "a", hasGit: true, enabled: false, suggested: true, harnessSessions: { "claude-code": 2 }, lastSessionAt: null, startedIn: ["/r"], touchedSessions: 1 }],
       found: [],
       roots: roots ?? ["/home/Projects"],
+      workspaces: [],
     });
   history = async (repos: string[]): Promise<HistoryResult> =>
     this.#record("history", [repos], {
-      windows: { "7d": { sessions: 1, bytes: 10 }, "30d": { sessions: 2, bytes: 20 }, "90d": { sessions: 3, bytes: 30 } },
+      windows: { "7d": { sessions: 1, bytes: 10 }, "30d": { sessions: 2, bytes: 20 }, "90d": { sessions: 3, bytes: 30 }, all: { sessions: 4, bytes: 40 } },
     });
   init = async (input: InitInput): Promise<InitResult> =>
     this.#record("init", [input], {
@@ -250,6 +251,9 @@ describe("POST /api/onboarding/plan", () => {
     expect(status).toBe(200);
     expect(body).toEqual({ sessions: 3, estimate: { seconds: 68 } });
     expect(ops.calls).toEqual([{ op: "plan", args: [{ repos: [repoA], since: "30d", method: "resume" }] }]);
+    // Amendment 9: `all` is a window everywhere `7d | 30d | 90d | none` is.
+    expect((await post("/api/onboarding/plan", { repos: [repoA], since: "all", method: "resume" })).status).toBe(200);
+    expect(ops.calls.at(-1)).toEqual({ op: "plan", args: [{ repos: [repoA], since: "all", method: "resume" }] });
   });
 
   it("400s a window or method outside the contract", async () => {

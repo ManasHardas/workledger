@@ -147,7 +147,7 @@ async function run(
 function row(fixture: Fixture, harness: string, id: string): SessionRow | undefined {
   const db = openIndex({ home: fixture.home });
   try {
-    return db.getSessionByHarnessId(harness, id);
+    return db.getSessionByHarnessId(harness, id, fixture.root);
   } finally {
     db.close();
   }

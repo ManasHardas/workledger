@@ -65,6 +65,7 @@ export type {
   PlanInput,
   PlanResult,
   RepoCandidate,
+  WorkspaceCandidate,
   ResumeEstimate,
   RunInput,
   RunResult,

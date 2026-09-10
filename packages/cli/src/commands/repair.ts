@@ -13,6 +13,7 @@
  * bookkeeping — the job row, the `pending_trigger` that makes the resumed checkpoint stamp
  * `repair`, and the frontmatter that records the outcome.
  */
+import path from "node:path";
 import process from "node:process";
 
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
@@ -249,11 +250,16 @@ export async function resumeSession(
   }
 
   const before = db.countCheckpoints(ulid);
+  // A session started outside the repo (a workspace folder, amendment 8) is resumed where it
+  // started — the harness finds its session by that directory — and told which ledger to write.
+  const cwd = session.cwd ?? root;
+  const elsewhere = path.resolve(cwd) !== path.resolve(root);
   const instruction = repairInstruction({
     sessionId: ulid,
     openIds: options.openIds,
     sinceCheckpoint: before,
     reason: options.reason,
+    ...(elsewhere ? { repo: root } : {}),
   });
 
   // Set *before* the spawn: the resumed agent's checkpoint reads it off the session row, which
@@ -262,7 +268,7 @@ export async function resumeSession(
   db.updateSession(ulid, { pending_trigger: "repair", updated_at: io.now().toISOString() });
   try {
     const result = await resume(session.harness_session_id, {
-      cwd: root,
+      cwd,
       instruction,
       allowedTools: REPAIR_ALLOWED_TOOLS,
       timeoutMs: options.timeoutS * 1000,

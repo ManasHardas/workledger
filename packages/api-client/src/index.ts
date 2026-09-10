@@ -73,6 +73,7 @@ export type {
   RemainingLine,
   Repo,
   RepoCandidate,
+  WorkspaceCandidate,
   ResumeEstimate,
   RunInput,
   RunResult,
