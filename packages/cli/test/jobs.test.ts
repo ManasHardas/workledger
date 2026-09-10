@@ -5,7 +5,7 @@
  * being asserted are the table's (a partial unique index, a conditional UPDATE, a heartbeat
  * cutoff), and a fake queue would assert nothing about them.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -295,6 +295,39 @@ describe("runJobs", () => {
     expect(listJobs(db, REPO).filter((job) => job.status === "done")).toHaveLength(2);
     const failed = listJobs(db, REPO).find((job) => job.status === "failed");
     expect(failed?.error).toBe("no");
+  });
+
+  it("writes a handler's output to <logDir>/<job>.log and records log_path, done or failed (#97)", async () => {
+    session("S1");
+    session("S2");
+    session("S3");
+    queue("S1");
+    queue("S2");
+    queue("S3");
+    const logDir = path.join(home, "logs");
+
+    await runJobs(db, {
+      repoPath: REPO,
+      concurrency: 1,
+      now: () => new Date(),
+      logDir,
+      handler: async (job) => {
+        if (job.session_ulid === "S1") return { ok: true, output: "ok log" };
+        if (job.session_ulid === "S2") return { ok: false, error: "no", output: "failed log" };
+        return { ok: true };
+      },
+    });
+
+    const byUlid = new Map(listJobs(db, REPO).map((job) => [job.session_ulid, job]));
+    const s1 = byUlid.get("S1")!;
+    const s2 = byUlid.get("S2")!;
+    expect(s1.log_path).toBe(path.join(logDir, `${s1.id}.log`));
+    expect(readFileSync(s1.log_path!, "utf8")).toBe("ok log");
+    expect(s2).toMatchObject({ status: "failed", error: "no" });
+    expect(readFileSync(s2.log_path!, "utf8")).toBe("failed log");
+    // No output, no log: the row says so rather than pointing at an empty file.
+    expect(byUlid.get("S3")!.log_path).toBeNull();
+    expect(existsSync(path.join(logDir, `${byUlid.get("S3")!.id}.log`))).toBe(false);
   });
 
   it("never runs more than `concurrency` jobs at a time", async () => {

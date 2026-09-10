@@ -758,6 +758,21 @@ describe("the checkpoint instruction", () => {
     expect(text).not.toContain("previous attempt failed:");
   });
 
+  it("is v3: one --payload argument, the string rule, no heredocs or pipes, reason on decisions (#97)", () => {
+    expect(INSTRUCTION_VERSION).toBe(3);
+    const text = checkpointInstruction({ sessionId: "01JQ8ZK4T0000000000000000A", openIds: [] });
+    expect(text).toContain("workledger checkpoint --session 01JQ8ZK4T0000000000000000A --payload '<json>'");
+    expect(text).toContain("At most 16384 bytes");
+    expect(text).toContain("no single quote (') and no backslash (\\) anywhere in the JSON");
+    expect(text).toContain("apostrophe as \u2019");
+    expect(text).toContain("Heredocs, pipes and stdin are not permitted in headless sessions");
+    expect(text).toContain("decision notes require reason");
+    expect(text).not.toContain("pipe a CheckpointPayload JSON on stdin");
+    expect(checkpointInstruction({ sessionId: "x", openIds: [], sinceCheckpoint: 2 })).toContain(
+      "since checkpoint 2",
+    );
+  });
+
   it("tells the agent to mint an item when the backlog is empty", () => {
     expect(checkpointInstruction({ sessionId: "x", openIds: [] })).toContain('"new": true');
   });

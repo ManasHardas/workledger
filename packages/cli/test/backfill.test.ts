@@ -12,7 +12,7 @@
  * That makes the two assertions this issue turns on — `source: backfill` in the frontmatter and
  * `trigger: repair` on the stamp — assertions about a checkpoint written through the real command.
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,7 @@ import { cancelJob, listJobs, retryJob } from "../src/jobs/queue.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
 import {
   CLAUDE_STORE,
+  backfillTimeoutS,
   enumerateStore,
   filterSince,
   formatDuration,
@@ -432,5 +433,29 @@ describe("runBackfill", () => {
     const failed = listJobs(db, repo).filter((job) => job.status === "failed");
     expect(failed).toHaveLength(1);
     expect(failed[0]?.error).toContain("exited 1");
+  });
+});
+
+describe("per-session resume timeout (#97)", () => {
+  it("scales with the transcript: 600 s + 120 s per started MB, capped at 1800 s", () => {
+    expect(backfillTimeoutS(0)).toBe(600);
+    expect(backfillTimeoutS(1)).toBe(720);
+    expect(backfillTimeoutS(1_000_000)).toBe(720);
+    expect(backfillTimeoutS(1_000_001)).toBe(840);
+    expect(backfillTimeoutS(4_500_000)).toBe(1200);
+    expect(backfillTimeoutS(50_000_000)).toBe(1800);
+  });
+
+  it("hands each resumed session its own timeout when the io names none", async () => {
+    const adapter = checkpointingAdapter();
+    await runBackfill({ since: "all", yes: true }, backfillIo(adapter, { timeoutS: undefined }));
+
+    expect(adapter.seen).toHaveLength(3);
+    for (const options of adapter.seen) {
+      const ulid = /--session (\S+)/.exec(options.instruction)?.[1] as string;
+      const bytes = statSync(db.getSessionByUlid(ulid)!.transcript_path!).size;
+      expect(options.timeoutMs).toBe(backfillTimeoutS(bytes) * 1000);
+      expect(options.timeoutMs).toBe(720_000);
+    }
   });
 });

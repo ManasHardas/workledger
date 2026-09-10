@@ -69,6 +69,7 @@ beforeAll(async () => {
     repair: async (repoRoot, input) => record("repair", [repoRoot, input], job({ kind: "repair" })),
     cancelJob: async (repoRoot, id) => record("cancelJob", [repoRoot, id], job({ id, status: "cancelled" })),
     retryJob: async (repoRoot, id) => record("retryJob", [repoRoot, id], job({ id, status: "queued" })),
+    jobLog: async (repoRoot, id) => record("jobLog", [repoRoot, id], id === "has-log" ? "line 1\nline 2\n" : undefined),
     excerptSpan: async (repoRoot, ulid, cp): Promise<ExcerptSpan | undefined> =>
       record(
         "excerptSpan",
@@ -166,6 +167,23 @@ describe("the job methods", () => {
       { op: "cancelJob", args: [root, "a/b"] },
       { op: "retryJob", args: [root, "a/b"] },
     ]);
+  });
+});
+
+describe("jobLog (#97)", () => {
+  it("returns the log as text, escaping the id into the path", async () => {
+    seen.length = 0;
+    expect(await source.jobLog("has-log")).toBe("line 1\nline 2\n");
+    expect(seen).toEqual([{ op: "jobLog", args: [root, "has-log"] }]);
+  });
+
+  it("rejects with not_found when the job has no log", async () => {
+    const error = await source
+      .jobLog("no-log")
+      .then(() => undefined)
+      .catch((thrown: unknown) => thrown as ApiClientError);
+    expect(error?.code).toBe("not_found");
+    expect(error?.status).toBe(404);
   });
 });
 

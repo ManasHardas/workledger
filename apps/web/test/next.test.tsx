@@ -135,6 +135,9 @@ function spySource(over: Partial<LedgerSource> = {}) {
     retryJob: async () => {
       throw new Error("unused");
     },
+    jobLog: async () => {
+      throw new Error("unused");
+    },
     excerpt: async () => {
       throw new Error("unused");
     },

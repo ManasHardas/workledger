@@ -10,8 +10,16 @@
  * `@workledger/core` (plans/feature-p1-data-flow.md §6).
  */
 
-/** Bumped whenever the wording changes, not when a value interpolated into it changes. */
-export const INSTRUCTION_VERSION = 2;
+/**
+ * Bumped whenever the wording changes, not when a value interpolated into it changes.
+ *
+ * v3 (#97): the payload is one `--payload '<json>'` argument rather than stdin. Claude Code's
+ * headless permission matcher denies a heredoc ("brace with quote character"), a heredoc-fed
+ * pipe, and a backslash before whitespace even under `Bash(workledger checkpoint*)`, while a
+ * single-quoted argument with brackets and nested double quotes runs with no denial — probed
+ * on 2026-09-10. The string rule below is what keeps every payload inside that safe shape.
+ */
+export const INSTRUCTION_VERSION = 3;
 
 /** What {@link checkpointInstruction} interpolates. */
 export interface InstructionInput {
@@ -41,22 +49,29 @@ export const MAX_PREVIOUS_ERRORS = 1200;
  * The instruction, as one block of text.
  *
  * Written as an imperative addressed to the agent that is being stopped: it names the exact
- * command, says what goes on stdin, and lists the only backlog ids a `ref` may use, because the
- * agent has no other way to discover them from inside the session.
+ * command, says how the payload is passed, and lists the only backlog ids a `ref` may use,
+ * because the agent has no other way to discover them from inside the session.
  */
 export function checkpointInstruction(input: InstructionInput): string {
+  const span =
+    input.sinceCheckpoint !== undefined && input.sinceCheckpoint > 0
+      ? `since checkpoint ${input.sinceCheckpoint}`
+      : "since the last checkpoint";
   const lines = [
     `workledger: record a checkpoint before you stop (instruction v${INSTRUCTION_VERSION}).`,
     "",
-    `Run: workledger checkpoint --session ${input.sessionId}`,
-    input.sinceCheckpoint !== undefined && input.sinceCheckpoint > 0
-      ? "and pipe a CheckpointPayload JSON on stdin describing the work since checkpoint " +
-        `${input.sinceCheckpoint}:`
-      : "and pipe a CheckpointPayload JSON on stdin describing the work since the last checkpoint:",
-    "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 4096 bytes.",
+    `Run exactly one command: workledger checkpoint --session ${input.sessionId} --payload '<json>'`,
+    `where <json> is a CheckpointPayload describing the work ${span}:`,
+    "goal (required at checkpoint 1), done[], remaining[], notes[]. At most 16384 bytes.",
     "Shapes: done {text, files[], commit?, verified: tests-passed|tests-failed|not-verified};",
     "remaining {text, why, new: true | ref: WL-…, rel: updates|closes, blocked_by?[]};",
-    "notes {type: discovery|decision|blocker|question, text, by?: human|agent, reason?}.",
+    "notes {type: discovery|decision|blocker|question, text, by?: human|agent, reason?};",
+    "decision notes require reason and by.",
+    "Strings: no single quote (') and no backslash (\\) anywhere in the JSON — write an",
+    "apostrophe as \u2019 (U+2019), a double quote inside a string as \u201d (U+201D), a backslash",
+    "as \u29f5 (U+29F5), and keep every string on one line (the JSON itself may span lines).",
+    "Heredocs, pipes and stdin are not permitted in headless sessions; the JSON goes in the",
+    "single-quoted --payload argument and nowhere else.",
     "",
     input.openIds.length === 0
       ? "No open backlog items. Use `\"new\": true` on a remaining item worth tracking."

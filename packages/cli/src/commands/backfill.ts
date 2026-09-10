@@ -28,8 +28,9 @@ import { SINCE_WINDOWS, loadConfig } from "../config.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { DEFAULT_TIMEOUT_S, resumeSession } from "./repair.js";
 import { enqueueJob } from "../jobs/queue.js";
-import { runJobs } from "../jobs/runner.js";
+import { jobLogDir, runJobs } from "../jobs/runner.js";
 import { findRepoRoot, isEnabled, listOpenBacklogIds, sessionFile, writeFileAtomic } from "../ledger-fs.js";
+import { statSize } from "../adapters/types.js";
 import type { Harness } from "@workledger/core/schema";
 import type { ExtractIo } from "../extract/run.js";
 import type { HarnessAdapter } from "../adapters/types.js";
@@ -290,7 +291,7 @@ export interface BackfillIo {
   newBacklogId?: (() => string) | undefined;
   /** Ask the operator a yes/no question; absent means "never prompt". */
   confirm?: ((question: string) => Promise<boolean>) | undefined;
-  /** Seconds before a resumed session is killed. */
+  /** Seconds before a resumed session is killed; per session from {@link backfillTimeoutS} when absent. */
   timeoutS?: number | undefined;
   /** `ANTHROPIC_API_KEY`, read per call — only the `--extract-fallback` path uses it. */
   apiKey?: (() => string | undefined) | undefined;
@@ -463,6 +464,7 @@ export async function drainBackfillJobs(
     now: io.now,
     progress: io.stderr,
     handler: (job) => runOneJob(job, options, io, outcomes),
+    logDir: jobLogDir(io.home),
   });
 
   let done = 0;
@@ -482,6 +484,16 @@ function countOutstandingJobs(db: IndexDb, repoPath: string): number {
     )
     .get(repoPath);
   return row?.count ?? 0;
+}
+
+/**
+ * How long a backfilled session's resume may run — p3/cli.md §backfill, amended 2026-09-10 (#97):
+ * `min(1800, 600 + 120 × ceil(transcript bytes / 1e6))`. A resumed harness re-reads its whole
+ * transcript before it can describe it, so the budget grows with the file rather than being the
+ * one number `repair` uses for a session that just crashed.
+ */
+export function backfillTimeoutS(transcriptBytes: number): number {
+  return Math.min(1800, DEFAULT_TIMEOUT_S + 120 * Math.ceil(transcriptBytes / 1e6));
 }
 
 /** The contracted stdout line (cli.md step 5). */
@@ -524,7 +536,7 @@ async function runOneJob(
     {
       reason: "was recorded before workledger was watching",
       openIds: await listOpenBacklogIds(io.root),
-      timeoutS: io.timeoutS ?? DEFAULT_TIMEOUT_S,
+      timeoutS: io.timeoutS ?? backfillTimeoutS(statSize(session.transcript_path ?? undefined) ?? 0),
     },
     io,
   );

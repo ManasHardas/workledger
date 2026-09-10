@@ -39,6 +39,13 @@ enabling one, a `workledger init` the daemon's index re-read picks up, a removal
 machine-mode daemon starts that repo's watcher and job poller at that moment, not at the next
 start. A client re-reads `GET /api/repos` on it; the wizard's Home never needs a reload.
 
+Amendment 5 (2026-09-10, #97): `GET /api/jobs/:id/log` (`?repo=<id>` in machine mode; loopback
+only like every route) returns the job's `log_path` file as `text/plain; charset=utf-8` — the
+resumed session's output the runner kept under `~/.workledger/logs/` — and 404 `not_found` when the
+job is not this repo's or has no log. `LedgerSource` gains `jobLog(id)`; the Jobs card shows it as a
+collapsed "Log" section. `POST /api/jobs/:id/retry` on a `repair` job also hands the re-queued job to
+the daemon's resume runner, so a retry from the Jobs view runs rather than waiting for a CLI drain.
+
 ## Onboarding endpoints
 
 ```yaml

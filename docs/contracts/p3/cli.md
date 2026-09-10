@@ -10,7 +10,10 @@ Persisted in `~/.workledger/index.sqlite` table `jobs` (id ULID, kind, session_u
 queued|running|done|failed|cancelled, attempts int, started_at, finished_at, error, cost_estimate_usd,
 log_path). A job runner runs in the invoking process (`backfill`, `repair`) or inside `serve`; at most
 `--concurrency` (default 2) running at once; a job interrupted by process exit is `queued` again on the
-next run with `attempts` incremented; after 3 attempts it is `failed`.
+next run with `attempts` incremented; after 3 attempts it is `failed`. Amendment (2026-09-10, #97): the
+runner writes a job's output — the resumed session's stdout and stderr, capped at 16 KB — to
+`~/.workledger/logs/<job id>.log` on success and on failure and records the path in `log_path`;
+`GET /api/jobs/:id/log` serves it (`docs/contracts/p8/daemon-and-api.md` amendment 5).
 
 ```
 workledger jobs [--json] [--repo <path>]        list jobs for the repo (newest first)
@@ -31,7 +34,8 @@ Stdout: `scan: <n> orphaned, <m> repair job(s) queued`.
 
 1. Session must exist with status `crashed`, `ended` with `needs_repair`, or `open` with `--force`.
 2. Resume path: `adapter.resumeHeadless(harness_session_id, { cwd: repo, instruction, allowedTools:
-   ["Bash(workledger checkpoint*)"], timeoutMs: 300000 })`. The instruction is the checkpoint
+   ["Bash(workledger checkpoint*)"], timeoutMs: 600000 })` (amendment 2026-09-10, #97: was
+   300000; `--timeout <s>` overrides). The instruction is the checkpoint
    instruction with "since checkpoint n" and `--session <ulid>`; the resumed agent runs `workledger
    checkpoint`, which stamps `trigger: repair`. On success: status `repaired`, `needs_repair: false`.
 3. If resume fails (harness cannot resume, transcript missing, timeout) and `--extract` is not given:
@@ -53,6 +57,9 @@ Stdout: `scan: <n> orphaned, <m> repair job(s) queued`.
 4. For each session: create the session record with `source: backfill` and a `SessionStart`-equivalent
    row, queue a `repair` job (resume path); with `--extract-fallback`, a resume failure queues an
    `extract` job instead of failing. Runs the queue with `--concurrency`; progress on stderr; resumable.
+   Amendment (2026-09-10, #97): each resume's timeout is per session,
+   `min(1800, 600 + 120 × ceil(transcript bytes / 1e6))` seconds — the same rule for `workledger
+   backfill` and the onboarding wizard's backfill.
 5. Summary: `backfill: <done> digested, <failed> failed, <skipped> skipped (already indexed)`.
 
 ## Config additions (`.workledger/config.yaml`)

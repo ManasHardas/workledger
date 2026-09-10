@@ -110,6 +110,7 @@ export function JobQueue() {
               error={jobs.errors[job.id]}
               onCancel={() => jobs.act(job.id, () => source.cancelJob(job.id))}
               onRetry={() => jobs.act(job.id, () => source.retryJob(job.id))}
+              readLog={() => source.jobLog(job.id)}
             />
           ))}
         </ul>

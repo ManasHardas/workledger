@@ -94,7 +94,7 @@ export interface ExtractEstimate {
  *
  * "Cost = input tokens × rate + a fixed 4k output" (data-flow §Extraction fallback). The output
  * side is fixed rather than measured because it cannot be known in advance and a payload is
- * capped at 4096 bytes anyway; over-stating it slightly is the right direction for a number an
+ * capped at 16384 bytes anyway; over-stating it slightly is the right direction for a number an
  * operator is about to consent to.
  */
 export function estimateExtraction(
