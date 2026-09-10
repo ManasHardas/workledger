@@ -258,8 +258,44 @@ export async function runTeammate(
   return EXIT_OK;
 }
 
+/**
+ * What one `init` did, for a caller that needs more than the exit code.
+ *
+ * The onboarding wizard runs `init` per selected repo from an HTTP request and reports "hook
+ * files written" and "trust steps" per repo (docs/contracts/p8/daemon-and-api.md §Onboarding
+ * endpoints). Parsing that back out of the stdout lines would tie the wire format to the prose,
+ * so the same run records it structurally here; {@link runInit} is this minus everything but
+ * the code.
+ */
+export interface InitReport {
+  /** The process exit code `workledger init` would end with. */
+  code: number;
+  /** Ledger entries step 3 created, relative to the repo root (`.workledger/`, `config.yaml`, …). */
+  created: string[];
+  /** Hook files step 4 wrote or changed, relative to the repo root. Empty when already enabled. */
+  hooksWritten: string[];
+  /** Manual steps the operator still has to take — Codex's one-time hook trust. */
+  trustSteps: string[];
+}
+
 /** The command, with its environment injected. @returns the process exit code. */
 export async function runInit(options: InitOptions, io: InitIo): Promise<number> {
+  return (await runInitReport(options, io)).code;
+}
+
+/** The step Codex needs from the operator after `init`: trust the hooks it just wrote. */
+export function codexTrustStep(): string {
+  // Codex will not run a project's hooks until the operator has trusted them once. `init`
+  // cannot do it for them — the whole point of the prompt is that a person read the file —
+  // so it names the step rather than leaving a silently inert hook file behind.
+  return `Trust the hooks in ${CODEX_HOOKS_PATH}: Codex prompts once, on the next \`codex\` run in this repo. Until then it runs none of them.`;
+}
+
+/** {@link runInit}, reporting what it did as well as how it ended. */
+export async function runInitReport(options: InitOptions, io: InitIo): Promise<InitReport> {
+  const report: InitReport = { code: EXIT_OK, created: [], hooksWritten: [], trustSteps: [] };
+  const withCode = (code: number): InitReport => ({ ...report, code });
+
   // Step 0: which repo. `--repo` is taken as given (resolved against cwd); without it the walk
   // from cli.md's preamble finds the nearest `.workledger/` or `.git/`.
   let root: string | undefined;
@@ -267,19 +303,19 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
     root = path.resolve(io.cwd, options.repo);
     if (!existsSync(root)) {
       io.stderr(`workledger init: ${root} does not exist`);
-      return EXIT_USAGE;
+      return withCode(EXIT_USAGE);
     }
   } else {
     root = findRepoRoot(io.env["CLAUDE_PROJECT_DIR"]?.trim() || io.cwd);
     if (root === undefined) {
       io.stderr("workledger init: no .workledger/ or .git/ above the working directory; pass --repo");
-      return EXIT_USAGE;
+      return withCode(EXIT_USAGE);
     }
   }
 
   // `--teammate` short-circuits every step below: the repo is already enabled and its hook
   // files are the repo's, not this machine's (P5 §CLI additions).
-  if (options.teammate === true) return await runTeammate(root, options, io);
+  if (options.teammate === true) return withCode(await runTeammate(root, options, io));
 
   // Step 1 — detect harnesses (metadata only; no transcript is ever opened).
   const forced = new Set((options.harness ?? []).map((name) => name.trim()).filter((name) => name !== ""));
@@ -330,7 +366,7 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
       `workledger init: git ${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} empty in ${root}; ` +
         "set them so the ledger can record who did the work",
     );
-    return EXIT_USAGE;
+    return withCode(EXIT_USAGE);
   }
   io.stdout(`  identity: ${identity.name} <${identity.email}>`);
 
@@ -344,6 +380,8 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   const created = scaffold(root, configYaml(harnesses));
   for (const entry of created) io.stdout(`  created ${entry}`);
   await recordRepo(root, io);
+  report.created.push(...created);
+  if (enableCodex) report.trustSteps.push(codexTrustStep());
 
   // Step 4 — the hook-file merges, the only writes outside `.workledger/`. One per enabled
   // harness, each additive, each diffed and confirmed before it writes.
@@ -362,21 +400,22 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
     } catch (error) {
       if (!(error instanceof SettingsError)) throw error;
       io.stderr(`workledger init: ${error.message}`);
-      return EXIT_USAGE;
+      return withCode(EXIT_USAGE);
     }
     if (merge.status === "declined") {
       io.stderr(`workledger init: declined; ${label} was not written`);
-      return EXIT_USAGE;
+      return withCode(EXIT_USAGE);
     }
     if (merge.status === "written") {
       allUnchanged = false;
+      report.hooksWritten.push(label);
       io.stdout(`  wrote ${label}${merge.backup === undefined ? "" : ` (backup: ${path.basename(merge.backup)})`}`);
     }
   }
 
   if (created.length === 0 && allUnchanged) {
     io.stdout("already enabled");
-    return EXIT_OK;
+    return report;
   }
 
   // Step 5 — next steps and the privacy summary.
@@ -384,14 +423,7 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   io.stdout("Next steps:");
   const steps = [
     "Start a Claude Code session in this repo; SessionStart injects the brief.",
-    // Codex will not run a project's hooks until the operator has trusted them once. `init`
-    // cannot do it for them — the whole point of the prompt is that a person read the file —
-    // so it names the step rather than leaving a silently inert hook file behind.
-    ...(enableCodex
-      ? [
-          `Trust the hooks in ${CODEX_HOOKS_PATH}: Codex prompts once, on the next \`codex\` run in this repo. Until then it runs none of them.`,
-        ]
-      : []),
+    ...report.trustSteps,
     "Run `workledger doctor` to confirm the hooks are live.",
     `Commit \`.workledger/\` and ${[SETTINGS_PATH, ...(enableCodex ? [CODEX_HOOKS_PATH] : []), ...(enableCursor ? [CURSOR_HOOKS_PATH] : [])].join(", ")}.`,
   ];
@@ -399,7 +431,7 @@ export async function runInit(options: InitOptions, io: InitIo): Promise<number>
   io.stdout("");
   io.stdout("Privacy:");
   for (const line of PRIVACY_SUMMARY) io.stdout(`  · ${line}`);
-  return EXIT_OK;
+  return report;
 }
 
 /**
