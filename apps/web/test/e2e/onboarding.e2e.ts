@@ -94,7 +94,7 @@ async function startDaemon(): Promise<Daemon> {
     const done = jobs.filter((j) => j.status === "done").length;
     const failed = jobs.filter((j) => j.status === "failed").length;
     const running = jobs.length - done - failed;
-    return { total: jobs.length, done, failed, running, complete: running === 0 };
+    return { total: jobs.length, done, failed, running, waiting: 0, retryAfter: null, complete: running === 0 };
   };
   const repo = (root: string) => ({
     id: repoId(root),
@@ -131,7 +131,7 @@ async function startDaemon(): Promise<Daemon> {
           case "GET /api/notes/all":
             return json(res, 200, []);
           case "GET /api/jobs/all":
-            return json(res, 200, jobs.map((j) => ({ ...j, kind: "backfill", session_ulid: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE", attempts: 1, created_at: "2026-09-09T09:00:00.000Z", started_at: null, finished_at: null, heartbeat_at: null, error: null, cost_estimate_usd: null, log_path: null, repo: repo(j.repo_path) })));
+            return json(res, 200, jobs.map((j) => ({ ...j, kind: "backfill", session_ulid: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE", attempts: 1, created_at: "2026-09-09T09:00:00.000Z", started_at: null, finished_at: null, heartbeat_at: null, error: null, cost_estimate_usd: null, log_path: null, error_code: null, retry_after: null, repo: repo(j.repo_path) })));
           case "GET /api/events":
             res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
             res.write(": open\n\n");

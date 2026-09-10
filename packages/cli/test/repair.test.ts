@@ -407,3 +407,86 @@ describe("runRepair — the real adapter against a stub harness", () => {
     expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
   });
 });
+
+describe("runRepair — the harness usage limit (#100)", () => {
+  it("a resume killed by the timeout or the daemon's shutdown is a failure, whatever it printed", async () => {
+    crashedSession();
+    const adapter: HarnessAdapter = {
+      ...claudeCodeAdapter,
+      // `exitCode: null` is what `abortResumes` (#99) and the timeout kill both settle with.
+      resumeHeadless: async () => ({
+        exitCode: null,
+        timedOut: false,
+        output: "You've hit your session limit · resets 1am (America/Los_Angeles)\n",
+      }),
+    };
+    expect(await runRepair(ULID, {}, { ...repairIo(adapter), waitForReset: false })).toBe(EXIT_JOB_FAILED);
+    expect(listJobs(db, repo)[0]).toMatchObject({ status: "failed", error_code: null, retry_after: null });
+  });
+
+  /** The stub `claude` from the 2026-09-10 logs: one line on stdout, exit 1, and a tally. */
+  function limitedClaude(): string {
+    const tally = path.join(dir, "runs");
+    const bin = path.join(dir, "claude");
+    writeFileSync(
+      bin,
+      [
+        "#!/bin/sh",
+        `echo run >> "${tally}"`,
+        "echo \"You've hit your session limit · resets 1am (America/Los_Angeles)\"",
+        "exit 1",
+      ].join("\n"),
+      "utf8",
+    );
+    chmodSync(bin, 0o755);
+    process.env[CLAUDE_BIN_ENV] = bin;
+    return tally;
+  }
+
+  function runsSoFar(tally: string): number {
+    try {
+      return readFileSync(tally, "utf8").split("\n").filter((line) => line === "run").length;
+    } catch {
+      return 0;
+    }
+  }
+
+  it("records the code and the reset instant, re-queues once, skips while ahead, and runs after", async () => {
+    crashedSession();
+    const tally = limitedClaude();
+    // 13:00Z on 2026-09-09 is 6am in Los Angeles; the next 1am there is 2026-09-10 08:00Z.
+    let clock = new Date("2026-09-09T13:00:00.000Z");
+    const io = { ...repairIo(claudeCodeAdapter), now: () => clock, waitForReset: false };
+
+    expect(await runRepair(ULID, {}, io)).toBe(EXIT_JOB_FAILED);
+    expect(runsSoFar(tally)).toBe(1);
+    const job = listJobs(db, repo)[0]!;
+    expect(job).toMatchObject({
+      status: "queued",
+      error_code: "harness-usage-limit",
+      retry_after: "2026-09-10T08:00:00.000Z",
+      attempts: 0,
+      retry_waits: 1,
+    });
+    expect(job.error).toBe(
+      "claude-code hit its usage limit (\"You've hit your session limit · resets 1am (America/Los_Angeles)\"); " +
+        "waiting for the window to reset at 2026-09-10T08:00:00.000Z",
+    );
+    expect(err.at(-1)).toBe(`repair: session ${ULID} not repaired yet — ${job.error}`);
+    // The session is untouched and the trigger was cleaned up.
+    expect(frontmatter().frontmatter.status).toBe("crashed");
+    expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
+
+    // Same clock: the queued row is skipped, the harness is not spawned.
+    expect(await runRepair(ULID, {}, io)).toBe(EXIT_JOB_FAILED);
+    expect(runsSoFar(tally)).toBe(1);
+    expect(listJobs(db, repo)).toHaveLength(1);
+    expect(getJob(db, job.id)?.status).toBe("queued");
+
+    // Past the reset it runs again.
+    clock = new Date("2026-09-10T08:00:01.000Z");
+    expect(await runRepair(ULID, {}, io)).toBe(EXIT_JOB_FAILED);
+    expect(runsSoFar(tally)).toBe(2);
+    expect(getJob(db, job.id)).toMatchObject({ status: "queued", retry_waits: 2, attempts: 0 });
+  });
+});

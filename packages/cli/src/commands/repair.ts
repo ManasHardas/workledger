@@ -20,7 +20,7 @@ import { adapterFor } from "../adapters/registry.js";
 import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
-import { enqueueJob } from "../jobs/queue.js";
+import { USAGE_LIMIT_CODE, enqueueJob } from "../jobs/queue.js";
 import { jobLogDir, runJobs } from "../jobs/runner.js";
 import {
   findRepoRoot,
@@ -31,6 +31,7 @@ import {
   writeFileAtomic,
 } from "../ledger-fs.js";
 import type { HarnessAdapter } from "../adapters/types.js";
+import type { UsageLimit } from "../adapters/usage-limit.js";
 import type { IndexDb, SessionRow } from "../index/db.js";
 import type { JobResult } from "../jobs/runner.js";
 
@@ -89,6 +90,12 @@ export interface RepairIo {
   fetchImpl?: typeof globalThis.fetch;
   /** Overrides `WORKLEDGER_HOME` for the checkpoint the extraction writes through. */
   home?: string | undefined;
+  /**
+   * Sleep through a harness usage-window wait and finish the job after the reset (#100). On
+   * by default — the daemon's repair runner has nobody else to finish it. A test with a fixed
+   * clock passes `false` and asserts the row it left behind instead.
+   */
+  waitForReset?: boolean | undefined;
 }
 
 /** Why a session may be repaired, or why it may not. */
@@ -161,6 +168,19 @@ function failureReason(
   if (result.timedOut) return `the resumed session was killed after ${timeoutS}s`;
   if (result.exitCode !== 0) return `the resumed session exited ${String(result.exitCode)}`;
   return "the resumed session recorded no checkpoint";
+}
+
+/**
+ * The `error` of a job the harness refused for its usage window (#100): what it printed, and
+ * when the runner will try again. The Jobs card and the wizard render the instant in local
+ * time; this line is the one `workledger jobs` and the log show.
+ */
+export function usageLimitMessage(harness: string, limit: UsageLimit): string {
+  return (
+    `${harness} hit its usage limit ("${limit.line}"); ` +
+    `waiting for the window to reset at ${limit.resetAt}` +
+    (limit.parsed ? "" : " (no reset time given; trying again in an hour)")
+  );
 }
 
 /** What {@link resumeSession} needs: the index, the repo, the harness, and a clock. */
@@ -257,6 +277,21 @@ export async function resumeSession(
       db.updateSession(ulid, { status: "repaired", updated_at: io.now().toISOString() });
       return { ok: true, output: result.output };
     }
+    // Not a failure of this session: the harness's subscription window is spent and it said
+    // when the window resets. The runner puts the job back for then (#100). Only a harness that
+    // exited on its own is asked: `exitCode: null` is a kill — the timeout's, or the daemon's
+    // shutdown (`abortResumes`, #99) — and a killed resume is reported as one, whatever it
+    // managed to print first.
+    const limit = result.exitCode === null ? undefined : adapter.detectUsageLimit?.(result.output, io.now());
+    if (limit !== undefined) {
+      return {
+        ok: false,
+        code: USAGE_LIMIT_CODE,
+        retryAfter: limit.resetAt,
+        error: usageLimitMessage(adapter.harness, limit),
+        output: result.output,
+      };
+    }
     return { ok: false, error: failureReason(result, options.timeoutS), output: result.output };
   } finally {
     // Whatever happened, the next checkpoint in this session is an ordinary one. `checkpoint`
@@ -345,11 +380,18 @@ export async function runRepair(
     progress: io.stderr,
     logDir: jobLogDir(io.home),
     signal: io.signal,
+    ...(io.waitForReset === undefined ? {} : { waitForReset: io.waitForReset }),
   });
 
   if (summary.done === 1) {
     io.stdout(`repair: session ${ulid} repaired`);
     return EXIT_OK;
+  }
+  if (summary.waiting > 0 && summary.failed === 0) {
+    // Left `queued` with `retry_after` (#100): the next runner past the reset — this one, when
+    // it is allowed to wait, or the daemon's — picks it up.
+    io.stderr(`repair: session ${ulid} not repaired yet — ${reason}`);
+    return EXIT_JOB_FAILED;
   }
   io.stderr(`repair: session ${ulid} not repaired — ${reason || "no job was run"}`);
   io.stderr(`run \`workledger repair ${ulid} --extract\` to reconstruct the digest instead`);

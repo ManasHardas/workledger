@@ -4,6 +4,7 @@ import { buttonVariants } from "../../../components/ui/button.js";
 import { cn } from "../../../lib/cn.js";
 import type { AppSource, OnboardingStatus } from "../../../lib/ledger-source.js";
 import { HOME_HREF } from "../../../lib/router.js";
+import { waitingSentence } from "../../jobs/format.js";
 import { finishBackfillRun, readBackfillRun } from "../flags.js";
 import { plural } from "../format.js";
 import { replaceWith, type WizardState } from "../state.js";
@@ -17,6 +18,9 @@ import { StepActions, StepFrame } from "../wizard.js";
  * This screen follows `GET /api/onboarding/status` on a 2 s tick and on every `job.changed`,
  * splits the count per repo, and moves to Done when nothing is still ahead. The way out to Home
  * is a plain link — the daemon keeps going, and Home announces the finish when it comes.
+ *
+ * A job the harness refused for its usage window is `waiting`, not failed (#100): the count
+ * says so and names the reset in local time, and `complete` stays false until it has run.
  */
 export function RunningStep({ state, source }: { state: WizardState; source: AppSource }) {
   const [run] = useState(readBackfillRun);
@@ -83,7 +87,13 @@ function Progress({ status, perRepo }: { status: OnboardingStatus; perRepo: Repo
         {String(finished)} of {plural(status.total, "session")} finished
         {status.failed > 0 ? ` · ${plural(status.failed, "failure")}` : ""}
         {status.running > 0 ? ` · ${String(status.running)} still ahead` : ""}
+        {status.waiting > 0 ? ` · ${String(status.waiting)} waiting` : ""}
       </p>
+      {status.waiting > 0 && status.retryAfter !== null ? (
+        <p className="text-sm text-muted-foreground">
+          {waitingSentence(status.retryAfter, Date.now())}. The backfill continues on its own; you can leave this page.
+        </p>
+      ) : null}
       {perRepo.length > 0 ? (
         <table className="w-full text-sm">
           <caption className="sr-only">Progress per repo</caption>

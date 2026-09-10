@@ -33,6 +33,10 @@ export interface Job {
   error: string | null;
   cost_estimate_usd: number | null;
   log_path: string | null;
+  /** `harness-usage-limit` when the harness refused the job for its window; else `null` (#100). */
+  error_code: string | null;
+  /** ISO instant before which a `queued` job is not run — the usage window's reset (#100). */
+  retry_after: string | null;
 }
 
 /** `POST /api/jobs/scan` — cli.md's "`<n>` orphaned, `<m>` repair job(s) queued". */

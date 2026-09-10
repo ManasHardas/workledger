@@ -18,6 +18,7 @@ import process from "node:process";
 import { EXIT_BLOCK } from "../exit-codes.js";
 import { parseClaudeShaped } from "./claude-shaped.js";
 import { spawnResume } from "./spawn-resume.js";
+import { detectUsageLimit } from "./usage-limit.js";
 import type { HookEvent } from "../commands/hook-events.js";
 import type {
   BlockOutput,
@@ -82,6 +83,10 @@ export const claudeCodeAdapter: HarnessAdapter = {
   transcriptSize: statSize,
 
   resumeHeadless,
+
+  // "You've hit your session limit · resets 1am (America/Los_Angeles)" and its siblings — the
+  // one exit 1 a repair must wait out rather than report (#100).
+  detectUsageLimit,
 };
 
 /**

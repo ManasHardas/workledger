@@ -14,15 +14,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEAD_JOB_MS,
   MAX_ATTEMPTS,
+  MAX_RUNNING_MACHINE,
+  MAX_USAGE_WAITS,
+  USAGE_LIMIT_CODE,
   cancelJob,
   claimJob,
   completeJob,
+  countRunningJobs,
+  deferJob,
   enqueueJob,
   failJob,
   findActiveJob,
   getJob,
   heartbeat,
   listJobs,
+  queueWait,
   requeueDeadJobs,
   retryJob,
 } from "../src/jobs/queue.js";
@@ -291,7 +297,7 @@ describe("runJobs", () => {
     });
 
     expect(seen.sort()).toEqual(["S1", "S2", "S3"]);
-    expect(summary).toEqual({ done: 2, failed: 1, requeued: 0 });
+    expect(summary).toEqual({ done: 2, failed: 1, requeued: 0, waiting: 0 });
     expect(listJobs(db, REPO).filter((job) => job.status === "done")).toHaveLength(2);
     const failed = listJobs(db, REPO).find((job) => job.status === "failed");
     expect(failed?.error).toBe("no");
@@ -443,7 +449,7 @@ describe("runJobs", () => {
       },
     });
 
-    expect(summary).toEqual({ done: 0, failed: 0, requeued: 0 });
+    expect(summary).toEqual({ done: 0, failed: 0, requeued: 0, waiting: 0 });
     expect(getJob(db, job.id)?.status).toBe("cancelled");
   });
 });
@@ -517,5 +523,234 @@ describe("workledger jobs", () => {
     failJob(db, job.id, new Date(), { error: "the resumed session was killed after 300s" });
 
     expect(run({}).out[0]).toContain("killed after 300s");
+  });
+});
+
+describe("usage-window waits (#100)", () => {
+  const T0 = new Date("2026-09-10T20:00:00.000Z");
+  const RESET = "2026-09-11T08:00:00.000Z";
+  const AFTER = new Date("2026-09-11T08:00:01.000Z");
+
+  it("deferJob puts a running job back with retry_after, the code, and its attempt handed back", () => {
+    session("S1");
+    const job = queue("S1");
+    claimJob(db, { repoPath: REPO, now: T0 });
+
+    deferJob(db, job.id, { retryAfter: RESET, error: "claude-code hit its usage limit", logPath: "/l/1.log" });
+
+    expect(getJob(db, job.id)).toMatchObject({
+      status: "queued",
+      attempts: 0,
+      retry_waits: 1,
+      retry_after: RESET,
+      error_code: USAGE_LIMIT_CODE,
+      error: "claude-code hit its usage limit",
+      log_path: "/l/1.log",
+      started_at: null,
+      heartbeat_at: null,
+    });
+  });
+
+  it("claimJob skips a job until its retry_after, and queueWait says how long", () => {
+    session("S1");
+    const job = queue("S1");
+    claimJob(db, { repoPath: REPO, now: T0 });
+    deferJob(db, job.id, { retryAfter: RESET });
+
+    expect(claimJob(db, { repoPath: REPO, now: T0 })).toBeUndefined();
+    expect(queueWait(db, { repoPath: REPO, now: T0 })).toEqual({ kind: "deferred", until: RESET });
+    expect(queueWait(db, { repoPath: OTHER_REPO, now: T0 })).toBeUndefined();
+
+    const claimed = claimJob(db, { repoPath: REPO, now: AFTER });
+    // The wait did not cost an attempt; the claim that finally runs it clears the wait.
+    expect(claimed).toMatchObject({ id: job.id, attempts: 1, retry_after: null, error_code: null, retry_waits: 1 });
+    expect(queueWait(db, { repoPath: REPO, now: AFTER })).toBeUndefined();
+  });
+
+  it("an operator retry clears the wait and its count", () => {
+    session("S1");
+    const job = queue("S1");
+    claimJob(db, { repoPath: REPO, now: T0 });
+    deferJob(db, job.id, { retryAfter: RESET });
+    failJob(db, job.id, T0, { error: "gave up", errorCode: USAGE_LIMIT_CODE });
+    expect(getJob(db, job.id)).toMatchObject({ status: "failed", error_code: USAGE_LIMIT_CODE, retry_after: null });
+
+    expect(retryJob(db, job.id)).toMatchObject({ status: "queued", retry_waits: 0, error_code: null });
+    expect(claimJob(db, { repoPath: REPO, now: T0 })?.id).toBe(job.id);
+  });
+
+  it("runJobs re-queues a handler's usage-limit result for the reset, skips it while ahead, and runs it after", async () => {
+    session("S1");
+    const job = queue("S1");
+    let runs = 0;
+    let retryAfter = RESET;
+    const handler = async () => {
+      runs += 1;
+      return { ok: false, code: USAGE_LIMIT_CODE, retryAfter, error: "limit", output: "You've hit your session limit" };
+    };
+
+    const first = await runJobs(db, { repoPath: REPO, concurrency: 1, now: () => T0, handler, waitForReset: false, logDir: path.join(home, "logs") });
+    expect(first).toEqual({ done: 0, failed: 0, requeued: 0, waiting: 1 });
+    expect(getJob(db, job.id)).toMatchObject({ status: "queued", attempts: 0, retry_waits: 1, retry_after: RESET, error_code: USAGE_LIMIT_CODE, error: "limit" });
+    expect(readFileSync(getJob(db, job.id)!.log_path!, "utf8")).toBe("You've hit your session limit");
+
+    // Still ahead: nothing is claimed, nothing runs.
+    const skipped = await runJobs(db, { repoPath: REPO, concurrency: 1, now: () => T0, handler, waitForReset: false });
+    expect(skipped).toEqual({ done: 0, failed: 0, requeued: 0, waiting: 0 });
+    expect(runs).toBe(1);
+
+    // Past the reset it runs again — and, hitting the limit again, waits a second time.
+    retryAfter = "2026-09-12T08:00:00.000Z";
+    const after = await runJobs(db, { repoPath: REPO, concurrency: 1, now: () => AFTER, handler, waitForReset: false });
+    expect(after.waiting).toBe(1);
+    expect(runs).toBe(2);
+    expect(getJob(db, job.id)).toMatchObject({ status: "queued", retry_waits: 2, attempts: 0 });
+  });
+
+  it("a waiting runner sleeps through the reset and finishes the job itself", async () => {
+    session("S1");
+    const job = queue("S1");
+    let now = T0.getTime();
+    const reset = new Date(T0.getTime() + 40).toISOString();
+    let runs = 0;
+    const summary = await runJobs(db, {
+      repoPath: REPO,
+      concurrency: 1,
+      limit: 1,
+      pollMs: 5,
+      // A clock that moves with the wall: the runner's sleep has to end somewhere.
+      now: () => new Date((now += 10)),
+      handler: async () => {
+        runs += 1;
+        return runs === 1 ? { ok: false, code: USAGE_LIMIT_CODE, retryAfter: reset, error: "limit" } : { ok: true };
+      },
+    });
+    expect(summary).toEqual({ done: 1, failed: 0, requeued: 0, waiting: 1 });
+    expect(runs).toBe(2);
+    expect(getJob(db, job.id)).toMatchObject({ status: "done", attempts: 1, retry_waits: 1, error_code: null, retry_after: null });
+  });
+
+  it("an abort (#99) ends a worker that is sleeping through a wait", async () => {
+    session("S1");
+    const job = queue("S1");
+    claimJob(db, { repoPath: REPO, now: T0 });
+    deferJob(db, job.id, { retryAfter: RESET });
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 20);
+    const started = Date.now();
+    const summary = await runJobs(db, {
+      repoPath: REPO,
+      concurrency: 1,
+      pollMs: 60_000,
+      now: () => T0,
+      signal: stop.signal,
+      handler: async () => ({ ok: true }),
+    });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(summary).toEqual({ done: 0, failed: 0, requeued: 0, waiting: 0 });
+    expect(getJob(db, job.id)?.status).toBe("queued");
+  });
+
+  it(`fails for good after ${MAX_USAGE_WAITS} waits`, async () => {
+    session("S1");
+    const job = queue("S1");
+    let at = T0.getTime();
+    for (let wait = 1; wait <= MAX_USAGE_WAITS + 1; wait += 1) {
+      const retryAfter = new Date(at + 1000).toISOString();
+      const summary = await runJobs(db, {
+        repoPath: REPO,
+        concurrency: 1,
+        now: () => new Date(at),
+        handler: async () => ({ ok: false, code: USAGE_LIMIT_CODE, retryAfter, error: "limit" }),
+        waitForReset: false,
+      });
+      if (wait <= MAX_USAGE_WAITS) {
+        expect(summary.waiting, `wait ${wait}`).toBe(1);
+        expect(getJob(db, job.id)?.retry_waits).toBe(wait);
+      } else {
+        expect(summary.failed).toBe(1);
+        expect(getJob(db, job.id)).toMatchObject({ status: "failed", error_code: USAGE_LIMIT_CODE, retry_after: null });
+        expect(getJob(db, job.id)?.error).toContain(`gave up after ${MAX_USAGE_WAITS} waits`);
+      }
+      at += 2000;
+    }
+  });
+
+  it("a usage-limit result without a reset instant is an ordinary failure", async () => {
+    session("S1");
+    const job = queue("S1");
+    await runJobs(db, {
+      repoPath: REPO,
+      concurrency: 1,
+      now: () => T0,
+      handler: async () => ({ ok: false, code: USAGE_LIMIT_CODE, error: "limit" }),
+    });
+    expect(getJob(db, job.id)).toMatchObject({ status: "failed", error: "limit" });
+  });
+});
+
+describe("the machine-wide cap (#100)", () => {
+  it(`runs at most ${MAX_RUNNING_MACHINE} jobs at once however many workers there are`, async () => {
+    expect(MAX_RUNNING_MACHINE).toBe(2);
+    for (const ulid of ["S1", "S2", "S3", "S4"]) {
+      session(ulid);
+      queue(ulid);
+    }
+    let inFlight = 0;
+    let peak = 0;
+    const summary = await runJobs(db, {
+      repoPath: REPO,
+      concurrency: 4,
+      pollMs: 5,
+      now: () => new Date(),
+      handler: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        expect(countRunningJobs(db, new Date())).toBeLessThanOrEqual(2);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        inFlight -= 1;
+        return { ok: true };
+      },
+    });
+    expect(peak).toBe(2);
+    expect(summary.done).toBe(4);
+  });
+
+  it("counts every runner on the machine, not just this one — and extract jobs too", async () => {
+    session("S1");
+    session("S2");
+    session("S3", OTHER_REPO);
+    queue("S1");
+    enqueueJob(db, { kind: "extract", sessionUlid: "S2", repoPath: REPO, newId, now: new Date() });
+    queue("S3", OTHER_REPO);
+
+    let inFlight = 0;
+    let peak = 0;
+    const handler = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight -= 1;
+      return { ok: true };
+    };
+    // Two runners, as `serve` has when two repos backfill at once.
+    const [a, b] = await Promise.all([
+      runJobs(db, { repoPath: REPO, concurrency: 2, pollMs: 5, now: () => new Date(), handler }),
+      runJobs(db, { repoPath: OTHER_REPO, concurrency: 2, pollMs: 5, now: () => new Date(), handler }),
+    ]);
+    expect(peak).toBe(2);
+    expect(a.done + b.done).toBe(3);
+  });
+
+  it("does not count a dead runner's row against the cap", () => {
+    session("S1");
+    queue("S1");
+    const stale = new Date(Date.now() - DEAD_JOB_MS - 5000);
+    claimJob(db, { repoPath: REPO, now: stale });
+    expect(countRunningJobs(db, new Date())).toBe(0);
+    session("S2");
+    queue("S2");
+    expect(claimJob(db, { repoPath: REPO, now: new Date(), maxRunning: 1 })?.session_ulid).toBe("S2");
+    expect(claimJob(db, { repoPath: REPO, now: new Date(), maxRunning: 1 })).toBeUndefined();
   });
 });

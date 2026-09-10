@@ -128,7 +128,7 @@ function Plan({ state, source, method }: { state: WizardState; source: AppSource
       title={method === "resume" ? "Resume in your harness" : "Extract with an API key"}
       lead={
         method === "resume"
-          ? "Each session below is resumed headlessly, one at a time per repo, and asked for its checkpoint. Start queues the jobs; they run on the daemon and you can leave this page."
+          ? "Each session below is resumed headlessly, one at a time per repo, and asked for its checkpoint. Start queues the jobs; they run on the daemon and you can leave this page. Replay uses your Claude/Codex subscription usage; a large backfill may pause until your usage window resets."
           : "An extraction model reads each transcript and writes the checkpoint. The cost below is an estimate from transcript size; Run queues the jobs against the daemon's key."
       }
     >

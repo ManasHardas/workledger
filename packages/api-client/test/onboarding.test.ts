@@ -30,6 +30,8 @@ const JOB: Job = {
   error: null,
   cost_estimate_usd: null,
   log_path: null,
+    error_code: null,
+    retry_after: null,
 };
 
 const calls: { op: string; args: unknown[] }[] = [];
@@ -66,7 +68,7 @@ const ops: OnboardingOps = {
   },
   status: async () => {
     calls.push({ op: "status", args: [] });
-    return { total: 3, done: 1, failed: 0, running: 2, complete: false };
+    return { total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false };
   },
 };
 
@@ -125,7 +127,7 @@ describe("OnboardingSource over the real routes", () => {
     const run = await source.run({ repos: [repo], since: "7d", method: "resume", consent: true });
     expect(run.jobs).toEqual([JOB]);
     const status = await source.status();
-    expect(status).toEqual({ total: 3, done: 1, failed: 0, running: 2, complete: false });
+    expect(status).toEqual({ total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false });
 
     expect(urls.map((u) => u.url.slice(baseUrl.length))).toEqual([
       "/api/onboarding/discover",

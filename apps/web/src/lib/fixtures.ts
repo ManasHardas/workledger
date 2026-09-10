@@ -281,6 +281,8 @@ export const FIXTURE_JOBS_ALL: JobAcrossRepos[] = [
     error: "claude --resume exited 1: session not found",
     cost_estimate_usd: null,
     log_path: null,
+    error_code: null,
+    retry_after: null,
     repo: FIXTURE_REPOS[1]!,
   },
 ];
@@ -414,5 +416,7 @@ export const FIXTURE_ONBOARDING_STATUS: OnboardingStatus = {
   done: 0,
   failed: 0,
   running: 0,
+  waiting: 0,
+  retryAfter: null,
   complete: true,
 };

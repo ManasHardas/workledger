@@ -229,9 +229,9 @@ function hookCommands(repo: string): Record<string, string[]> {
   return out;
 }
 
-async function status(url: string): Promise<{ total: number; done: number; failed: number; running: number; complete: boolean }> {
+async function status(url: string): Promise<{ total: number; done: number; failed: number; running: number; waiting: number; retryAfter: string | null; complete: boolean }> {
   const response = await fetch(`${url}/api/onboarding/status`);
-  return (await response.json()) as { total: number; done: number; failed: number; running: number; complete: boolean };
+  return (await response.json()) as { total: number; done: number; failed: number; running: number; waiting: number; retryAfter: string | null; complete: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ test.describe("onboarding, full system", () => {
     await expect(page.getByRole("heading", { name: "Backfilled 2 sessions across 2 repos" })).toBeVisible({ timeout: 90_000 });
 
     // The daemon's own count, not the page's.
-    expect(await status(fixture.url)).toEqual({ total: 2, done: 2, failed: 0, running: 0, complete: true });
+    expect(await status(fixture.url)).toEqual({ total: 2, done: 2, failed: 0, running: 0, waiting: 0, retryAfter: null, complete: true });
     // The stub was resumed once per harness session, and each checkpoint is in the ledger.
     expect(readFileSync(fixture.callLog, "utf8").trim().split("\n").sort()).toEqual(REPOS.map((r) => r.fixture).sort());
     for (const repo of fixture.repos) {

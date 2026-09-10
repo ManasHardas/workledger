@@ -26,7 +26,7 @@ import { runOnboard } from "../src/commands/onboard.js";
 import { onboardingOps } from "../src/commands/onboarding-ops.js";
 import { EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
 import { openIndex } from "../src/index/db.js";
-import { completeJob, listJobs } from "../src/jobs/queue.js";
+import { claimJob, completeJob, deferJob, listJobs } from "../src/jobs/queue.js";
 import {
   ONBOARDING_SOURCE,
   OnboardingRefusalError,
@@ -420,7 +420,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     await expect(
       queueOnboardingBackfill({ repos: [repoA], since: "90d", method: "resume", consent: false }, io),
     ).rejects.toMatchObject({ code: "consent-required" });
-    expect(await onboardingStatus(io)).toEqual({ total: 0, done: 0, failed: 0, running: 0, complete: true });
+    expect(await onboardingStatus(io)).toEqual({ total: 0, done: 0, failed: 0, running: 0, waiting: 0, retryAfter: null, complete: true });
   });
 
   it("refuses extraction without an API key, in the shape the route turns into 409", async () => {
@@ -461,7 +461,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     expect(codexRow).toMatchObject({ repo_path: repoA, harness: "codex", status: "ended" });
     expect(queued.jobs.map((job) => job.session_ulid)).toContain(codexRow?.ulid);
     expect(readFileSync(path.join(repoA, ".workledger", "sessions", `${codexRow?.ulid}.md`), "utf8")).toContain("harness: codex");
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 0, failed: 0, running: 4, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 0, failed: 0, running: 4, waiting: 0, retryAfter: null, complete: false });
 
     // A second run finds nothing fresh: the sessions are in the index now.
     const again = await queueOnboardingBackfill({ repos: [repoA, repoB], since: "90d", method: "resume", consent: true }, io);
@@ -479,7 +479,7 @@ describe("queueOnboardingBackfill and onboardingStatus", () => {
     } finally {
       db.close();
     }
-    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 1, failed: 1, running: 2, complete: false });
+    expect(await onboardingStatus(io)).toEqual({ total: 4, done: 1, failed: 1, running: 2, waiting: 0, retryAfter: null, complete: false });
   });
 
   it("queues extract jobs for method extract once a key is present, and none for a Codex session", async () => {
@@ -538,7 +538,7 @@ describe("the injected OnboardingOps", () => {
     const run = await ops.run({ repos: [repoA], since: "7d", method: "resume", consent: true });
     expect(run.jobs).toHaveLength(2);
     expect(drained).toEqual([[[repoA], "resume"]]);
-    expect(await ops.status()).toMatchObject({ total: 2, running: 2, complete: false });
+    expect(await ops.status()).toMatchObject({ total: 2, running: 2, waiting: 0, retryAfter: null, complete: false });
   });
 });
 
@@ -649,5 +649,27 @@ describe("workledger onboard --json", () => {
     expect(tty.out.join("\n")).toContain("not started");
     expect(existsSync(path.join(repoA, ".workledger"))).toBe(true);
     expect(existsSync(path.join(repoB, ".workledger"))).toBe(false);
+  });
+});
+
+describe("onboarding status and the usage window (#100)", () => {
+  it("counts a job held for the harness's reset as waiting, with the earliest reset, and not complete", async () => {
+    const ops = onboardingOps(
+      { cwd: dir, env: io.env, stdout: () => {}, stderr: (line) => void err.push(line) },
+      () => {},
+    );
+    expect((await ops.init({ repos: [repoA] })).results[0]?.ok).toBe(true);
+    const run = await ops.run({ repos: [repoA], since: "7d", method: "resume", consent: true });
+    expect(run.jobs).toHaveLength(2);
+
+    // `status` reads the wall clock, so the reset has to be ahead of *that*, not of the fixture's.
+    const reset = new Date(Date.now() + 60 * 60_000).toISOString();
+    withDb((db) => {
+      const claimed = claimJob(db, { repoPath: repoA, now: NOW })!;
+      deferJob(db, claimed.id, { retryAfter: reset, error: "limit" });
+    });
+
+    expect(await ops.status()).toEqual({ total: 2, done: 0, failed: 0, running: 1, waiting: 1, retryAfter: reset, complete: false });
+    expect((await ops.status()).total).toBe(2);
   });
 });

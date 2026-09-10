@@ -9,6 +9,7 @@
 import { statSync } from "node:fs";
 
 import type { HookEvent } from "../commands/hook-events.js";
+import type { UsageLimit } from "./usage-limit.js";
 
 /** Why a `SessionStart` fired, normalized across harnesses. */
 export type StartSource = "startup" | "resume" | "clear" | "compact" | "fork";
@@ -152,6 +153,14 @@ export interface HarnessAdapter {
    * Never throws: a harness that is not installed comes back as `spawnError`.
    */
   resumeHeadless?(sessionId: string, options: ResumeOptions): Promise<ResumeResult>;
+
+  /**
+   * Whether a resume's output says the harness's subscription window is spent, and when it
+   * resets — #100. Optional because only a harness whose wording is known can answer it: an
+   * adapter without one has every non-zero exit reported as an ordinary failure, never as a
+   * wait. Pure; `now` is the caller's clock so the reset instant is testable.
+   */
+  detectUsageLimit?(output: string, now: Date): UsageLimit | undefined;
 }
 
 /** A non-empty string field, or `undefined` for anything else (including a wrong type). */

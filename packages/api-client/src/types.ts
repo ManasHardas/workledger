@@ -182,6 +182,10 @@ export interface Job {
   error: string | null;
   cost_estimate_usd: number | null;
   log_path: string | null;
+  /** `harness-usage-limit` when the harness refused the job for its window; else `null` (#100). */
+  error_code: string | null;
+  /** ISO instant before which a `queued` job is not run — the usage window's reset (#100). */
+  retry_after: string | null;
 }
 
 /** `POST /api/jobs/scan`. */
@@ -463,7 +467,8 @@ export interface RunResult {
 
 /**
  * `GET /api/onboarding/status` — the wizard's jobs by lifecycle state. `running` counts `queued`
- * too, `failed` counts `cancelled`, so `total = done + failed + running` and `complete` is
+ * too, `failed` counts `cancelled`, `waiting` is the queued rows held for a usage window (#100),
+ * so `total = done + failed + running + waiting` and `complete` is
  * "nothing is still ahead".
  */
 export interface OnboardingStatus {
@@ -471,6 +476,10 @@ export interface OnboardingStatus {
   done: number;
   failed: number;
   running: number;
+  /** Queued jobs held for the harness's usage window (#100) — neither ahead nor failed. */
+  waiting: number;
+  /** The earliest reset those jobs wait for, or `null` when nothing is waiting. */
+  retryAfter: string | null;
   complete: boolean;
 }
 

@@ -259,21 +259,40 @@ export async function drainOnboardingBackfill(
   });
 }
 
-/** The wizard's jobs by lifecycle state, over one open index. */
-export function readOnboardingStatus(db: IndexDb): OnboardingStatus {
+/**
+ * The wizard's jobs by lifecycle state, over one open index.
+ *
+ * A `queued` row whose `retry_after` is still ahead is `waiting` rather than `running` (#100):
+ * the harness's usage window is spent, and the wizard says so with the reset time instead of
+ * counting the row as work still ahead — or, worse, as failed.
+ */
+export function readOnboardingStatus(db: IndexDb, now: Date): OnboardingStatus {
+  const at = now.toISOString();
   const rows = db.connection
-    .prepare<[string], { status: string; count: number }>(
-      "SELECT status, COUNT(*) AS count FROM jobs WHERE source = ? GROUP BY status",
+    .prepare<[string, string, string], { status: string; count: number; waiting: number; retry_after: string | null }>(
+      "SELECT status, COUNT(*) AS count, " +
+        "SUM(CASE WHEN status = 'queued' AND retry_after > ? THEN 1 ELSE 0 END) AS waiting, " +
+        "MIN(CASE WHEN status = 'queued' AND retry_after > ? THEN retry_after END) AS retry_after " +
+        "FROM jobs WHERE source = ? GROUP BY status",
     )
-    .all(ONBOARDING_SOURCE);
-  const by = new Map(rows.map((row) => [row.status, row.count]));
-  const done = by.get("done") ?? 0;
-  const failed = (by.get("failed") ?? 0) + (by.get("cancelled") ?? 0);
-  const running = (by.get("running") ?? 0) + (by.get("queued") ?? 0);
-  return { total: done + failed + running, done, failed, running, complete: running === 0 };
+    .all(at, at, ONBOARDING_SOURCE);
+  const by = new Map(rows.map((row) => [row.status, row]));
+  const done = by.get("done")?.count ?? 0;
+  const failed = (by.get("failed")?.count ?? 0) + (by.get("cancelled")?.count ?? 0);
+  const waiting = by.get("queued")?.waiting ?? 0;
+  const running = (by.get("running")?.count ?? 0) + (by.get("queued")?.count ?? 0) - waiting;
+  return {
+    total: done + failed + running + waiting,
+    done,
+    failed,
+    running,
+    waiting,
+    retryAfter: by.get("queued")?.retry_after ?? null,
+    complete: running === 0 && waiting === 0,
+  };
 }
 
 /** The status step. */
 export async function onboardingStatus(io: OnboardingIo): Promise<OnboardingStatus> {
-  return await withIndex(io, readOnboardingStatus);
+  return await withIndex(io, (db) => readOnboardingStatus(db, io.now()));
 }

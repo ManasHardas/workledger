@@ -68,7 +68,7 @@ class FakeOnboardingOps implements OnboardingOps {
   run = async (input: RunInput): Promise<RunResult> =>
     this.#record("run", [input], { jobs: [fakeJob({ kind: input.method === "extract" ? "extract" : "repair" })] });
   status = async (): Promise<OnboardingStatus> =>
-    this.#record("status", [], { total: 3, done: 1, failed: 0, running: 2, complete: false });
+    this.#record("status", [], { total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false });
 }
 
 let repo: TempRepo;
@@ -332,7 +332,7 @@ describe("GET /api/onboarding/status", () => {
   it("returns the counts", async () => {
     const { status, body } = await get("/api/onboarding/status");
     expect(status).toBe(200);
-    expect(body).toEqual({ total: 3, done: 1, failed: 0, running: 2, complete: false });
+    expect(body).toEqual({ total: 3, done: 1, failed: 0, running: 2, waiting: 0, retryAfter: null, complete: false });
   });
 });
 

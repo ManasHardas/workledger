@@ -54,6 +54,17 @@ signal at most, by a hard exit if anything else still holds the loop. Rows still
 `workledger stop` waits **5 s** for the pid after `SIGTERM`, then sends `SIGKILL`, waits 1 s more,
 removes `serve.json` and exits 0; it exits 1 only when the pid survives `SIGKILL`.
 
+Amendment 7 (2026-09-10, #100): `Job` gains `error_code: string | null` (`harness-usage-limit`
+when the harness refused the job for its subscription window) and `retry_after: string | null`
+(the ISO instant before which a `queued` job is not run — the window's reset), per
+`docs/contracts/p3/cli.md` §Jobs. `GET /api/onboarding/status` gains `waiting: number` (queued
+jobs whose `retry_after` is ahead — neither ahead nor failed) and `retryAfter: string | null`
+(the earliest such instant); `running` no longer counts them, `total = done + failed + running +
+waiting`, and `complete` is false while any wait. The Jobs card shows a waiting job as "Waiting
+for your Claude usage window to reset at <local time>"; the wizard's running and done steps count
+them as waiting with the same sentence, and its method step states that replay uses the
+Claude/Codex subscription and that a large backfill may pause until the usage window resets.
+
 ## Onboarding endpoints
 
 ```yaml
