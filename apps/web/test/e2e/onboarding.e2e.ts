@@ -144,16 +144,19 @@ async function startDaemon(): Promise<Daemon> {
               known: [candidate(ALPHA, { "claude-code": 5 }), candidate(BETA, { codex: 2 }), candidate(PROJECTS, { "claude-code": 1 }, false)],
               found: [candidate(GAMMA, {}), ...roots.filter((r) => r !== PROJECTS).map((r) => candidate(`${r}/delta`, {}))],
               roots,
+              workspaces: [],
             });
           }
           case "GET /api/onboarding/history":
-            return json(res, 200, { windows: { "7d": { sessions: 1, bytes: 400_000 }, "30d": { sessions: 3, bytes: 1_200_000 }, "90d": { sessions: 7, bytes: 2_900_000 } } });
+            return json(res, 200, { windows: { "7d": { sessions: 1, bytes: 400_000 }, "30d": { sessions: 3, bytes: 1_200_000 }, "90d": { sessions: 7, bytes: 2_900_000 }, all: { sessions: 9, bytes: 3_400_000 } } });
           case "POST /api/onboarding/init": {
             const body = await readJson(req);
             const repos = body["repos"] as string[];
+            const workspaces = body["workspaces"] as string[] | undefined;
             for (const root of repos) enabled.add(root);
             return json(res, 200, {
               results: repos.map((root) => ({ path: root, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: root === BETA ? ["Open Codex in this repo once and accept its hooks prompt"] : [] })),
+              ...(workspaces === undefined ? {} : { workspaces: workspaces.map((root) => ({ path: root, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] })) }),
             });
           }
           case "POST /api/onboarding/plan": {

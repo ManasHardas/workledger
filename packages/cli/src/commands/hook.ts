@@ -21,8 +21,10 @@
  * paths that render something, always off a deep specifier rather than the barrel.
  * `packages/cli/test/hook-timing.test.ts` measures it and asserts core stays out.
  */
-import process from "node:process";
+import { existsSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
+import process from "node:process";
 
 import { DEFAULT_HARNESS, adapterFor } from "../adapters/registry.js";
 import { isPrivateSession, loadConfig } from "../config.js";
@@ -39,7 +41,7 @@ import {
 import { HOOK_EVENTS } from "./hook-events.js";
 import type { HarnessAdapter, HookInput } from "../adapters/types.js";
 import type { HookConfig } from "../config.js";
-import type { IndexDb } from "../index/db.js";
+import type { IndexDb, NewSession } from "../index/db.js";
 import type { HookEvent } from "./hook-events.js";
 
 export { HOOK_EVENTS };
@@ -130,7 +132,7 @@ export function minutesSince(from: string | null, now: Date): number {
  *
  * @returns `true` when the file was rewritten.
  */
-async function patchFrontmatter(
+export async function patchFrontmatter(
   root: string,
   ulid: string,
   mutate: (data: Record<string, unknown>) => void,
@@ -155,7 +157,7 @@ async function patchFrontmatter(
 // ---------------------------------------------------------------------------
 
 /** What every event handler is handed once the guards have run. */
-interface Context {
+export interface Context {
   io: HookIo;
   db: IndexDb;
   /** The enabled repo root. */
@@ -247,9 +249,19 @@ async function opportunisticScan(ctx: Context, ulid: string): Promise<void> {
   }
 }
 
-/** Mint the ulid, write the session file, and open the index row. */
-async function createSession(ctx: Context, size: number | undefined): Promise<string> {
-  const { io, db, root, input, nowIso } = ctx;
+/**
+ * Mint the ulid, write the session file, and open the index row.
+ *
+ * `root` defaults to the context's repo; the workspace hook (`./hook-workspace.ts`) passes each
+ * touched repo instead, and `extra` for the columns only it sets.
+ */
+export async function createSession(
+  ctx: Context,
+  size: number | undefined,
+  root: string = ctx.root,
+  extra: Partial<NewSession> = {},
+): Promise<string> {
+  const { io, db, input, nowIso } = ctx;
   const [{ newSessionId }, { SCHEMA_VERSION }, { createSessionText }, { gitInfo }] =
     await Promise.all([
       import("@workledger/core/ids"),
@@ -302,6 +314,7 @@ async function createSession(ctx: Context, size: number | undefined): Promise<st
     // maximum with no second column to keep in step.
     last_checkpoint_at: nowIso,
     updated_at: nowIso,
+    ...extra,
   });
   return ulid;
 }
@@ -500,7 +513,7 @@ async function sessionEnd(ctx: Context): Promise<number> {
 // ---------------------------------------------------------------------------
 
 /** The message of a thrown value, without a stack and without quoting a payload. */
-function describe(error: unknown): string {
+export function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -526,8 +539,14 @@ export async function runHook(event: HookEvent, io: HookIo): Promise<number> {
     const from = io.env["CLAUDE_PROJECT_DIR"]?.trim() || parsed.cwd || io.cwd;
     const root = findRepoRoot(from);
     // Not a repo, or a repo nobody ran `workledger init` in. Silence is the contract: a hook
-    // that printed here would print on every turn of every unrelated session.
-    if (root === undefined || !isEnabled(root)) return EXIT_OK;
+    // that printed here would print on every turn of every unrelated session — unless the
+    // folder is a workspace `init --workspace` wrote hook files into (P8 amendment 8), which
+    // the hook file's presence says cheaply before the index is asked.
+    if (root === undefined || !isEnabled(root)) {
+      if (!hasWorkspaceHookFile(from)) return EXIT_OK;
+      const { runWorkspaceHook } = await import("./hook-workspace.js");
+      return await runWorkspaceHook(event, io, parsed, path.resolve(from));
+    }
 
     const config = loadConfig(root);
     // `private_paths` is matched against the session's own working directory, not the repo root
@@ -565,6 +584,18 @@ export async function runHook(event: HookEvent, io: HookIo): Promise<number> {
     io.stderr(`workledger: hook ${event}: ${describe(error)}`);
     return EXIT_OK;
   }
+}
+
+/** The hook files `init --workspace` writes, any one of which is how a workspace hook fired at all. */
+const WORKSPACE_HOOK_FILES = [
+  path.join(".claude", "settings.json"),
+  path.join(".codex", "hooks.json"),
+  path.join(".cursor", "hooks.json"),
+];
+
+/** `true` when `dir` carries a hook file — the cheap test before the index says it is a workspace. */
+function hasWorkspaceHookFile(dir: string): boolean {
+  return WORKSPACE_HOOK_FILES.some((file) => existsSync(path.join(dir, file)));
 }
 
 /** Options commander parses for `hook`. */

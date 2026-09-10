@@ -28,14 +28,16 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+import { workspaceHooksInstalled } from "../commands/init-workspace.js";
 import { configFile } from "../config.js";
+import { findRepoRoot } from "../ledger-fs.js";
 import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
 import { isDirectory, sessionRepoOf } from "./session-cwd.js";
 import { claudeProjects, codexSessions } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
-import type { DiscoverResult, RepoCandidate } from "@workledger/server";
+import type { DiscoverResult, RepoCandidate, WorkspaceCandidate } from "@workledger/server";
 
 /** How far below a root the `.git` walk looks: `<root>/a/b/c` is the deepest repo it can find. */
 export const FOUND_DEPTH = 3;
@@ -142,15 +144,25 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
     known.set(key, entry);
   };
 
+  // Start directories that are not repos (amendment 8): candidates for `init --workspace`.
+  const starts = new Set<string>();
+  const startedIn = (cwd: string): void => {
+    if (findRepoRoot(cwd) === undefined) starts.add(realOr(path.resolve(cwd)));
+  };
+
   for (const project of claudeProjects(io.homeDir)) {
     if (project.cwd === undefined || project.sessions === 0) continue;
     const repo = repoOf(project.cwd, tempDirs);
-    if (repo !== undefined) bump(repo, "claude-code", project.sessions, project.newestMs);
+    if (repo === undefined) continue;
+    bump(repo, "claude-code", project.sessions, project.newestMs);
+    startedIn(project.cwd);
   }
   for (const session of codexSessions(io.homeDir)) {
     if (session.cwd === null) continue;
     const repo = repoOf(session.cwd, tempDirs);
-    if (repo !== undefined) bump(repo, "codex", 1, session.mtimeMs);
+    if (repo === undefined) continue;
+    bump(repo, "codex", 1, session.mtimeMs);
+    startedIn(session.cwd);
   }
 
   // The walk follows no symlink and starts from a resolved root, so what it yields is resolved.
@@ -186,6 +198,17 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
     entry.suggested = entry.hasGit && !underTempDir(key, tempDirs) && !holdsAnother(key);
   }
 
+  // A workspace is a start directory holding git candidates. The repos are reported as the
+  // candidates spell them, so the wizard can match them against its selection.
+  const workspaces: WorkspaceCandidate[] = [];
+  for (const start of [...starts].sort()) {
+    const repos = all
+      .filter(([key, entry]) => entry.hasGit && key.startsWith(`${start}${path.sep}`))
+      .map(([, entry]) => entry.path);
+    if (repos.length === 0) continue;
+    workspaces.push({ path: start, repos, hooksInstalled: workspaceHooksInstalled(start) });
+  }
+
   return {
     // Most recent agent activity first: the repo the operator was in yesterday is the one they
     // are most likely here for.
@@ -194,7 +217,6 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
     ),
     found: [...found.values()].sort((a, b) => a.path.localeCompare(b.path)),
     roots,
-    // Filled by the workspace-hooks slot of #105; the shape is amendment 8's.
-    workspaces: [],
+    workspaces,
   };
 }

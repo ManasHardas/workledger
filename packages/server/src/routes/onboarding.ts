@@ -109,6 +109,20 @@ export const onboardingWriteGuard: MiddlewareHandler = async (c, next) => {
   await next();
 };
 
+/** An optional array of absolute workspace folders; the op refuses one that is a repo or holds none. */
+function readWorkspaces(body: Record<string, unknown>): string[] | undefined {
+  const value = body["workspaces"];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw badRequest("workspaces must be an array of paths");
+  }
+  for (const item of value as string[]) {
+    const problem = rootPathProblem(item);
+    if (problem !== undefined) throw new ApiError(400, "invalid-root", problem);
+  }
+  return value as string[];
+}
+
 /** An optional array of harness names. */
 function readHarnesses(body: Record<string, unknown>): string[] | undefined {
   const value = body["harnesses"];
@@ -173,11 +187,16 @@ export function onboardingRoutes(deps: OnboardingRouteDeps): Hono {
 
   api.post("/onboarding/init", async (c) => {
     const body = await readBody(c);
-    rejectUnknown(body, ["repos", "harnesses"]);
+    rejectUnknown(body, ["repos", "harnesses", "workspaces"]);
     const repos = readRepos(body);
     const harnesses = readHarnesses(body);
+    const workspaces = readWorkspaces(body);
     const result = await call(() =>
-      deps.ops.init(harnesses === undefined ? { repos } : { repos, harnesses }),
+      deps.ops.init({
+        repos,
+        ...(harnesses === undefined ? {} : { harnesses }),
+        ...(workspaces === undefined ? {} : { workspaces }),
+      }),
     );
     if (deps.onEnabled !== undefined) {
       for (const entry of result.results) if (entry.ok) deps.onEnabled(entry.path);

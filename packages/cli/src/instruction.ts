@@ -100,6 +100,55 @@ export function checkpointInstruction(input: InstructionInput): string {
   return lines.join("\n");
 }
 
+/** One repo a workspace-session block asks a checkpoint for. */
+export interface WorkspaceTarget {
+  /** The session ulid recorded against this repo. */
+  sessionId: string;
+  /** The repo root, printed verbatim inside `--repo <root>`. */
+  root: string;
+  /** Open `WL-` ids in that repo's backlog. */
+  openIds: readonly string[];
+}
+
+/**
+ * The block text for a session started in a workspace folder rather than a repo (P8 amendment
+ * 8, #105): one `workledger checkpoint --session <ulid> --repo <root> --payload '<json>'` per
+ * repo the transcript touched, most-touched first. The payload rules are the ones
+ * {@link checkpointInstruction} states; only the command list differs.
+ */
+export function workspaceCheckpointInstruction(input: {
+  targets: readonly WorkspaceTarget[];
+  previousErrors?: string | undefined;
+}): string {
+  const first = input.targets[0];
+  if (first === undefined) throw new RangeError("workspaceCheckpointInstruction: no targets");
+  const base = checkpointInstruction({ sessionId: first.sessionId, openIds: [], previousErrors: input.previousErrors });
+  const commands = input.targets.map(
+    (target) => `workledger checkpoint --session ${target.sessionId} --repo ${target.root} --payload '<json>'`,
+  );
+  const lines = base.split("\n");
+  // Replace the single-command line and the "No open backlog items" line with the per-repo list.
+  const runAt = lines.findIndex((line) => line.startsWith("Run exactly one command:"));
+  lines.splice(
+    runAt,
+    1,
+    `This session worked in ${input.targets.length === 1 ? "one repo" : `${input.targets.length} repos`}; run one command per repo, in this order:`,
+    ...commands.map((command) => `  ${command}`),
+    "Each <json> describes only that repo's work; the rest of the JSON rules are the same:",
+  );
+  const backlogAt = lines.findIndex((line) => line.startsWith("No open backlog items."));
+  lines.splice(
+    backlogAt,
+    1,
+    ...input.targets.map((target) =>
+      target.openIds.length === 0
+        ? `${target.root}: no open backlog items; use \`"new": true\` on a remaining item worth tracking.`
+        : `${target.root}: open backlog ids for \`ref\` + \`rel\`: ${target.openIds.join(", ")}`,
+    ),
+  );
+  return lines.join("\n");
+}
+
 /** What {@link repairInstruction} interpolates on top of {@link InstructionInput}. */
 export interface RepairInstructionInput extends InstructionInput {
   /** Why the session is being repaired, as one clause: `crashed`, `ended without a digest`. */

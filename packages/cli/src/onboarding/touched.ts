@@ -50,6 +50,12 @@ export interface ScanOptions {
   cwd?: string | undefined;
   /** What `~` expands to in a tool input. */
   homeDir: string;
+  /**
+   * Byte offset to read from — the workspace Stop hook scans only the bytes since its last scan
+   * (`sessions.scan_offset`, `0007_workspaces`). Must sit on a line boundary; a caller that
+   * starts mid-file also passes the `cwd` the skipped lines would have established.
+   */
+  start?: number | undefined;
 }
 
 /** What one scan found. */
@@ -317,7 +323,7 @@ export async function scanTranscript(
 
   let stream;
   try {
-    stream = createReadStream(file, { encoding: "utf8" });
+    stream = createReadStream(file, { encoding: "utf8", ...(options.start === undefined ? {} : { start: options.start }) });
   } catch {
     return { roots: tallies.roots, cwd: recorded };
   }

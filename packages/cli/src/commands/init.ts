@@ -51,6 +51,11 @@ export interface InitOptions {
    * identity, writes nothing, offers a backfill, and says so.
    */
   teammate?: boolean;
+  /**
+   * A non-git folder holding tracked repos, to write the hook files into (P8 amendment 8):
+   * `./init-workspace.ts`. No `.workledger/` is created there.
+   */
+  workspace?: string;
 }
 
 /** {@link HealthIo} plus the one thing only `init` needs: a way to ask. */
@@ -295,6 +300,11 @@ export function codexTrustStep(): string {
 export async function runInitReport(options: InitOptions, io: InitIo): Promise<InitReport> {
   const report: InitReport = { code: EXIT_OK, created: [], hooksWritten: [], trustSteps: [] };
   const withCode = (code: number): InitReport => ({ ...report, code });
+
+  if (options.workspace !== undefined) {
+    const { runWorkspaceInit } = await import("./init-workspace.js");
+    return runWorkspaceInit(path.resolve(io.cwd, options.workspace), options, io);
+  }
 
   // Step 0: which repo. `--repo` is taken as given (resolved against cwd); without it the walk
   // from cli.md's preamble finds the nearest `.workledger/` or `.git/`.

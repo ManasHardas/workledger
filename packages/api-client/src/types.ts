@@ -424,6 +424,8 @@ export interface InitInput {
   repos: string[];
   /** Harnesses to enable regardless of detection — `init --harness`. */
   harnesses?: string[];
+  /** Non-git folders holding selected repos to run `init --workspace` in (amendment 8). */
+  workspaces?: string[];
 }
 
 /** What `init` did in one repo. */
@@ -440,6 +442,8 @@ export interface InitRepoResult {
 /** `POST /api/onboarding/init` response. */
 export interface InitResult {
   results: InitRepoResult[];
+  /** One row per requested workspace, in the same shape; absent when none was requested. */
+  workspaces?: InitRepoResult[];
 }
 
 /** `POST /api/onboarding/plan` body. */

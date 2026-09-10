@@ -20,6 +20,7 @@ import type {
   PlanResult,
   Repo,
   RepoCandidate,
+  WorkspaceCandidate,
 } from "./ledger-source.js";
 
 const AUTHOR = { name: "Manas Hardas", email: "manas.hardas@gmail.com" };
@@ -337,7 +338,7 @@ const PROJECTS = "/Users/me/Projects";
 
 const candidate = (name: string, overrides: Partial<RepoCandidate> = {}): RepoCandidate => ({
   path: `${PROJECTS}/${name}`,
-  name,
+  name: name.split("/").pop() as string,
   hasGit: true,
   enabled: false,
   suggested: true,
@@ -370,15 +371,28 @@ export const FIXTURE_DISCOVER: DiscoverResult = {
       lastSessionAt: "2026-08-30T09:00:00Z",
     },
   ],
-  found: [candidate("mentat"), candidate("splitfire")],
+  found: [candidate("mentat"), candidate("splitfire"), candidate("dome_workspace/card-shopify_store"), candidate("dome_workspace/card-bart_schedules")],
   roots: [PROJECTS],
+  // A folder Claude Code was started in that is not a repo but holds two (amendment 8): the
+  // wizard offers to install hooks there once one of them is selected.
+  workspaces: [
+    {
+      path: `${PROJECTS}/dome_workspace`,
+      repos: [`${PROJECTS}/dome_workspace/card-shopify_store`, `${PROJECTS}/dome_workspace/card-bart_schedules`],
+      hooksInstalled: false,
+    },
+  ],
 };
+
+/** The workspace folder above, for the tests. */
+export const FIXTURE_WORKSPACE: WorkspaceCandidate = FIXTURE_DISCOVER.workspaces![0]!;
 
 export const FIXTURE_HISTORY: HistoryResult = {
   windows: {
     "7d": { sessions: 9, bytes: 3_400_000 },
     "30d": { sessions: 27, bytes: 11_800_000 },
     "90d": { sessions: 58, bytes: 26_100_000 },
+    all: { sessions: 61, bytes: 27_900_000 },
   },
 };
 
@@ -389,6 +403,9 @@ export const FIXTURE_TRUST_STEP = "Open Codex in this repo once and accept its h
 export function fixtureInitResult(path: string): InitRepoResult {
   const known = FIXTURE_DISCOVER.known.find((repo) => repo.path === path);
   if (known?.enabled) return { path, ok: true, hooksWritten: [], trustSteps: [] };
+  if (FIXTURE_DISCOVER.workspaces?.some((workspace) => workspace.path === path)) {
+    return { path, ok: true, hooksWritten: [".claude/settings.json"], trustSteps: [] };
+  }
   return {
     path,
     ok: true,

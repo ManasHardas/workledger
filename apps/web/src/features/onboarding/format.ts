@@ -34,8 +34,8 @@ export const WINDOW_LABELS: Record<OnboardingWindow, string> = {
   none: "No backfill",
 };
 
-/** The three windows with counts, in the order the cards show them. */
-export const COUNTED_WINDOWS = ["7d", "30d", "90d"] as const;
+/** The four windows with counts, in the order the cards show them (`all`: amendment 9). */
+export const COUNTED_WINDOWS = ["7d", "30d", "90d", "all"] as const;
 
 /** `path` is a strict ancestor of `other`. */
 export function isAncestorOf(path: string, other: string): boolean {
