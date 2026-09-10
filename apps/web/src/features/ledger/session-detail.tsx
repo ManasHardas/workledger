@@ -1,10 +1,10 @@
 import { AsyncPanel } from "../../components/async-panel.js";
 import { RepairSheet } from "../jobs/repair-sheet.js";
-import { useSource } from "../../lib/source-context.js";
+import { useRepoId, useSource } from "../../lib/source-context.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
-import { LEDGER_LIST_HREF } from "./detail-route.js";
+import { ledgerListHref } from "./detail-route.js";
 import { cpMarker, formatInstant } from "./format.js";
 import { useLiveSession } from "./live.js";
 import { ProvenancePanel } from "./provenance-panel.js";
@@ -18,12 +18,13 @@ import { ProvenancePanel } from "./provenance-panel.js";
  */
 export function SessionDetail({ ulid }: { ulid: string }) {
   const session = useLiveSession(ulid);
+  const repo = useRepoId();
 
   return (
     <section aria-labelledby="ledger-heading" className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <a
-          href={LEDGER_LIST_HREF}
+          href={ledgerListHref(repo)}
           className="w-fit rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           ← All sessions

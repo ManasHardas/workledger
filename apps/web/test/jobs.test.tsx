@@ -13,10 +13,13 @@ import {
 } from "../src/features/jobs/format.js";
 import { estimateFrom } from "../src/features/jobs/repair-sheet.js";
 import { createSource } from "../src/lib/ledger-source.js";
-import { SourceProvider } from "../src/lib/source-context.js";
+import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
 import { JobsView } from "../src/routes/jobs.js";
 
-import type { Job, LedgerEvent, LedgerSource } from "../src/lib/ledger-source.js";
+import type { AppSource, Job, LedgerEvent, LedgerSource } from "../src/lib/ledger-source.js";
+
+/** The first fixture repo, which is where every `#/r/<id>/…` route in this file lives. */
+const REPO = "0123456789ab";
 
 /** A `jobs` row in the shape `docs/contracts/p3/cli.md` §Jobs puts on the wire. */
 function job(overrides: Partial<Job> = {}): Job {
@@ -44,7 +47,7 @@ function apiError(code: string, message: string, detail?: Record<string, unknown
 }
 
 interface Stub {
-  source: LedgerSource;
+  source: AppSource;
   emit: (event: LedgerEvent) => void;
   calls: string[];
   jobs: Job[];
@@ -62,7 +65,9 @@ function stubSource(overrides: Partial<LedgerSource> = {}, initial: Job[] = []):
   const calls: string[] = [];
   const jobs = [...initial];
 
-  const source = Object.assign(Object.create(base) as LedgerSource, {
+  // `Object.create(base)` keeps the fixture's `forRepo() { return this; }`, so a scoped source
+  // is this same stub and the overrides apply to the routed views too.
+  const source = Object.assign(Object.create(base) as AppSource, {
     capabilities: { write: true, live: true, provenance: true },
     listJobs(status?: string) {
       calls.push(`listJobs:${status ?? "all"}`);
@@ -97,9 +102,11 @@ function stubSource(overrides: Partial<LedgerSource> = {}, initial: Job[] = []):
 
 function renderJobs(source: LedgerSource) {
   return render(
-    <SourceProvider source={source}>
-      <JobsView />
-    </SourceProvider>,
+    <RepoIdProvider id={REPO}>
+      <SourceProvider source={source}>
+        <JobsView />
+      </SourceProvider>
+    </RepoIdProvider>,
   );
 }
 
@@ -166,7 +173,7 @@ describe("jobs view", () => {
     // The session is a link into the Ledger, not 26 characters of text.
     expect(
       within(row).getByRole("link", { name: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE" }).getAttribute("href"),
-    ).toBe("#/ledger/01JBQ4Z8W2K7N3RQ9XMDT5V0AE");
+    ).toBe(`#/r/${REPO}/ledger/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
   });
 
   it("shows an empty state, a loading state and a read failure", async () => {
@@ -271,11 +278,11 @@ describe("jobs view", () => {
   });
 
   it("is reachable from the shell's nav", async () => {
-    window.location.hash = "#/jobs";
+    window.location.hash = `#/r/${REPO}/jobs`;
     render(<App source={createSource("fixture")} />);
     expect(await screen.findByRole("heading", { name: "Jobs", level: 2 })).toBeDefined();
     const current = screen.getAllByRole("link", { current: "page" });
-    expect(current.every((link) => link.getAttribute("href") === "#/jobs")).toBe(true);
+    expect(current.every((link) => link.getAttribute("href") === `#/r/${REPO}/jobs`)).toBe(true);
     window.location.hash = "";
   });
 });
@@ -354,8 +361,8 @@ describe("repair and the extraction consent", () => {
   }
 
   /** Open the session detail, which is where the Repair control lives. */
-  function renderDetail(source: LedgerSource) {
-    window.location.hash = `#/ledger/${SESSION}`;
+  function renderDetail(source: AppSource) {
+    window.location.hash = `#/r/${REPO}/ledger/${SESSION}`;
     return render(<App source={source} />);
   }
 
@@ -457,7 +464,7 @@ describe("repair and the extraction consent", () => {
       repair: () => Promise.resolve(job()),
     });
 
-    window.location.hash = "#/ledger";
+    window.location.hash = `#/r/${REPO}/ledger`;
     render(<App source={source} />);
     fireEvent.mouseDown(await screen.findByRole("tab", { name: "All" }));
 

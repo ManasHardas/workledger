@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { TRANSCRIPT_GONE } from "../src/features/ledger/excerpt-viewer.js";
 import { createSource } from "../src/lib/ledger-source.js";
-import { SourceProvider } from "../src/lib/source-context.js";
+import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
 import { LedgerView } from "../src/routes/ledger.js";
 
 import type { Excerpt, LedgerSource } from "../src/lib/ledger-source.js";
 
 const SESSION = "01JBQ4Z8W2K7N3RQ9XMDT5V0AE";
+/** The first fixture repo, whose `#/r/<id>/ledger/<ulid>` route is the detail under test. */
+const REPO = "0123456789ab";
 
 const EXCERPT: Excerpt = {
   cp: 1,
@@ -41,11 +43,13 @@ function provenanceSource(
 }
 
 function renderDetail(source: LedgerSource) {
-  window.location.hash = `#/ledger/${SESSION}`;
+  window.location.hash = `#/r/${REPO}/ledger/${SESSION}`;
   return render(
-    <SourceProvider source={source}>
-      <LedgerView />
-    </SourceProvider>,
+    <RepoIdProvider id={REPO}>
+      <SourceProvider source={source}>
+        <LedgerView />
+      </SourceProvider>
+    </RepoIdProvider>,
   );
 }
 

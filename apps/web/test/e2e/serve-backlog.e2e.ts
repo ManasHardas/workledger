@@ -50,6 +50,8 @@ interface Serving {
   repo: string;
   /** The URL `serve` printed. */
   url: string;
+  /** The repo's id from `GET /api/repos` (P8): every per-repo route lives under `#/r/<id>/`. */
+  id: string;
   child: ChildProcess;
   /** Everything the process wrote, for a failure message worth reading. */
   log: () => string;
@@ -95,7 +97,15 @@ function startServer(repo: string): Promise<Serving> {
       const found = /http:\/\/127\.0\.0\.1:\d+/.exec(output);
       if (!found) return;
       clearTimeout(timer);
-      resolve({ repo, url: found[0], child, log });
+      const url = found[0];
+      // `serve --repo` is single-repo mode, and `/api/repos` still lists that one repo.
+      fetch(`${url}/api/repos`)
+        .then((response) => response.json() as Promise<{ id: string }[]>)
+        .then((repos) => {
+          const id = repos[0]?.id;
+          if (id === undefined) fail("GET /api/repos listed no repo");
+          else resolve({ repo, url, id, child, log });
+        }, (error: unknown) => fail(`GET /api/repos failed: ${String(error)}`));
     };
     child.stdout?.on("data", onChunk);
     child.stderr?.on("data", onChunk);
@@ -220,9 +230,28 @@ test.describe("workledger serve, end to end", () => {
     if (serving) await stopServer(serving);
   });
 
+  test("Home lists the served repo and links into its Ledger; #/ledger redirects there", async ({
+    page,
+  }) => {
+    const errors = watchConsole(page);
+    await page.goto(`${serving.url}/#/`);
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+    const card = page.getByRole("list", { name: "Projects" }).getByRole("link", { name: "repo" });
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute("href", `#/r/${serving.id}/ledger`);
+    await expect(card.getByText(serving.repo)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Add projects" })).toHaveAttribute("href", "#/onboarding");
+
+    // The P2 route is redirected to the first (here: only) repo without a history entry.
+    await page.goto(`${serving.url}/#/ledger`);
+    await expect(page).toHaveURL(`${serving.url}/#/r/${serving.id}/ledger`);
+    await expect(page.getByRole("combobox", { name: "Project" })).toHaveValue(serving.id);
+    expect(errors, "no console errors on Home").toEqual([]);
+  });
+
   test("Ledger lists the three sessions with their goals", async ({ page }) => {
     const errors = watchConsole(page);
-    await page.goto(`${serving.url}/#/ledger`);
+    await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
 
     // "Open" is the default tab and every copied session has ended, so the scope has to be All.
     await page.getByRole("tab", { name: "All" }).click();
@@ -243,7 +272,7 @@ test.describe("workledger serve, end to end", () => {
   }) => {
     const editor = await context.newPage();
     const editorErrors = watchConsole(editor);
-    await editor.goto(`${serving.url}/#/next`);
+    await editor.goto(`${serving.url}/#/r/${serving.id}/next`);
 
     const item = () => editor.getByRole("listitem", { name: target.title, exact: true });
     await expect(item(), "the proposed item is on Next").toBeVisible();
@@ -252,7 +281,7 @@ test.describe("workledger serve, end to end", () => {
     // the SSE stream and nothing else.
     const watcher = await context.newPage();
     const watcherErrors = watchConsole(watcher);
-    await watcher.goto(`${serving.url}/#/next`);
+    await watcher.goto(`${serving.url}/#/r/${serving.id}/next`);
     await expect(watcher.getByRole("listitem", { name: target.title, exact: true })).toBeVisible();
 
     await test.step("Accept moves the item into the Accepted group", async () => {
@@ -326,17 +355,21 @@ test.describe("workledger serve, end to end", () => {
     await editor.close();
   });
 
-  test("Needs you renders without console errors", async ({ page }) => {
+  test("Needs you renders without console errors, per repo and machine-wide", async ({ page }) => {
     const errors = watchConsole(page);
-    await page.goto(`${serving.url}/#/needs-you`);
+    await page.goto(`${serving.url}/#/r/${serving.id}/needs`);
     await expect(page.getByRole("heading", { name: "Needs you", exact: true })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveCount(0);
+
+    await page.goto(`${serving.url}/#/needs`);
+    await expect(page.getByText("Across every project on this machine.")).toBeVisible();
     await expect(page.getByRole("status")).toHaveCount(0);
     expect(errors, "no console errors on Needs you").toEqual([]);
   });
 
   test("Health renders without console errors", async ({ page }) => {
     const errors = watchConsole(page);
-    await page.goto(`${serving.url}/#/health`);
+    await page.goto(`${serving.url}/#/r/${serving.id}/health`);
     await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
     await expect(page.getByText("claude-code").first()).toBeVisible();
     expect(errors, "no console errors on Health").toEqual([]);

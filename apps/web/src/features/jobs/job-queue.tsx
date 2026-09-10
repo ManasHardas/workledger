@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button.js";
 import { SelectField } from "../../components/ui/select-field.js";
-import { useSource } from "../../lib/source-context.js";
+import { useRepoId, useSource } from "../../lib/source-context.js";
 import { BackfillSheet, explain } from "./backfill-sheet.js";
 import { JOB_STATUSES } from "./format.js";
 import { JobRow } from "./job-row.js";
@@ -24,6 +24,7 @@ const ALL = "";
  */
 export function JobQueue() {
   const source = useSource();
+  const repoId = useRepoId();
   const [status, setStatus] = useState(ALL);
   const jobs = useJobs(status === ALL ? undefined : status);
   const canWrite = source.capabilities.write;
@@ -102,6 +103,7 @@ export function JobQueue() {
             <JobRow
               key={job.id}
               job={job}
+              repoId={repoId}
               now={now}
               canWrite={canWrite}
               pending={jobs.pending[job.id] === true}

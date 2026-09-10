@@ -17,7 +17,10 @@ import {
   FIXTURE_BACKLOG,
   FIXTURE_BRIEF,
   FIXTURE_HEALTH,
+  FIXTURE_JOBS_ALL,
   FIXTURE_NOTES,
+  FIXTURE_NOTES_ALL,
+  FIXTURE_REPOS,
   FIXTURE_SESSIONS,
 } from "./fixtures.js";
 
@@ -29,10 +32,15 @@ import type {
   Health,
   Identity,
   Job,
+  JobAcrossRepos,
+  LedgerEvent,
   LedgerSource,
+  MachineSource,
+  NoteAcrossRepos,
   NoteRef,
   NoteType,
   ParsedSession,
+  Repo,
   ScanSummary,
   SessionQuery,
 } from "@workledger/api-client";
@@ -50,9 +58,11 @@ export type {
   Health,
   Identity,
   Job,
+  JobAcrossRepos,
   LedgerEvent,
   LedgerSource,
   MachineSource,
+  NoteAcrossRepos,
   NoteRef,
   NoteType,
   ParsedSession,
@@ -62,29 +72,121 @@ export type {
   Turn,
 } from "@workledger/api-client";
 
-import type { MachineSource } from "@workledger/api-client";
+/**
+ * What the app is handed: one ledger's reads (the server's implicit repo, or nothing useful on a
+ * machine daemon until `forRepo`) plus the machine-wide half of P8. `main.tsx` builds one; the
+ * `#/r/<id>/…` routes hand their views `forRepo(id)`.
+ */
+export type AppSource = LedgerSource & MachineSource;
 
 /** The rejection every write takes on a source whose `capabilities.write` is false. */
 const readOnly = <T>(): Promise<T> => Promise.reject({ code: "read-only" });
 
-/** The in-memory fixture ledger: read-only, not live. */
-export function createSource(kind: "fixture"): LedgerSource;
+/** The in-memory fixture ledger: read-only, not live, two repos over the same data. */
+export function createSource(kind: "fixture"): AppSource;
 /**
  * `workledger serve` over HTTP + SSE. With `repo` the source is scoped to that repo (P8's
  * machine-mode daemon requires it); without, it is the server's one repo under `serve --repo`,
  * and the `MachineSource` half lists repos and builds scoped sources with `forRepo`.
  */
-export function createSource(kind: "local", opts: { baseUrl: string; repo?: string }): LedgerSource & MachineSource;
-export function createSource(
-  kind: "fixture" | "local",
-  opts?: { baseUrl: string; repo?: string },
-): LedgerSource | (LedgerSource & MachineSource) {
+export function createSource(kind: "local", opts: { baseUrl: string; repo?: string }): AppSource;
+export function createSource(kind: "fixture" | "local", opts?: { baseUrl: string; repo?: string }): AppSource {
   if (kind === "fixture") return new FixtureSource();
-  return createApiSource("local", { baseUrl: opts?.baseUrl ?? "", ...(opts?.repo === undefined ? {} : { repo: opts.repo }) });
+  return shareEvents(
+    createApiSource("local", { baseUrl: opts?.baseUrl ?? "", ...(opts?.repo === undefined ? {} : { repo: opts.repo }) }),
+  );
 }
 
-class FixtureSource implements LedgerSource {
+/**
+ * One SSE connection per app, however many views subscribe.
+ *
+ * `LocalServerSource.subscribe` opens an `EventSource` per call, and under P8 the app has more
+ * callers than it used to: Home's repo list, a view's own list, its identities map — three per
+ * tab, each holding an HTTP/1.1 connection for its whole life. Chromium allows six per host, so
+ * two tabs on Next pinned every slot and the next `POST …/accept` queued behind them until the
+ * e2e's 60 s timeout. One stream carries every repo's events anyway (daemon-and-api.md: "SSE
+ * events gain `repo`; a client filters"), so this wraps the source to open it once, on the first
+ * subscriber, and close it after the last; `forRepo(id)` sources filter the same stream rather
+ * than opening their own. Everything else is delegated untouched.
+ *
+ * A `Proxy` rather than `Object.create`: the api-client's class keeps its state in `#private`
+ * fields, which only resolve when `this` is the real instance, so each method is bound to it.
+ */
+export function shareEvents(source: AppSource): AppSource {
+  const handlers = new Set<(event: LedgerEvent) => void>();
+  let stop: (() => void) | null = null;
+
+  const subscribe = (handler: (event: LedgerEvent) => void): (() => void) => {
+    handlers.add(handler);
+    if (stop === null) {
+      stop = source.subscribe((event) => {
+        for (const each of [...handlers]) each(event);
+      });
+    }
+    return () => {
+      handlers.delete(handler);
+      if (handlers.size === 0 && stop !== null) {
+        stop();
+        stop = null;
+      }
+    };
+  };
+
+  const scoped = new Map<string, LedgerSource>();
+  const forRepo = (id: string): LedgerSource => {
+    const found = scoped.get(id);
+    if (found !== undefined) return found;
+    const filtered = (handler: (event: LedgerEvent) => void) =>
+      subscribe((event) => {
+        if (event.repo === undefined || event.repo === id) handler(event);
+      });
+    const made = delegate(source.forRepo(id), { subscribe: filtered });
+    scoped.set(id, made);
+    return made;
+  };
+
+  return delegate(source, { subscribe, forRepo });
+}
+
+/** `target` with `overrides` in front of it, every other member bound to `target`. */
+function delegate<T extends object>(target: T, overrides: Partial<T>): T {
+  return new Proxy(target, {
+    get(inner, prop, receiver) {
+      if (prop in overrides) return Reflect.get(overrides, prop, receiver) as unknown;
+      const value = Reflect.get(inner, prop, inner) as unknown;
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(inner) : value;
+    },
+  });
+}
+
+/**
+ * Two fixture repos read the same ledger: `forRepo` hands back the same source for either id, and
+ * only the aggregates (`listAllNotes`, `listAllJobs`) tag their rows with a repo, so the Home
+ * cards and the machine-wide tabs have a repo per row to show while a per-repo view stays the
+ * one P2 shipped.
+ */
+class FixtureSource implements LedgerSource, MachineSource {
   readonly capabilities = { write: false, live: false, provenance: false };
+
+  async listRepos(): Promise<Repo[]> {
+    return FIXTURE_REPOS;
+  }
+
+  async listAllNotes(q?: { type?: NoteType[]; open?: boolean }): Promise<NoteAcrossRepos[]> {
+    return FIXTURE_NOTES_ALL.filter((note) => {
+      if (q?.type && !q.type.includes(note.type)) return false;
+      if (q?.open && note.resolved) return false;
+      return true;
+    });
+  }
+
+  async listAllJobs(): Promise<JobAcrossRepos[]> {
+    return FIXTURE_JOBS_ALL;
+  }
+
+  forRepo(): LedgerSource {
+    return this;
+  }
 
   async listSessions(q?: SessionQuery): Promise<ParsedSession[]> {
     const needle = q?.q?.toLowerCase();

@@ -6,7 +6,15 @@
  * reads a field `workledger serve` does not put on the wire therefore fails to typecheck here
  * rather than at the first real request.
  */
-import type { BacklogView, Health, NoteRef, ParsedSession } from "./ledger-source.js";
+import type {
+  BacklogView,
+  Health,
+  JobAcrossRepos,
+  NoteAcrossRepos,
+  NoteRef,
+  ParsedSession,
+  Repo,
+} from "./ledger-source.js";
 
 const AUTHOR = { name: "Manas Hardas", email: "manas.hardas@gmail.com" };
 const REPO = "github.com/ManasHardas/workledger";
@@ -212,24 +220,70 @@ export const FIXTURE_NOTES: NoteRef[] = [
   },
 ];
 
+/**
+ * `GET /api/repos` (docs/contracts/p8/daemon-and-api.md §Repo identity): two repos, so Home has a
+ * list to lay out and the machine-wide tabs have a repo to name per row. Both read the same
+ * ledger above (`ledger-source.ts`); the second one has never fired a hook, which is the `warn`
+ * reading the card must show without a probe.
+ */
+export const FIXTURE_REPOS: Repo[] = [
+  {
+    id: "0123456789ab",
+    path: "/Users/manas/Projects/workledger",
+    name: "workledger",
+    enabled: true,
+    harnesses: ["claude-code"],
+    sessions7d: 3,
+    openBacklog: 4,
+    openNotes: 2,
+    lastHookAt: "2026-09-09T08:02:00Z",
+    health: "ok",
+  },
+  {
+    id: "fedcba987654",
+    path: "/Users/manas/Projects/dashero",
+    name: "dashero",
+    enabled: true,
+    harnesses: ["claude-code", "codex"],
+    sessions7d: 0,
+    openBacklog: 1,
+    openNotes: 1,
+    lastHookAt: null,
+    health: "warn",
+  },
+];
+
+/** `GET /api/notes/all`: the two open notes, one per fixture repo. */
+export const FIXTURE_NOTES_ALL: NoteAcrossRepos[] = [
+  { ...FIXTURE_NOTES[0]!, repo: FIXTURE_REPOS[0]! },
+  { ...FIXTURE_NOTES[1]!, repo: FIXTURE_REPOS[1]! },
+];
+
+/** `GET /api/jobs/all`: one failed repair on the second repo, so the aggregate has a row. */
+export const FIXTURE_JOBS_ALL: JobAcrossRepos[] = [
+  {
+    id: "01JBQ7FIXTUREJOB000000001",
+    kind: "repair",
+    session_ulid: "01JBPX2M4H6E1TSA7VYJ0G8WQD",
+    repo_path: FIXTURE_REPOS[1]!.path,
+    status: "failed",
+    attempts: 2,
+    created_at: "2026-09-09T07:40:00Z",
+    started_at: "2026-09-09T07:40:02Z",
+    finished_at: "2026-09-09T07:41:10Z",
+    heartbeat_at: null,
+    error: "claude --resume exited 1: session not found",
+    cost_estimate_usd: null,
+    log_path: null,
+    repo: FIXTURE_REPOS[1]!,
+  },
+];
+
 export const FIXTURE_HEALTH: Health = {
   cli: "0.0.1",
   repo: REPO,
-  // P8: the served repos ride along on every health report. The fixture is one repo.
-  repos: [
-    {
-      id: "0123456789ab",
-      path: REPO,
-      name: "workledger",
-      enabled: true,
-      harnesses: ["claude-code"],
-      sessions7d: 3,
-      openBacklog: 4,
-      openNotes: 2,
-      lastHookAt: "2026-09-09T08:02:00Z",
-      health: "ok",
-    },
-  ],
+  // P8: the served repos ride along on every health report.
+  repos: FIXTURE_REPOS,
   // `DoctorEntry` is `workledger doctor`'s harness probe verbatim (api.md §Read models).
   harnesses: [
     {

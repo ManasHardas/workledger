@@ -44,6 +44,8 @@ interface Fixture {
   repo: string;
   home: string;
   url: string;
+  /** The repo's id from `GET /api/repos` (P8): the per-repo routes live under `#/r/<id>/`. */
+  id: string;
   child: ChildProcess;
   /** The session that has a checkpoint, and therefore a transcript span. */
   healthy: string;
@@ -133,7 +135,10 @@ function makeFixture(): { repo: string; home: string; healthy: string; orphan: s
   return { repo, home, healthy, orphan };
 }
 
-function startServer(repo: string, home: string): Promise<{ url: string; child: ChildProcess; log: () => string }> {
+function startServer(
+  repo: string,
+  home: string,
+): Promise<{ url: string; id: string; child: ChildProcess; log: () => string }> {
   const child = spawn(process.execPath, [BIN, "serve", "--no-open", "--repo", repo], {
     cwd: REPO_ROOT,
     env: { ...process.env, WORKLEDGER_HOME: home },
@@ -150,7 +155,14 @@ function startServer(repo: string, home: string): Promise<{ url: string; child: 
       const found = /http:\/\/127\.0\.0\.1:\d+/.exec(output);
       if (!found) return;
       clearTimeout(timer);
-      resolve({ url: found[0], child, log });
+      const url = found[0];
+      fetch(`${url}/api/repos`)
+        .then((response) => response.json() as Promise<{ id: string }[]>)
+        .then((repos) => {
+          const id = repos[0]?.id;
+          if (id === undefined) fail("GET /api/repos listed no repo");
+          else resolve({ url, id, child, log });
+        }, (error: unknown) => fail(`GET /api/repos failed: ${String(error)}`));
     };
     child.stdout?.on("data", onChunk);
     child.stderr?.on("data", onChunk);
@@ -204,7 +216,15 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
     });
     page.on("pageerror", (error) => errors.push(error.message));
 
+    // Machine-wide first: the same repair, with the repo named on the row and no scan control.
     await page.goto(`${fixture.url}/#/jobs`);
+    await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+    const across = page.getByRole("list", { name: "Jobs, newest first" }).getByRole("listitem").first();
+    await expect(across).toContainText("repair");
+    await expect(across.getByRole("link", { name: "repo — Jobs" })).toHaveAttribute("href", `#/r/${fixture.id}/jobs`);
+    await expect(page.getByRole("button", { name: "Scan now" })).toHaveCount(0);
+
+    await page.goto(`${fixture.url}/#/r/${fixture.id}/jobs`);
     await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
 
     const row = page.getByRole("list", { name: "Jobs, newest first" }).getByRole("listitem").first();
@@ -235,7 +255,7 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
     });
     page.on("pageerror", (error) => errors.push(error.message));
 
-    await page.goto(`${fixture.url}/#/ledger/${fixture.healthy}`);
+    await page.goto(`${fixture.url}/#/r/${fixture.id}/ledger/${fixture.healthy}`);
     await expect(page.getByText(GOAL)).toBeVisible();
 
     const checkpoint = page
