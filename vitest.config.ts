@@ -5,6 +5,9 @@ import { defineConfig } from "vitest/config";
 /** `packages/core/src/`, the directory every `@workledger/core` specifier resolves into. */
 const CORE_SRC = fileURLToPath(new URL("./packages/core/src/", import.meta.url));
 
+/** `packages/server/src/`, so `@workledger/server` resolves to source and not to a stale dist. */
+const SERVER_SRC = fileURLToPath(new URL("./packages/server/src/", import.meta.url));
+
 // Root vitest workspace: one project per package (each package owns a vitest.config.ts) so
 // `pnpm test` runs everything from the root and `pnpm -r test` runs each package on its own.
 export default defineConfig({
@@ -16,6 +19,7 @@ export default defineConfig({
     alias: [
       { find: /^@workledger\/core\/(.+)$/, replacement: `${CORE_SRC}$1.ts` },
       { find: /^@workledger\/core$/, replacement: `${CORE_SRC}index.ts` },
+      { find: /^@workledger\/server$/, replacement: `${SERVER_SRC}index.ts` },
     ],
   },
   test: {

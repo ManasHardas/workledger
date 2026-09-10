@@ -6,6 +6,10 @@
  * The listener binds `127.0.0.1` and nothing else. There is no auth because there is no remote
  * caller: plans/feature-p2-data-flow.md §Identity is "no accounts, no sessions, loopback only",
  * and the bind address is the mechanism that makes that true rather than a claim.
+ *
+ * The write half is injected, not imported: `ops` carries the `backlog-ops.ts` functions the CLI
+ * runs, so the POST routes and `workledger backlog …` are the same code rather than two
+ * implementations that agree today (see `./ops.ts` for why injection and not a shared package).
  */
 import { Hono } from "hono";
 import os from "node:os";
@@ -14,6 +18,7 @@ import process from "node:process";
 import type { Server } from "node:http";
 
 import { EventBus } from "./events.js";
+import { KeyedMutex } from "./mutex.js";
 import { ReadModel } from "./read-model.js";
 import { briefMaxTokens } from "./brief.js";
 import { defaultHome } from "./health.js";
@@ -23,6 +28,8 @@ import { ledgerId, ledgerPaths } from "./paths.js";
 import { readRoutes } from "./routes/read.js";
 import { staticHandler } from "./routes/static.js";
 import { startWatcher } from "./watcher.js";
+import { writeRoutes } from "./routes/write.js";
+import type { BacklogOps } from "./ops.js";
 import type { HealthEnv } from "./health.js";
 import type { Watcher } from "./watcher.js";
 
@@ -32,10 +39,20 @@ export const LOOPBACK = "127.0.0.1";
 export interface CreateAppOptions {
   /** The repo whose `.workledger/` is served. */
   repoRoot: string;
+  /**
+   * The backlog and note mutations the POST routes call — `packages/cli/src/backlog-ops.ts`,
+   * handed in by `workledger serve`.
+   */
+  ops: BacklogOps;
   /** `~/.workledger` or wherever the index lives; only its path and size are read. */
   home?: string;
   /** The built `apps/web`; without it a non-`/api` path is a 404 rather than the app shell. */
   staticDir?: string;
+  /**
+   * HTML served for every non-`/api` path when `staticDir` is absent — the placeholder
+   * `workledger serve` shows before `apps/web` has been built into `packages/cli/dist/web/`.
+   */
+  staticHtml?: string;
   /** The `workledger` version reported by `/api/health`. */
   cliVersion?: string;
   env?: Record<string, string | undefined>;
@@ -60,6 +77,8 @@ export interface ServerApp {
   model: ReadModel;
   events: EventBus;
   watcher: Watcher;
+  /** The per-id write lock (data-flow §Writes), exposed so a test can observe it. */
+  mutex: KeyedMutex;
   /** Bind `127.0.0.1`. `port` defaults to 0 — a random high port (api.md preamble). */
   start(options?: { port?: number }): Promise<RunningServer>;
   /** Stop the watcher. Does not touch a server started by {@link ServerApp.start}. */
@@ -110,8 +129,10 @@ export function createApp(options: CreateAppOptions): ServerApp {
     cli: options.cliVersion ?? "0.0.1",
   };
 
+  const mutex = new KeyedMutex();
   const app = new Hono();
   app.route("/api", readRoutes({ model, health, maxTokens: () => briefMaxTokens(paths) }));
+  app.route("/api", writeRoutes({ model, ops: options.ops, repoRoot, mutex }));
   app.route("/api", eventRoutes({ bus, ...(options.pingMs === undefined ? {} : { pingMs: options.pingMs }) }));
 
   // Every unmatched `/api` path is a 404 in the contract's shape and must never fall through to
@@ -121,7 +142,11 @@ export function createApp(options: CreateAppOptions): ServerApp {
   if (options.staticDir !== undefined) {
     const root = path.resolve(options.staticDir);
     const serve = staticHandler(root);
-    app.get("*", (c) => serve(c) ?? c.notFound());
+    const html = options.staticHtml;
+    app.get("*", (c) => serve(c) ?? (html === undefined ? c.notFound() : c.html(html)));
+  } else if (options.staticHtml !== undefined) {
+    const html = options.staticHtml;
+    app.get("*", (c) => c.html(html));
   }
 
   app.notFound((c) =>
@@ -137,6 +162,7 @@ export function createApp(options: CreateAppOptions): ServerApp {
     model,
     events: bus,
     watcher,
+    mutex,
     async start(startOptions = {}): Promise<RunningServer> {
       const { serve } = await import("@hono/node-server");
       return await new Promise<RunningServer>((resolve, reject) => {

@@ -116,11 +116,19 @@ export interface ResolveNoteResult {
 /**
  * Why an operation refused.
  *
- * `not-enabled` is the repo-level refusal the CLI reports as exit `4` and the server as a 404;
- * everything else — an unknown id, an illegal transition, a malformed argument, a ledger file
- * that does not parse — is `usage`, exit `1`.
+ * The CLI collapses this to two exit codes — `not-enabled` is exit `4`, everything else is exit
+ * `1` (docs/contracts/p2/backlog-cli.md) — but the server needs the finer split, because
+ * docs/contracts/p2/api.md gives an unknown id a 404, a state conflict a 409 and bad input a 400.
+ * Stating the class here rather than letting each caller pattern-match the message is what keeps
+ * the two mappings from drifting apart.
+ *
+ * - `not-enabled` — the repo has no `.workledger/` at all.
+ * - `not-found` — the id or session names nothing in the ledger.
+ * - `conflict` — the target exists but is in the wrong state (an illegal transition, a note that
+ *   is already resolved).
+ * - `usage` — everything else: a malformed argument, an empty patch, a file that does not parse.
  */
-export type BacklogOpCode = "usage" | "not-enabled";
+export type BacklogOpCode = "usage" | "not-enabled" | "not-found" | "conflict";
 
 /** A refusal with the exit-code class already decided. */
 export class BacklogOpError extends Error {
@@ -206,7 +214,7 @@ const RESTORE_TARGETS: Partial<Record<BacklogStatus, BacklogStatus>> = {
 /** @throws {BacklogOpError} `usage`, listing the legal targets, when the move is not allowed. */
 function assertTransition(id: string, from: BacklogStatus, to: BacklogStatus): void {
   if (TRANSITIONS[from].includes(to)) return;
-  throw new BacklogOpError(`${id} is ${from}; it cannot move to ${to}`, "usage", [
+  throw new BacklogOpError(`${id} is ${from}; it cannot move to ${to}`, "conflict", [
     targetsDetail(from),
   ]);
 }
@@ -247,7 +255,7 @@ export function readItem(repoRoot: string, id: string): FoundItem {
   }
   const file = backlogFile(repoRoot, id);
   const text = readTextFile(file);
-  if (text === undefined) throw new BacklogOpError(`unknown backlog item ${id}`);
+  if (text === undefined) throw new BacklogOpError(`unknown backlog item ${id}`, "not-found");
   try {
     return { ...parseItem(text), file, text };
   } catch (error) {
@@ -439,7 +447,7 @@ export async function restoreItem(ctx: OpContext, id: string): Promise<ItemResul
     if (to === undefined) {
       throw new BacklogOpError(
         `${id} is ${from}; only a discarded or a done item can be restored`,
-        "usage",
+        "conflict",
         [targetsDetail(from)],
       );
     }
@@ -638,7 +646,7 @@ export async function resolveNote(
 
   const file = sessionFile(ctx.repoRoot, session);
   const text = readTextFile(file);
-  if (text === undefined) throw new BacklogOpError(`unknown session ${session}`);
+  if (text === undefined) throw new BacklogOpError(`unknown session ${session}`, "not-found");
 
   let parsed;
   try {
@@ -666,7 +674,10 @@ export async function resolveNote(
 
   const resolved = readResolved(parsed.data);
   if (resolved.some((entry) => entry.cp === cp && entry.index === index)) {
-    throw new BacklogOpError(`note #${index} at checkpoint ${cp} is already resolved`);
+    throw new BacklogOpError(
+      `note #${index} at checkpoint ${cp} is already resolved`,
+      "conflict",
+    );
   }
 
   const line = renderNoteLine(cp, {

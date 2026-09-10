@@ -9,6 +9,7 @@ import type { CheckpointOptions } from "./commands/checkpoint.js";
 import type { DoctorOptions } from "./commands/doctor.js";
 import type { HookEvent } from "./commands/hook-events.js";
 import type { InitOptions } from "./commands/init.js";
+import type { ServeOptions } from "./commands/serve.js";
 
 // Resolved relative to this module, so it points at packages/cli/package.json both from
 // src/ (vitest) and from dist/ (the published bin).
@@ -122,6 +123,17 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
     .action(async (options: DoctorOptions) => {
       const { doctorCommand } = await import("./commands/doctor.js");
       exit.code = await doctorCommand(options);
+    });
+
+  program
+    .command("serve")
+    .description("serve the local UI and API on 127.0.0.1 until Ctrl-C")
+    .option("--repo <path>", "repo to serve (default: the repo root above cwd)")
+    .option("--port <n>", "port to bind (default: a random high port)", positiveInteger)
+    .option("--no-open", "do not open the browser")
+    .action(async (options: ServeOptions) => {
+      const { serveCommand } = await import("./commands/serve.js");
+      exit.code = await serveCommand(options);
     });
 
   // `backlog` and `note` are pass-throughs: the sub-command tables, their flags and their help

@@ -31,6 +31,27 @@ const OUTFILE = path.join(CLI_DIR, "dist", "main.js");
 const CORE_DIR = path.join(REPO_ROOT, "packages", "core", "src");
 const CORE_SRC = path.join(CORE_DIR, "index.ts");
 /**
+ * `@workledger/server` is bundled *separately*, into `dist/server.js`, and `dist/main.js` reaches
+ * it with a runtime `import("./server.js")`.
+ *
+ * Not an optimization — an invariant. esbuild hoists every external import of a bundled module to
+ * the top of its output file, even when the module body itself sits behind a lazy `__esm` wrapper.
+ * `@hono/node-server` imports `node:http` and `node:http2`, so folding the server into
+ * `dist/main.js` puts `import { createServer } from "http"` at the top of the bundle, and Node
+ * then loads http (and undici behind it) on *every* invocation. Measured on this machine: +18 ms
+ * on `workledger --version`, which is a third of the Stop hook's whole allow budget
+ * (plans/feature-p1-data-flow.md §6, asserted by packages/cli/test/hook-timing.test.ts).
+ *
+ * A second output file is the only thing that keeps those imports out of the startup path while
+ * still shipping the server inside the tarball: `import("./server.js")` is a dynamic import of an
+ * external module, which esbuild leaves alone, and the specifier resolves against `dist/main.js`
+ * at runtime. `scripts/check-pack.mjs` and `packages/cli` `files` both list it.
+ */
+const SERVER_SRC = path.join(REPO_ROOT, "packages", "server", "src", "index.ts");
+const SERVER_OUT = path.join(CLI_DIR, "dist", "server.js");
+/** What `dist/main.js` imports at runtime to reach {@link SERVER_OUT}. */
+const SERVER_SPECIFIER = "./server.js";
+/**
  * Every `@workledger/core` specifier the CLI may use, aliased to core's *source*.
  *
  * The deep specifiers exist for the Stop hook's budget (plans/feature-p1-data-flow.md §6): the
@@ -284,6 +305,65 @@ async function restoreManifest() {
   return 0;
 }
 
+/**
+ * Rewrite `@workledger/server` to the sibling file `dist/server.js`, external — so esbuild emits
+ * `import("./server.js")` rather than inlining the server (and its `node:http` imports) into
+ * `dist/main.js`. See {@link SERVER_SRC}.
+ */
+const serverAsSibling = {
+  name: "workledger-server-sibling",
+  setup(build) {
+    build.onResolve({ filter: /^@workledger\/server$/ }, () => ({
+      path: SERVER_SPECIFIER,
+      external: true,
+    }));
+  },
+};
+
+/** The esbuild settings both outputs share. */
+function commonOptions() {
+  return {
+    // Pinned so the output does not depend on where the script was invoked from: esbuild writes
+    // module banners and metafile keys as paths relative to its working directory, so without
+    // this `pnpm -r build` (cwd packages/cli) and `node scripts/bundle-cli.mjs` (cwd repo root)
+    // produced byte-different bundles of the same source.
+    absWorkingDir: REPO_ROOT,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    // Node built-ins are external by default on platform:node; everything else is inlined, so
+    // the published package has no runtime dependency to resolve — except EXTERNAL.
+    packages: "bundle",
+    external: EXTERNAL,
+    alias: CORE_ALIAS,
+    // No sourcemap in the published bundle: its `sources` would point at files the tarball does
+    // not ship (packages/cli/src, and the local pnpm store layout for third-party code), so it
+    // would be dead weight that also leaks this machine's paths. The bundles *are* the shipped
+    // artifacts; a stack trace against them is the honest one.
+    sourcemap: false,
+    legalComments: "none",
+    logLevel: "warning",
+    metafile: true,
+    banner: {
+      // The bundles are ESM, but the third-party code they inline (`yaml`, reached through
+      // `@workledger/core`) is CJS, and esbuild's interop shim falls back to a bare `require`
+      // that ESM does not define — "Dynamic require of \"process\" is not supported" at import
+      // time. Defining `require` from `createRequire` is what the shim probes for, so the
+      // inlined CJS resolves against this module instead of throwing.
+      js:
+        "// workledger — bundled by scripts/bundle-cli.mjs. Edit packages/*/src instead.\n" +
+        'import { createRequire as __workledgerCreateRequire } from "node:module";\n' +
+        "const require = __workledgerCreateRequire(import.meta.url);",
+    },
+  };
+}
+
+/** Bytes of the entry output of an esbuild result. */
+function entryBytes(result) {
+  return Object.values(result.metafile.outputs).find((o) => o.entryPoint)?.bytes ?? 0;
+}
+
 async function main(argv) {
   const [command = "bundle", ...rest] = argv;
   if (rest.length > 0) {
@@ -301,45 +381,20 @@ async function main(argv) {
     return 1;
   }
 
+  const server = await esbuild.build({
+    ...commonOptions(),
+    entryPoints: [SERVER_SRC],
+    outfile: SERVER_OUT,
+  });
   const result = await esbuild.build({
+    ...commonOptions(),
     entryPoints: [ENTRY],
     outfile: OUTFILE,
-    // Pinned so the output does not depend on where the script was invoked from: esbuild writes
-    // module banners and metafile keys as paths relative to its working directory, so without
-    // this `pnpm -r build` (cwd packages/cli) and `node scripts/bundle-cli.mjs` (cwd repo root)
-    // produced byte-different bundles of the same source.
-    absWorkingDir: REPO_ROOT,
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    target: "node22",
-    // Node built-ins are external by default on platform:node; everything else is inlined, so
-    // the published package has no runtime dependency to resolve — except EXTERNAL.
-    packages: "bundle",
-    external: EXTERNAL,
-    alias: CORE_ALIAS,
-    // No sourcemap in the published bundle: its `sources` would point at files the tarball does
-    // not ship (packages/cli/src, and the local pnpm store layout for third-party code), so it
-    // would be dead weight that also leaks this machine's paths. dist/main.js *is* the shipped
-    // artifact; a stack trace against it is the honest one.
-    sourcemap: false,
-    legalComments: "none",
-    logLevel: "warning",
-    metafile: true,
-    banner: {
-      // The bundle is ESM, but the third-party code it inlines (`yaml`, reached through
-      // `@workledger/core`) is CJS, and esbuild's interop shim falls back to a bare `require`
-      // that ESM does not define — "Dynamic require of \"process\" is not supported" at import
-      // time. Defining `require` from `createRequire` is what the shim probes for, so the
-      // inlined CJS resolves against this module instead of throwing.
-      js:
-        "// workledger CLI — bundled by scripts/bundle-cli.mjs. Edit packages/cli/src instead.\n" +
-        'import { createRequire as __workledgerCreateRequire } from "node:module";\n' +
-        "const require = __workledgerCreateRequire(import.meta.url);",
-    },
+    plugins: [serverAsSibling],
   });
 
-  const bytes = Object.values(result.metafile.outputs).find((o) => o.entryPoint)?.bytes ?? 0;
+  const bytes = entryBytes(result);
+  const serverBytes = entryBytes(server);
 
   // Removed first: a migration renamed or deleted in src must not linger in dist and get applied
   // out of order by a runner that reads the directory.
@@ -363,7 +418,7 @@ async function main(argv) {
   const deps = EXPECTED_RUNTIME_DEPS.length === 0 ? "0 runtime deps" : EXPECTED_RUNTIME_DEPS.join(", ");
   console.log(
     `bundle-cli: ${path.relative(REPO_ROOT, OUTFILE)} — ${bytes} bytes, ${deps}, ` +
-      `${migrations.length} migration(s), ${web.length} web file(s)`,
+      `${path.basename(SERVER_OUT)} ${serverBytes} bytes, ${migrations.length} migration(s), ${web.length} web file(s)`,
   );
   return checkWebSize();
 }

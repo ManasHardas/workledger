@@ -5,6 +5,9 @@ import { defineConfig } from "vitest/config";
 /** `packages/core/src/`, the directory every `@workledger/core` specifier resolves into. */
 const CORE_SRC = fileURLToPath(new URL("../core/src/", import.meta.url));
 
+/** `packages/server/src/`, so `@workledger/server` resolves to source and not to a stale dist. */
+const SERVER_SRC = fileURLToPath(new URL("../server/src/", import.meta.url));
+
 export default defineConfig({
   resolve: {
     // core's exports map points at dist/; under vitest we want the source, so a stale
@@ -15,6 +18,7 @@ export default defineConfig({
     alias: [
       { find: /^@workledger\/core\/(.+)$/, replacement: `${CORE_SRC}$1.ts` },
       { find: /^@workledger\/core$/, replacement: `${CORE_SRC}index.ts` },
+      { find: /^@workledger\/server$/, replacement: `${SERVER_SRC}index.ts` },
     ],
   },
   test: {

@@ -211,7 +211,8 @@ describe("the status machine", () => {
         }
         await expect(call).rejects.toBeInstanceOf(ops.BacklogOpError);
         await call.catch((error: ops.BacklogOpError) => {
-          expect(error.code).toBe("usage");
+          // `conflict` is the class the server maps to api.md's 409; the CLI still exits 1.
+          expect(error.code).toBe("conflict");
           // The refusal names the targets that *are* legal, per the contract's exit-1 rule.
           expect(error.details.join(" ")).toContain(ops.TRANSITIONS[from].join(", "));
         });
@@ -248,7 +249,7 @@ describe("restoreItem", () => {
 
     await expect(ops.restoreItem(ctx(root), A)).rejects.toThrow(/only a discarded or a done item/);
     await ops.restoreItem(ctx(root), A).catch((error: ops.BacklogOpError) => {
-      expect(error.code).toBe("usage");
+      expect(error.code).toBe("conflict");
       expect(error.details.join(" ")).toContain("legal targets from in_progress: accepted, done, discarded");
     });
     expect(readOnDisk(root, A).frontmatter.status).toBe("in_progress");
