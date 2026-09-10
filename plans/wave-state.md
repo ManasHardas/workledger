@@ -6,11 +6,11 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S2, P1 shipped)
+## Current state — 2026-09-09 (post-S2, P1 and P2 shipped)
 
-**Phase:** P2 — Local UI (per `plans/feature-p2-local-ui.md`). P1 shipped at tag `p1-shipped` (b5692a6).
+**Phase:** P3 — Recovery and backfill (`plans/feature-p3-recovery.md`). P1 shipped at `p1-shipped`; P2 shipped at `p2-shipped` (11 PRs, #42–#51, #60). Specs for P4–P7 are on main.
 
-**Wave:** P2 Wave 0 complete (contracts under `docs/contracts/p2/`, data flow in `plans/feature-p2-data-flow.md`, committed directly per Clause #12). Wave 0.5: issues filed directly by the orchestrator. **Next: Wave 1.**
+**Wave:** P3 Wave 1 in progress (#53 building); P3 issues #53–#57 filed; P4 issue #59 filed and waits on #53.
 
 **Last session:** S2 (same conversation as S1, continued under Clause #12 lean mode): merged #26 #27 #28 #29 #30, amendment 3, dogfood on this repo (three live sessions), CHANGELOG, tag.
 
