@@ -14,8 +14,12 @@
  *
  * `suggested` is what the wizard pre-checks: a git repo outside the temp dirs that holds no other
  * candidate. A `~/Projects` with its own `.git` is walked *and* listed, unsuggested.
+ *
+ * Paths are compared resolved: roots are realpath'd and deduplicated once they are known to
+ * exist, and a candidate is one candidate however it was spelled (`~/Projects/`, a symlink to
+ * it). A `known` path is reported as the harness recorded it, the way `findRepoRoot` keeps it.
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { configFile } from "../config.js";
@@ -93,23 +97,36 @@ function walkRoot(root: string, into: (repo: string) => void): void {
   if (isDirectory(root)) walk(root, 0);
 }
 
+/** `file` with symlinks resolved, or as given when it cannot be. */
+function realOr(file: string): string {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
 /** The step, over the stores under `io.homeDir` and the given (or default) roots. */
 export function discoverRepos(options: { roots?: string[] | undefined }, io: OnboardingIo): DiscoverResult {
   // The default root may be absent (a machine with no `~/Projects`) and is simply empty; a root
   // the caller named has to be an absolute existing directory (`./repo-path.ts`).
-  const roots = assertRootPaths((options.roots ?? []).map((root) => expandRoot(root, io)));
-  if (roots.length === 0) roots.push(path.join(io.homeDir, DEFAULT_ROOT));
+  const given = assertRootPaths((options.roots ?? []).map((root) => expandRoot(root, io)));
+  if (given.length === 0) given.push(path.join(io.homeDir, DEFAULT_ROOT));
+  // `assertRootPaths` has just realpath'd every named root; the default one may not exist.
+  const roots = [...new Set(given.map(realOr))];
   const tempDirs = io.tempDirs ?? OS_TEMP_DIRS;
 
+  // Both maps are keyed by resolved path; `known` keeps the first spelling a store recorded.
   const known = new Map<string, RepoCandidate>();
   const bump = (repo: string, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
-    const entry = known.get(repo) ?? candidate(repo);
+    const key = realOr(repo);
+    const entry = known.get(key) ?? candidate(repo);
     entry.harnessSessions[harness] = (entry.harnessSessions[harness] ?? 0) + sessions;
     if (newestMs > 0) {
       const at = new Date(newestMs).toISOString();
       if (entry.lastSessionAt === null || at > entry.lastSessionAt) entry.lastSessionAt = at;
     }
-    known.set(repo, entry);
+    known.set(key, entry);
   };
 
   for (const project of claudeProjects(io.homeDir)) {
@@ -123,6 +140,7 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
     if (repo !== undefined) bump(repo, "codex", 1, session.mtimeMs);
   }
 
+  // The walk follows no symlink and starts from a resolved root, so what it yields is resolved.
   const found = new Map<string, RepoCandidate>();
   for (const root of roots) {
     walkRoot(root, (repo) => {
@@ -130,10 +148,10 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
     });
   }
 
-  const all = [...known.values(), ...found.values()];
-  const holdsAnother = (repo: string): boolean => all.some((other) => other.path.startsWith(`${repo}${path.sep}`));
-  for (const entry of all) {
-    entry.suggested = entry.hasGit && !underTempDir(entry.path, tempDirs) && !holdsAnother(entry.path);
+  const all = [...known.entries(), ...found.entries()];
+  const holdsAnother = (key: string): boolean => all.some(([other]) => other.startsWith(`${key}${path.sep}`));
+  for (const [key, entry] of all) {
+    entry.suggested = entry.hasGit && !underTempDir(key, tempDirs) && !holdsAnother(key);
   }
 
   return {

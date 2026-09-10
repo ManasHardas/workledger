@@ -12,7 +12,7 @@
  * The drain is never started here: a `resume` would spawn `claude`. What is asserted is the half
  * the wizard is built on — that the rows exist, are tagged, and are what `status` counts.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,7 +86,8 @@ function writeTranscript(file: string, id: string, cwd: string, at: Date): void 
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "workledger-onboard-"));
+  // Resolved: on macOS `os.tmpdir()` is itself a symlink, and discovery reports resolved paths.
+  dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "workledger-onboard-")));
   home = path.join(dir, "home");
   indexHome = path.join(dir, "wlhome");
   const projects = path.join(home, "Projects");
@@ -218,6 +219,17 @@ describe("discoverRepos", () => {
       [two, true],
       [one, true],
     ]);
+  });
+
+  it("resolves and dedupes roots, so a trailing slash or a symlink never repeats a known repo", () => {
+    const projects = path.join(home, "Projects");
+    const link = path.join(dir, "projects-link");
+    symlinkSync(projects, link);
+    const result = discoverRepos({ roots: [`${projects}/`, link, projects] }, io);
+
+    expect(result.roots).toEqual([projects]);
+    expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
+    expect(result.found.map((c) => [c.path, c.suggested])).toEqual([[repoC, true]]);
   });
 
   it("drops a store cwd under the temp dir from known, resolved through symlinks", () => {

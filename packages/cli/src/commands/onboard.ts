@@ -7,7 +7,7 @@
  * (`src/onboarding/`): discover, select, history, init, plan, consent, run, status. On a terminal
  * with a flag missing it asks; with `--json`, `--yes`, or no terminal it never asks. Where it
  * cannot ask, nothing is written without `--yes`: with no `--select` it prints the discovery
- * and stops (exit 0), with `--select` alone it refuses (exit 2). `--yes` takes every default.
+ * and stops (exit 0), with `--select` alone it refuses (`EXIT_USAGE`). `--yes` takes every default.
  * `--json` prints one object whose six members are exactly what the six endpoints return,
  * which is what the parity test compares.
  *
