@@ -33,7 +33,7 @@ export interface Job {
   error: string | null;
   cost_estimate_usd: number | null;
   log_path: string | null;
-  /** `harness-usage-limit` when the harness refused the job for its window; else `null` (#100). */
+  /** `harness-usage-limit` when the harness refused the job for its window (#100), `session-not-found` when it had no session where the resume ran (#114); else `null`. */
   error_code: string | null;
   /** ISO instant before which a `queued` job is not run — the usage window's reset (#100). */
   retry_after: string | null;

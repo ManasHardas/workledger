@@ -21,8 +21,10 @@ import { EXIT_JOB_FAILED, EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
 import { CLAUDE_BIN_ENV, claudeCodeAdapter } from "../src/adapters/claude-code.js";
 import { CURSOR_NO_RESUME } from "../src/adapters/cursor.js";
 import { openIndex } from "../src/index/db.js";
-import { getJob, listJobs } from "../src/jobs/queue.js";
+import { SESSION_NOT_FOUND_CODE, getJob, listJobs } from "../src/jobs/queue.js";
+import { CLAUDE_STORE, createBackfilledSession, projectSlug } from "../src/commands/backfill.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
+import { claudeTranscripts } from "../src/onboarding/stores.js";
 import { DEFAULT_TIMEOUT_S, runRepair } from "../src/commands/repair.js";
 import { sessionFile, writeFileAtomic } from "../src/ledger-fs.js";
 import type { HarnessAdapter, ResumeOptions, ResumeResult } from "../src/adapters/types.js";
@@ -91,7 +93,7 @@ const PAYLOAD = JSON.stringify({
 });
 
 /** An adapter whose resume does what the real one asks the model to do: one checkpoint. */
-function checkpointingAdapter(): HarnessAdapter & { seen: ResumeOptions[] } {
+function checkpointingAdapter(ulid: string = ULID): HarnessAdapter & { seen: ResumeOptions[] } {
   const seen: ResumeOptions[] = [];
   return {
     ...claudeCodeAdapter,
@@ -102,7 +104,7 @@ function checkpointingAdapter(): HarnessAdapter & { seen: ResumeOptions[] } {
       // process runs where the harness was spawned.
       const target = /--repo (\S+)/.exec(options.instruction)?.[1];
       const code = await runCheckpoint(
-        { session: ULID, ...(target === undefined ? {} : { repo: target }) },
+        { session: ulid, ...(target === undefined ? {} : { repo: target }) },
         {
           readStdin: stdinFrom(PAYLOAD),
           stdout: () => {},
@@ -252,6 +254,92 @@ describe("runRepair — resume path", () => {
     // The digest landed in the repo's ledger, not anywhere near the workspace.
     expect(frontmatter().frontmatter.checkpoints).toHaveLength(1);
     expect(existsSync(path.join(workspace, ".workledger"))).toBe(false);
+  });
+
+  // #114: job HHM16Z. The session was started in `~/Projects/dome_workspace` (its transcript
+  // lives under that slug) and attributed to `~/Projects`; its row had no `cwd`, so the resume
+  // ran in `~/Projects` and Claude Code, which finds a session by the slug of the directory it
+  // is run in, answered "No conversation found with session ID".
+  describe("a session started in a workspace and attributed to a repo elsewhere (#114)", () => {
+    let workspace: string;
+    let fakeHome: string;
+
+    /** A transcript under `slug` whose leading records carry no cwd, like the 2026-09-10 store. */
+    function transcriptUnder(slug: string, id: string, cwd: string | undefined): string {
+      const store = path.join(fakeHome, CLAUDE_STORE, slug);
+      mkdirSync(store, { recursive: true });
+      const records: unknown[] = [
+        { type: "last-prompt", leafUuid: "u1", sessionId: id },
+        { type: "mode", mode: "normal", sessionId: id },
+      ];
+      if (cwd !== undefined) {
+        records.push({ type: "user", timestamp: "2026-09-08T09:00:00.000Z", cwd, sessionId: id, message: { role: "user", content: "hi" } });
+      }
+      const file = path.join(store, `${id}.jsonl`);
+      writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+      return file;
+    }
+
+    beforeEach(() => {
+      workspace = path.join(dir, "workspace");
+      mkdirSync(workspace, { recursive: true });
+      fakeHome = path.join(dir, "fakehome");
+    });
+
+    it("the backfill records the workspace as cwd, and the resume runs there with --repo", async () => {
+      transcriptUnder(projectSlug(workspace), "hs-ws", undefined);
+      // As the wizard's touched-path attribution hands it to `createBackfilledSession`.
+      const found = claudeTranscripts(fakeHome).find((entry) => entry.harnessSessionId === "hs-ws")!;
+      const ulid = await createBackfilledSession(
+        { ...found, cwd: found.cwd ?? null },
+        { db, root: repo, adapter: claudeCodeAdapter, homeDir: fakeHome, stdout: () => {}, stderr: () => {}, now: () => new Date("2026-09-09T13:00:00.000Z"), newId, home },
+      );
+      expect(db.getSessionByUlid(ulid)?.cwd).toBe(workspace);
+
+      const adapter = checkpointingAdapter(ulid);
+      const code = await runRepair(ulid, {}, repairIo(adapter));
+
+      expect(code, err.join("\n")).toBe(EXIT_OK);
+      const options = adapter.seen[0] as ResumeOptions;
+      expect(options.cwd).toBe(workspace);
+      expect(options.instruction).toContain(`workledger checkpoint --session ${ulid} --repo ${repo} --payload '<json>'`);
+      expect(parseSessionText(readFileSync(sessionFile(repo, ulid), "utf8")).frontmatter.checkpoints).toHaveLength(1);
+      expect(existsSync(path.join(workspace, ".workledger"))).toBe(false);
+    });
+
+    it("a row without cwd is resumed where its transcript says it started, never in the repo", async () => {
+      crashedSession();
+      db.updateSession(ULID, { transcript_path: transcriptUnder(projectSlug(workspace), "hs-1", workspace) });
+      const adapter = checkpointingAdapter();
+
+      expect(await runRepair(ULID, {}, repairIo(adapter)), err.join("\n")).toBe(EXIT_OK);
+      const options = adapter.seen[0] as ResumeOptions;
+      expect(options.cwd).toBe(workspace);
+      expect(options.instruction).toContain(`--repo ${repo}`);
+      expect(frontmatter().frontmatter.checkpoints).toHaveLength(1);
+    });
+
+    it("a row without cwd and a transcript without one falls back to the slug, inverted", async () => {
+      crashedSession();
+      db.updateSession(ULID, { transcript_path: transcriptUnder(projectSlug(workspace), "hs-1", undefined) });
+      const adapter = checkpointingAdapter();
+
+      expect(await runRepair(ULID, {}, repairIo(adapter)), err.join("\n")).toBe(EXIT_OK);
+      expect((adapter.seen[0] as ResumeOptions).cwd).toBe(workspace);
+    });
+
+    it("never spawns in the repo when the transcript's slug names a directory that is gone", async () => {
+      crashedSession();
+      db.updateSession(ULID, { transcript_path: transcriptUnder("-no-such-place", "hs-1", undefined) });
+      const adapter = checkpointingAdapter();
+
+      expect(await runRepair(ULID, {}, repairIo(adapter))).toBe(EXIT_JOB_FAILED);
+      expect(adapter.seen).toHaveLength(0);
+      const job = listJobs(db, repo)[0]!;
+      expect(job).toMatchObject({ status: "failed", error_code: SESSION_NOT_FOUND_CODE });
+      expect(job.error).toContain("-no-such-place");
+      expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
+    });
   });
 
   it("names the span when the session already has checkpoints", async () => {
@@ -424,6 +512,24 @@ describe("runRepair — the real adapter against a stub harness", () => {
     expect(() => process.kill(pid, 0), `pid ${pid} survived the kill`).toThrow(/ESRCH/);
 
     // And the session is untouched: a repair that killed its harness repaired nothing.
+    expect(frontmatter().frontmatter.status).toBe("crashed");
+    expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
+  });
+});
+
+describe("runRepair — the harness cannot find the session (#114)", () => {
+  it("maps \"No conversation found with session ID\" to session-not-found, naming the directory tried", async () => {
+    crashedSession();
+    const bin = path.join(dir, "claude");
+    writeFileSync(bin, ["#!/bin/sh", 'echo "No conversation found with session ID: hs-1"', "exit 1"].join("\n"), "utf8");
+    chmodSync(bin, 0o755);
+    process.env[CLAUDE_BIN_ENV] = bin;
+
+    expect(await runRepair(ULID, {}, repairIo(claudeCodeAdapter))).toBe(EXIT_JOB_FAILED);
+    const job = listJobs(db, repo)[0]!;
+    expect(job).toMatchObject({ status: "failed", error_code: SESSION_NOT_FOUND_CODE, retry_after: null });
+    expect(job.error).toContain(`hs-1`);
+    expect(job.error).toContain(`in ${repo}`);
     expect(frontmatter().frontmatter.status).toBe("crashed");
     expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
   });

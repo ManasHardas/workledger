@@ -21,7 +21,9 @@ import { adapterFor } from "../adapters/registry.js";
 import { API_KEY_ENV } from "../extract/api.js";
 import { EXIT_JOB_FAILED, EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { repairInstruction } from "../instruction.js";
-import { USAGE_LIMIT_CODE, enqueueJob } from "../jobs/queue.js";
+import { isDirectory, projectSlug, slugToPath } from "../onboarding/session-cwd.js";
+import { firstRecord } from "./backfill.js";
+import { SESSION_NOT_FOUND_CODE, USAGE_LIMIT_CODE, enqueueJob } from "../jobs/queue.js";
 import { jobLogDir, runJobs } from "../jobs/runner.js";
 import {
   findRepoRoot,
@@ -184,6 +186,44 @@ export function usageLimitMessage(harness: string, limit: UsageLimit): string {
   );
 }
 
+/**
+ * Where to spawn the resume of `session` — #114.
+ *
+ * The row's `cwd` when it has one. A row from before the column, or one the backfill wrote
+ * without reading past the transcript's first line, is resolved from the transcript now: the
+ * first record that carries a `cwd`, else the project slug the transcript lives under, inverted
+ * against the filesystem. The repo root is the answer only when nothing else is known — no
+ * transcript on the row, one outside a slugged store (a Codex rollout's directory is a date),
+ * or one under the repo's own slug. A transcript under a different slug whose directory is gone
+ * is a failure, not a fallback: spawning in the repo would only have the harness answer that it
+ * has no such session, which is exactly what job HHM16Z did.
+ */
+export function resumeCwdOf(session: SessionRow, root: string): { cwd: string } | { error: string } {
+  if (session.cwd !== null) return { cwd: session.cwd };
+  if (session.transcript_path === null) return { cwd: root };
+  const recorded = firstRecord(session.transcript_path).cwd;
+  if (recorded !== null && isDirectory(recorded)) return { cwd: recorded };
+  const slug = path.basename(path.dirname(session.transcript_path));
+  // Only Claude Code's store names its directories after absolute paths, `-` first.
+  if (!slug.startsWith("-") || slug === projectSlug(path.resolve(root))) return { cwd: root };
+  const inverted = slugToPath(slug);
+  if (inverted !== undefined) return { cwd: inverted };
+  return {
+    error:
+      `the session was started under project ${slug}, which names no directory on this machine, ` +
+      `and its transcript ${session.transcript_path} does not say where; not resumed in ${root}, ` +
+      "where the harness would not find it",
+  };
+}
+
+/** The `error` of a job the harness could not find the session for (#114). */
+export function sessionNotFoundMessage(harness: string, harnessSessionId: string, cwd: string): string {
+  return (
+    `${harness} found no session ${harnessSessionId} in ${cwd}; a session is looked up by the directory ` +
+    "it was started in, so the row's cwd must name that directory"
+  );
+}
+
 /** What {@link resumeSession} needs: the index, the repo, the harness, and a clock. */
 export interface ResumeSessionIo {
   db: IndexDb;
@@ -252,7 +292,9 @@ export async function resumeSession(
   const before = db.countCheckpoints(ulid);
   // A session started outside the repo (a workspace folder, amendment 8) is resumed where it
   // started — the harness finds its session by that directory — and told which ledger to write.
-  const cwd = session.cwd ?? root;
+  const where = resumeCwdOf(session, root);
+  if ("error" in where) return { ok: false, code: SESSION_NOT_FOUND_CODE, error: where.error };
+  const { cwd } = where;
   const elsewhere = path.resolve(cwd) !== path.resolve(root);
   const instruction = repairInstruction({
     sessionId: ulid,
@@ -295,6 +337,14 @@ export async function resumeSession(
         code: USAGE_LIMIT_CODE,
         retryAfter: limit.resetAt,
         error: usageLimitMessage(adapter.harness, limit),
+        output: result.output,
+      };
+    }
+    if (result.exitCode !== null && adapter.detectSessionNotFound?.(result.output) === true) {
+      return {
+        ok: false,
+        code: SESSION_NOT_FOUND_CODE,
+        error: sessionNotFoundMessage(adapter.harness, session.harness_session_id, cwd),
         output: result.output,
       };
     }

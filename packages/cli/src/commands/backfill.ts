@@ -72,7 +72,11 @@ export interface StoreSession {
   mtimeMs: number;
   /** The first record's `timestamp`, or `null` when it carries none. */
   startedIso: string | null;
-  /** The first record's `cwd`, or `null`. Used only to reject a file from another repo. */
+  /**
+   * Where the session was started: the first record that carries a `cwd`, else the project slug
+   * inverted against the filesystem. `null` only when neither says. Rejects a file from another
+   * repo, and is recorded on the row so the resume spawns there (#114).
+   */
   cwd: string | null;
 }
 
@@ -81,13 +85,10 @@ export interface StoreSession {
 export { projectSlug };
 
 /**
- * The first line of a transcript, read with one bounded positioned read — never the whole file.
- * `undefined` when the file cannot be opened or read. Shared with the Codex store enumeration
- * in `src/onboarding/stores.ts`, whose first record is a `session_meta` with the same two facts
- * one level down.
+ * The leading `FIRST_RECORD_BYTES` of a file, read with one bounded positioned read — never the
+ * whole file. `undefined` when the file cannot be opened or read.
  */
-export function readFirstLine(file: string): string | undefined {
-  let text: string;
+function readLeadingText(file: string): string | undefined {
   let fd: number;
   try {
     fd = openSync(file, "r");
@@ -97,36 +98,61 @@ export function readFirstLine(file: string): string | undefined {
   try {
     const buffer = Buffer.allocUnsafe(FIRST_RECORD_BYTES);
     const read = readSync(fd, buffer, 0, FIRST_RECORD_BYTES, 0);
-    text = buffer.subarray(0, read).toString("utf8");
+    return buffer.subarray(0, read).toString("utf8");
   } catch {
     return undefined;
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * The first line of a transcript, from {@link readLeadingText}. Shared with the Codex store
+ * enumeration in `src/onboarding/stores.ts`, whose first record is a `session_meta` with the
+ * same two facts one level down.
+ */
+export function readFirstLine(file: string): string | undefined {
+  const text = readLeadingText(file);
+  if (text === undefined) return undefined;
   const newline = text.indexOf("\n");
   return newline < 0 ? text : text.slice(0, newline);
 }
 
 /**
- * The `cwd` and `timestamp` of a transcript's first record.
+ * The `cwd` and `timestamp` of a Claude Code transcript's first records: each fact from the
+ * first leading record that carries it.
+ *
+ * Not the first line alone (#114): a transcript now opens with `last-prompt`, `mode` and
+ * `permission-mode` records that carry neither, and the first `user` record — the one that says
+ * where the session was started — comes after them. Reading only line one recorded no cwd for
+ * every such session, and the resume then ran in the repo root instead of where the harness
+ * would find the session.
  *
  * A bounded positioned read rather than `readFileSync`: a store holds sessions of every size, and
  * enumerating a repo's history must not depend on being able to hold its largest transcript in
- * memory. A file whose first line does not parse yields nothing and is treated as belonging to
+ * memory. A file whose leading lines do not parse yields nothing and is treated as belonging to
  * this repo — the slug already said so, and refusing to back it up over an unreadable first line
  * would silently drop a session.
  */
 export function firstRecord(file: string): { cwd: string | null; startedIso: string | null } {
-  const line = readFirstLine(file);
-  if (line === undefined) return { cwd: null, startedIso: null };
-  try {
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    const cwd = typeof parsed["cwd"] === "string" ? parsed["cwd"] : null;
-    const at = typeof parsed["timestamp"] === "string" ? parsed["timestamp"] : null;
-    return { cwd, startedIso: at !== null && !Number.isNaN(Date.parse(at)) ? at : null };
-  } catch {
-    return { cwd: null, startedIso: null };
+  const text = readLeadingText(file);
+  let cwd: string | null = null;
+  let startedIso: string | null = null;
+  if (text === undefined) return { cwd, startedIso };
+  for (const line of text.split("\n")) {
+    if (cwd !== null && startedIso !== null) break;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      // A line the buffer cut short, or one that is not a record: neither ends the search.
+      continue;
+    }
+    if (cwd === null && typeof parsed["cwd"] === "string") cwd = parsed["cwd"];
+    const at = parsed["timestamp"];
+    if (startedIso === null && typeof at === "string" && !Number.isNaN(Date.parse(at))) startedIso = at;
   }
+  return { cwd, startedIso };
 }
 
 /**
@@ -135,14 +161,14 @@ export function firstRecord(file: string): { cwd: string | null; startedIso: str
  * its own directory and is the repo's all the same, as discovery has always counted it.
  *
  * `inferred` says whether the directory name, inverted against the filesystem (`slugToPath`),
- * names a working directory inside the repo. A slug is ambiguous (`repo/src` and `repo-src`
- * share one), so the inversion decides only for a transcript whose first record carries no cwd;
- * one that does is judged by its cwd in {@link enumerateStore}.
+ * names a working directory inside the repo — `cwd`, when it does. A slug is ambiguous
+ * (`repo/src` and `repo-src` share one), so the inversion decides only for a transcript whose
+ * records carry no cwd; one that does is judged by its cwd in {@link enumerateStore}.
  */
-function projectDirsFor(homeDir: string, root: string): Array<{ dir: string; inferred: boolean }> {
+function projectDirsFor(homeDir: string, root: string): Array<{ dir: string; inferred: boolean; cwd?: string }> {
   const store = path.join(homeDir, CLAUDE_STORE);
   const own = projectSlug(root);
-  const dirs = [{ dir: path.join(store, own), inferred: true }];
+  const dirs: Array<{ dir: string; inferred: boolean; cwd?: string }> = [{ dir: path.join(store, own), inferred: true, cwd: root }];
   let slugs: string[];
   try {
     slugs = readdirSync(store, { withFileTypes: true })
@@ -154,7 +180,8 @@ function projectDirsFor(homeDir: string, root: string): Array<{ dir: string; inf
   for (const slug of slugs) {
     if (!slug.startsWith(`${own}-`)) continue;
     const cwd = slugToPath(slug);
-    dirs.push({ dir: path.join(store, slug), inferred: cwd !== undefined && sessionRepoOf(cwd) === root });
+    const inferred = cwd !== undefined && sessionRepoOf(cwd) === root;
+    dirs.push({ dir: path.join(store, slug), inferred, ...(inferred ? { cwd } : {}) });
   }
   return dirs;
 }
@@ -170,7 +197,7 @@ function projectDirsFor(homeDir: string, root: string): Array<{ dir: string; inf
 export function enumerateStore(homeDir: string, repoPath: string): StoreSession[] {
   const root = path.resolve(repoPath);
   const sessions: StoreSession[] = [];
-  for (const { dir, inferred } of projectDirsFor(homeDir, root)) {
+  for (const { dir, inferred, cwd: inverted } of projectDirsFor(homeDir, root)) {
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -197,7 +224,9 @@ export function enumerateStore(homeDir: string, repoPath: string): StoreSession[
         bytes: stat.size,
         mtimeMs: stat.mtimeMs,
         startedIso,
-        cwd,
+        // The slug's directory stands in for a transcript that never says where it started
+        // (#114): the resume has to spawn somewhere the harness will look.
+        cwd: cwd ?? inverted ?? null,
       });
     }
   }

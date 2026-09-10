@@ -206,6 +206,41 @@ describe("store enumeration", () => {
     expect(enumerateStore(fakeHome, path.join(dir, "other-repo"))).toEqual([]);
   });
 
+  // The 2026-09-10 store: a transcript opens with `last-prompt` and `mode` records that carry
+  // no cwd and no timestamp, and the first `user` record — the one that says where the session
+  // started — comes third. Reading the first line alone recorded `cwd: null`, and the resume
+  // then ran in the repo root, where the harness could not find the session (#114).
+  it("takes the start directory from the first record that carries one, else from the slug (#114)", () => {
+    const sub = path.join(repo, "src");
+    mkdirSync(sub, { recursive: true });
+    const store = path.join(fakeHome, CLAUDE_STORE, projectSlug(sub));
+    mkdirSync(store, { recursive: true });
+    const preamble = [
+      { type: "last-prompt", leafUuid: "u1", sessionId: "hs-late" },
+      { type: "mode", mode: "normal", sessionId: "hs-late" },
+      { type: "permission-mode", permissionMode: "bypassPermissions", sessionId: "hs-late" },
+    ];
+    writeFileSync(
+      path.join(store, "hs-late.jsonl"),
+      [
+        ...preamble,
+        { type: "user", timestamp: "2026-09-08T09:00:00.000Z", cwd: sub, sessionId: "hs-late", message: { role: "user", content: "hi" } },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") + "\n",
+      "utf8",
+    );
+    // No record carries a cwd at all: the slug, inverted, is the only word on where it started.
+    writeFileSync(path.join(store, "hs-mute.jsonl"), `${preamble.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+
+    const found = enumerateStore(fakeHome, repo);
+    expect(found.find((session) => session.harnessSessionId === "hs-late")).toMatchObject({
+      cwd: sub,
+      startedIso: "2026-09-08T09:00:00.000Z",
+    });
+    expect(found.find((session) => session.harnessSessionId === "hs-mute")).toMatchObject({ cwd: sub, startedIso: null });
+  });
+
   it("slugifies a path the way the harness does", () => {
     expect(projectSlug("/Users/x/Projects/work.ledger")).toBe("-Users-x-Projects-work-ledger");
   });
