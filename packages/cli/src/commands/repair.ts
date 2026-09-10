@@ -66,7 +66,15 @@ export interface RepairIo {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
   now: () => Date;
+  /** Mints job ids: a bare ULID. */
   newId: () => string;
+  /**
+   * Mints the `WL-<ulid>` of a `new: true` Remaining item — `--extract` only, and never
+   * {@link RepairIo.newId}, which is a *job* id and would fail the backlog-id rule. The resume
+   * path needs none of this: the resumed agent runs its own `workledger checkpoint` process,
+   * which mints its own.
+   */
+  newBacklogId?: (() => string) | undefined;
   /**
    * Ask the operator a yes/no question. Only the `--extract` path asks one — the spend prompt —
    * and `--yes` replaces this with a function that never prompts.
@@ -328,7 +336,7 @@ export async function repairCommand(ulid: string, options: RepairOptions): Promi
     return EXIT_NOT_ENABLED;
   }
 
-  const { newSessionId } = await import("@workledger/core/ids");
+  const { newBacklogId, newSessionId } = await import("@workledger/core/ids");
   const { openIndex } = await import("../index/db.js");
   const home = process.env["WORKLEDGER_HOME"]?.trim();
   const db = openIndex(home ? { home } : {});
@@ -341,6 +349,7 @@ export async function repairCommand(ulid: string, options: RepairOptions): Promi
       stderr: (line) => void process.stderr.write(`${line}\n`),
       now: () => new Date(),
       newId: newSessionId,
+      newBacklogId,
       confirm: terminalConfirm,
       // Read per call, from the environment only (cli.md step 4). Never cached in a variable
       // that outlives the request and never written anywhere.

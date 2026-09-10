@@ -124,7 +124,11 @@ function repairIo(overrides: Partial<RepairIo> = {}): RepairIo {
     stdout: (line) => out.push(line),
     stderr: (line) => err.push(line),
     now: () => NOW,
-    newId: () => "WL-01JBQK0000000000000000000B",
+    // A *job* id, the way `repairCommand` passes one. Deliberately not `WL-`-shaped: an earlier
+    // draft forwarded this field to `runCheckpoint` as the backlog-id minter, and a WL-shaped
+    // value here is precisely what hid that from this suite.
+    newId: () => "01JBQK0000000000000000000J",
+    newBacklogId: () => "WL-01JBQK0000000000000000000B",
     apiKey: () => API_KEY,
     confirm: async () => true,
     home,
@@ -296,6 +300,35 @@ describe("runRepair --extract", () => {
     const job = listJobs(db, repo)[0];
     expect(job).toMatchObject({ kind: "extract", status: "done" });
     expect(job?.cost_estimate_usd).toBeGreaterThan(0);
+  });
+
+  it("mints a real WL- backlog id for a new: true item with no minter injected", async () => {
+    crashedSession();
+
+    // `newBacklogId` is left off deliberately, so the extraction falls through to core's real
+    // minter — the production wiring. The system prompt mandates `new: true` on every remaining
+    // item, so a run that forwarded the *job* id minter here (a bare ULID) would fail validation
+    // with `expected a backlog id of the form WL-<ulid>` after the API call had been paid for,
+    // and leave the session unrepaired.
+    const code = await runRepair(
+      ULID,
+      { extract: true, yes: true },
+      repairIo({
+        newBacklogId: undefined,
+        fetchImpl: mockFetch(JSON.stringify(GOOD_PAYLOAD)),
+      }),
+    );
+
+    expect(code, err.join("\n")).toBe(EXIT_OK);
+    const backlog = readdirSync(path.join(repo, ".workledger", "backlog"));
+    expect(backlog).toHaveLength(1);
+    expect(backlog[0]).toMatch(/^WL-[0-9A-HJKMNP-TV-Z]{26}\.md$/);
+    expect(frontmatter().frontmatter.status).toBe("repaired");
+    expect(frontmatter().frontmatter.checkpoints[0]?.trigger).toBe("extract");
+    // The remaining item points at the file that was just created.
+    expect(readFileSync(sessionFile(repo, ULID), "utf8")).toContain(
+      (backlog[0] as string).replace(/\.md$/, ""),
+    );
   });
 
   it("exits 5 with the field paths when the model's payload does not validate", async () => {

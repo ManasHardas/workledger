@@ -263,7 +263,13 @@ export interface BackfillIo {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
   now: () => Date;
+  /** Mints job ids and session ulids: bare ULIDs. */
   newId: () => string;
+  /**
+   * Mints the `WL-<ulid>` of a `new: true` Remaining item, for the `--extract-fallback` path
+   * only. Never {@link BackfillIo.newId}, which is a job id and would fail the backlog-id rule.
+   */
+  newBacklogId?: (() => string) | undefined;
   /** Ask the operator a yes/no question; absent means "never prompt". */
   confirm?: ((question: string) => Promise<boolean>) | undefined;
   /** Seconds before a resumed session is killed. */
@@ -524,6 +530,7 @@ function extractIo(io: BackfillIo): ExtractIo {
     stderr: io.stderr,
     now: io.now,
     newId: io.newId,
+    newBacklogId: io.newBacklogId,
     apiKey: io.apiKey,
     fetchImpl: io.fetchImpl,
     home: io.home,
@@ -539,7 +546,7 @@ export async function backfillCommand(options: BackfillOptions): Promise<number>
     return EXIT_NOT_ENABLED;
   }
 
-  const { newSessionId } = await import("@workledger/core/ids");
+  const { newBacklogId, newSessionId } = await import("@workledger/core/ids");
   const { openIndex } = await import("../index/db.js");
   const { API_KEY_ENV } = await import("../extract/api.js");
   const home = process.env["WORKLEDGER_HOME"]?.trim();
@@ -554,6 +561,7 @@ export async function backfillCommand(options: BackfillOptions): Promise<number>
       stderr: (line) => void process.stderr.write(`${line}\n`),
       now: () => new Date(),
       newId: newSessionId,
+      newBacklogId,
       confirm: async (question: string) => {
         const readline = await import("node:readline/promises");
         const rl = readline.createInterface({ input: process.stdin, output: process.stderr });

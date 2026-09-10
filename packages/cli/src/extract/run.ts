@@ -56,8 +56,19 @@ export interface ExtractIo {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
   now: () => Date;
-  /** Mints ids for the job row and for any `new: true` backlog item in the payload. */
+  /** Mints the `extract` job's id: a bare ULID, like every other id in the `jobs` table. */
   newId: () => string;
+  /**
+   * Mints the `WL-<ulid>` for a `new: true` Remaining item.
+   *
+   * Deliberately *not* {@link ExtractIo.newId}. The two look interchangeable and are not: a job
+   * id is a bare ULID and a backlog id is prefixed, so forwarding the job minter to
+   * `runCheckpoint` makes every payload carrying a `new: true` item — which the extraction system
+   * prompt mandates for all of them — fail validation with `expected a backlog id of the form
+   * WL-<ulid>`, leaving the session unrepaired after the API call had already been paid for.
+   * Defaults to core's minter; injected only so a test can be deterministic.
+   */
+  newBacklogId?: (() => string) | undefined;
   /** Ask the spend question. Absent means "never prompt", which only `--yes` should produce. */
   confirm?: ((question: string) => Promise<boolean>) | undefined;
   /** `ANTHROPIC_API_KEY`, read per call. */
@@ -254,6 +265,8 @@ export async function extractCheckpoint(
   }
 
   const { runCheckpoint, stdinFrom } = await import("../commands/checkpoint.js");
+  const mintBacklogId =
+    io.newBacklogId ?? (await import("@workledger/core/ids")).newBacklogId;
   const before = db.countCheckpoints(ulid);
   db.updateSession(ulid, { pending_trigger: "extract", updated_at: io.now().toISOString() });
   let code: number;
@@ -269,7 +282,7 @@ export async function extractCheckpoint(
         cwd: root,
         home: io.home,
         now: io.now,
-        newId: io.newId,
+        newId: mintBacklogId,
       },
     );
   } finally {
