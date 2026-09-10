@@ -181,9 +181,15 @@ export function BacklogItem({
               ))}
             </SelectField>
           </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {/*
+            A native select is as wide as its longest option, and a merge target's label is a whole
+            card title, so this one takes the row's remaining width and shrinks instead of pushing
+            the card past a 375 px viewport (#88).
+          */}
+          <label className="flex min-w-0 flex-1 basis-48 flex-col gap-1 text-xs text-muted-foreground">
             Merge into
             <SelectField
+              className="w-full"
               value={mergeInto}
               disabled={disabled || others.length === 0}
               onChange={(e) => setMergeInto(e.target.value)}

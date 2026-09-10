@@ -61,14 +61,24 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
+/** The narrowest viewport the UI must fit without a horizontal scrollbar (#88, #89). */
+const MOBILE_WIDTH = 375;
+/** The path length the Health view is held to at that width (#89). */
+const LONG_PATH = 90;
+
 /**
  * A throwaway git repo holding a copy of this repo's own ledger.
  *
  * A copy rather than the repo itself because the test *writes*: it accepts and renames a backlog
  * item, and the ledger it does that to must not be one anybody is keeping.
+ *
+ * The path is padded to at least `LONG_PATH` characters so the Health view is served a repo path
+ * that has to wrap at 375 px (#89) — a bare `tmpdir()` is shorter than that on macOS and Linux.
  */
 function makeRepo(): string {
-  const repo = path.join(mkdtempSync(path.join(tmpdir(), "workledger-e2e-")), "repo");
+  let dir = mkdtempSync(path.join(tmpdir(), "workledger-e2e-"));
+  while (dir.length < LONG_PATH) dir = path.join(dir, "a-long-directory-name");
+  const repo = path.join(dir, "repo");
   mkdirSync(repo, { recursive: true });
   git(repo, "init", "--quiet", "--initial-branch=main", ".");
   git(repo, "config", "user.name", GIT_NAME);
@@ -198,6 +208,11 @@ function watchConsole(page: Page): string[] {
   });
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   return errors;
+}
+
+/** The page's full layout width — anything past the viewport is a horizontal scrollbar. */
+function scrollWidth(page: Page): Promise<number> {
+  return page.evaluate(() => document.documentElement.scrollWidth);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,5 +388,31 @@ test.describe("workledger serve, end to end", () => {
     await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
     await expect(page.getByText("claude-code").first()).toBeVisible();
     expect(errors, "no console errors on Health").toEqual([]);
+  });
+
+  test("Next fits a 375 px viewport with the fixture backlog (#88)", async ({ page }) => {
+    await page.setViewportSize({ width: MOBILE_WIDTH, height: 812 });
+    await page.goto(`${serving.url}/#/r/${serving.id}/next`);
+    await expect(page.getByRole("heading", { name: "Next", exact: true })).toBeVisible();
+    // The list, not just the heading: the overflow was the cards' merge/rank controls.
+    await expect(page.getByRole("listitem").first()).toBeVisible();
+    expect(await scrollWidth(page), "Next does not scroll horizontally").toBeLessThanOrEqual(
+      MOBILE_WIDTH,
+    );
+  });
+
+  test("Health fits a 375 px viewport with a long repo path (#89)", async ({ page }) => {
+    expect(serving.repo.length, "the fixture repo path is long").toBeGreaterThanOrEqual(LONG_PATH);
+    await page.setViewportSize({ width: MOBILE_WIDTH, height: 812 });
+    await page.goto(`${serving.url}/#/r/${serving.id}/health`);
+    const heading = page.getByRole("heading", { name: serving.repo, exact: true });
+    await expect(heading).toBeVisible();
+    await expect(heading, "the full path is in the title attribute").toHaveAttribute(
+      "title",
+      serving.repo,
+    );
+    expect(await scrollWidth(page), "Health does not scroll horizontally").toBeLessThanOrEqual(
+      MOBILE_WIDTH,
+    );
   });
 });
