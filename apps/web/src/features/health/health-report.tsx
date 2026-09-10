@@ -26,7 +26,11 @@ export function HealthReport() {
         <div className="flex flex-col gap-4">
           <Card>
             <CardHeader>
-              <CardTitle>{report.repo}</CardTitle>
+              {/* A repo path has no spaces to wrap at, so it may break anywhere; the title carries
+                  the full value for hover and screen readers (#89). */}
+              <CardTitle className="wrap-anywhere" title={report.repo ?? undefined}>
+                {report.repo}
+              </CardTitle>
               <CardDescription>workledger {report.cli}</CardDescription>
             </CardHeader>
           </Card>
@@ -102,7 +106,9 @@ function Row({
           <StatusBadge status={status} />
           <CardTitle>{label}</CardTitle>
         </div>
-        <CardDescription className="break-words">{detail}</CardDescription>
+        <CardDescription className="wrap-anywhere" title={detail}>
+          {detail}
+        </CardDescription>
       </CardHeader>
       {problems.length === 0 ? null : (
         <CardContent>
