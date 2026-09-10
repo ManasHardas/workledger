@@ -2,7 +2,15 @@ import { AsyncPanel } from "../../components/async-panel.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
 import { useLiveHealth } from "./live.js";
-import { configStatus, harnessStatus, indexStatus, lastHookStatus, type Status } from "./status.js";
+import {
+  configStatus,
+  harnessDetail,
+  harnessProblems,
+  harnessStatus,
+  indexStatus,
+  lastHookStatus,
+  type Status,
+} from "./status.js";
 
 /**
  * `workledger doctor` as a page: every harness, the index, the config, and when a hook last fired
@@ -33,8 +41,8 @@ export function HealthReport() {
                   <Row
                     status={harnessStatus(entry)}
                     label={entry.harness}
-                    detail={`${entry.hooksInstalled ? "hooks installed" : "hooks not installed"} · last seen ${entry.lastSeenAt ?? "never"}`}
-                    problems={entry.problems}
+                    detail={harnessDetail(entry)}
+                    problems={harnessProblems(entry)}
                   />
                 </li>
               ))}
@@ -98,7 +106,10 @@ function Row({
       </CardHeader>
       {problems.length === 0 ? null : (
         <CardContent>
-          <ul className="flex flex-col gap-1 text-sm text-destructive">
+          {/* A warn row's complaints are not faults, so they must not be painted as one. */}
+          <ul
+            className={`flex flex-col gap-1 text-sm ${status === "broken" ? "text-destructive" : "text-muted-foreground"}`}
+          >
             {problems.map((problem) => (
               <li key={problem}>{problem}</li>
             ))}

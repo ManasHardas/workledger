@@ -70,7 +70,7 @@ describe("ledger list", () => {
       b.frontmatter.started.localeCompare(a.frontmatter.started),
     );
     expect(cards.map((card) => card.textContent)).toEqual(
-      newestFirst.map((session) => expect.stringContaining(session.goal[0]!.text)),
+      newestFirst.map((session) => expect.stringContaining(session.goal!)),
     );
   });
 
@@ -79,7 +79,7 @@ describe("ledger list", () => {
     const card = (await screen.findAllByRole("listitem"))[0]!;
     const { frontmatter } = OPEN_SESSION;
 
-    expect(card.textContent).toContain(OPEN_SESSION.goal[0]!.text);
+    expect(card.textContent).toContain(OPEN_SESSION.goal!);
     expect(card.textContent).toContain(frontmatter.author.name);
     expect(card.textContent).toContain(frontmatter.harness);
     expect(card.textContent).toContain(frontmatter.status);
@@ -94,14 +94,14 @@ describe("ledger list", () => {
     const { source, reads } = liveSource();
     renderLedger(source);
     showAll();
-    await screen.findByText(ENDED_SESSION.goal[0]!.text);
+    await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), {
       target: { value: "watcher" },
     });
 
-    expect(await screen.findByText(OPEN_SESSION.goal[0]!.text)).toBeDefined();
-    expect(screen.queryByText(ENDED_SESSION.goal[0]!.text)).toBeNull();
+    expect(await screen.findByText(OPEN_SESSION.goal!)).toBeDefined();
+    expect(screen.queryByText(ENDED_SESSION.goal!)).toBeNull();
     expect(reads.some((read) => read.q === "watcher")).toBe(true);
   });
 
@@ -122,7 +122,7 @@ describe("ledger list", () => {
   it("moves between cards with j/k and opens the focused one with Enter", async () => {
     renderLedger();
     showAll();
-    await screen.findByText(ENDED_SESSION.goal[0]!.text);
+    await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.keyDown(window, { key: "j" });
     expect(document.activeElement?.getAttribute("href")).toBe(`#/ledger/${OPEN_SESSION.frontmatter.id}`);
@@ -152,13 +152,13 @@ describe("ledger list", () => {
   it("re-reads the list when the source reports session.changed", async () => {
     const { source, reads, emit } = liveSource();
     renderLedger(source);
-    await screen.findByText(OPEN_SESSION.goal[0]!.text);
+    await screen.findByText(OPEN_SESSION.goal!);
     const before = reads.length;
 
     await act(async () => {
       emit({ type: "session.changed", ulid: OPEN_SESSION.frontmatter.id });
     });
-    await screen.findByText(OPEN_SESSION.goal[0]!.text);
+    await screen.findByText(OPEN_SESSION.goal!);
     expect(reads.length).toBeGreaterThan(before);
 
     // Only session events move the list; a backlog change is somebody else's refetch.
@@ -181,7 +181,7 @@ describe("session detail", () => {
       expect(await screen.findByRole("heading", { name: heading, level: 3 })).toBeDefined();
     }
 
-    expect(await screen.findByText(ENDED_SESSION.goal[0]!.text)).toBeDefined();
+    expect(await screen.findByText(ENDED_SESSION.goal!)).toBeDefined();
     for (const line of ENDED_SESSION.done) {
       expect(screen.getByText(line.text)).toBeDefined();
     }
