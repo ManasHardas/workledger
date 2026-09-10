@@ -183,10 +183,17 @@ export class ReadModel {
     const openOnly = query.open === "true";
     const out: NoteRef[] = [];
     for (const session of this.sessions.values()) {
+      // `index` is the note's position within its own checkpoint — the same numbering
+      // `toSessionView` uses for `resolved`, so `{session, cp, index}` addresses a note for
+      // `POST /api/notes/resolve`. Counted before the filters, or a filtered-out note would
+      // shift the ones after it.
+      const seen = new Map<number, number>();
       for (const note of session.notes) {
+        const index = seen.get(note.cp) ?? 0;
+        seen.set(note.cp, index + 1);
         if (types !== undefined && !types.includes(note.type)) continue;
         if (openOnly && (note.resolved === true || !OPEN_NOTE_TYPES.has(note.type))) continue;
-        out.push({ ...note, session: session.frontmatter.id });
+        out.push({ ...note, session: session.frontmatter.id, index });
       }
     }
     // "Newest first" over a note means its session's start, then its checkpoint: a note has no

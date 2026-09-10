@@ -52,7 +52,7 @@ export function SessionCard({
               {frontmatter.checkpoints.length === 1 ? "checkpoint" : "checkpoints"}
             </Badge>
           </div>
-          <CardTitle>{session.goal[0]?.text ?? "No goal recorded"}</CardTitle>
+          <CardTitle>{session.goal ?? "No goal recorded"}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span>Started {formatInstant(frontmatter.started)}</span>

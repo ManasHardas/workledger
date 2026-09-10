@@ -66,6 +66,8 @@ export interface BacklogView {
 export interface NoteRef extends NoteLine {
   /** The session ulid. */
   session: string;
+  /** The note's 0-based position among the notes of its own checkpoint — `ResolvedNoteRef`'s. */
+  index: number;
 }
 
 /**

@@ -117,7 +117,11 @@ describe("notes", () => {
   it("lists notes with their session ulid", async () => {
     const notes = await source.listNotes();
     expect(notes.length).toBeGreaterThan(0);
-    for (const note of notes) expect(typeof note.session).toBe("string");
+    for (const note of notes) {
+      expect(typeof note.session).toBe("string");
+      // api.md amendment: a note carries its position within its checkpoint.
+      expect(Number.isInteger(note.index)).toBe(true);
+    }
   });
 
   it("filters by type and by open", async () => {

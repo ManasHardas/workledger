@@ -158,6 +158,16 @@ describe("GET /api/notes", () => {
       expect(typeof note.cp).toBe("number");
       expect(["discovery", "decision", "blocker", "question"]).toContain(note.type);
     }
+    // `index` is the note's position within its own checkpoint, so an unfiltered listing numbers
+    // each `{session, cp}` group 0..n-1 — the pair `POST /api/notes/resolve` addresses.
+    const groups = new Map<string, number[]>();
+    for (const note of body) {
+      const key = `${note.session}#${note.cp}`;
+      groups.set(key, [...(groups.get(key) ?? []), note.index]);
+    }
+    for (const indices of groups.values()) {
+      expect([...indices].sort((a, b) => a - b)).toEqual(indices.map((_, i) => i));
+    }
     const sessions = (await getJson<SessionView[]>("/api/sessions")).body.map((s) => s.frontmatter.id);
     const seen = body.map((n) => sessions.indexOf(n.session));
     expect([...seen].sort((a, b) => a - b)).toEqual(seen);

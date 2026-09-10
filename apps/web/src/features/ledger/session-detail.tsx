@@ -52,18 +52,13 @@ function SessionBody({ session }: { session: ParsedSession }) {
         </span>
       </div>
 
+      {/*
+        The goal carries no `[cp n]` marker: the wire's `goal` is the single current string
+        (api.md §Read models), not the list of lines core parses, so there is no checkpoint to
+        attribute it to.
+      */}
       <Section title="Goal">
-        {session.goal.length === 0 ? (
-          <Empty>No goal recorded.</Empty>
-        ) : (
-          <Lines>
-            {session.goal.map((line, index) => (
-              <Line key={`${line.cp}-${index}`} cp={line.cp}>
-                {line.text}
-              </Line>
-            ))}
-          </Lines>
-        )}
+        {session.goal === null ? <Empty>No goal recorded.</Empty> : <p className="text-sm">{session.goal}</p>}
       </Section>
 
       <Section title="Done">
@@ -101,8 +96,8 @@ function SessionBody({ session }: { session: ParsedSession }) {
                 {line.text}
                 <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-mono">{`→ ${line.ref} (${line.rel})`}</span>
-                  {line.blockedBy?.length ? (
-                    <span>blocked by {line.blockedBy.join(", ")}</span>
+                  {line.blocked_by?.length ? (
+                    <span>blocked by {line.blocked_by.join(", ")}</span>
                   ) : null}
                 </span>
                 {line.why ? (

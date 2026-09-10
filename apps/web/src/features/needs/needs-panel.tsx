@@ -152,7 +152,7 @@ function useSessionGoal(ulid: string): string | null {
     setGoal(null);
     source.getSession(ulid).then(
       (session) => {
-        if (live) setGoal(session.goal[0]?.text ?? null);
+        if (live) setGoal(session.goal);
       },
       () => {
         // Rendered as the ulid fallback above rather than swallowed: the card stays usable.

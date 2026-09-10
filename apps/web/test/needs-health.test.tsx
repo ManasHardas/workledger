@@ -32,6 +32,8 @@ function stubSource(overrides: Partial<LedgerSource> = {}): LedgerSource {
     accept: (id) => fixture.accept(id),
     discard: (id) => fixture.discard(id),
     done: (id) => fixture.done(id),
+    start: (id) => fixture.start(id),
+    restore: (id) => fixture.restore(id),
     edit: (id, patch) => fixture.edit(id, patch),
     assign: (id, owner) => fixture.assign(id, owner),
     rank: (id, rank) => fixture.rank(id, rank),
@@ -56,8 +58,8 @@ const BLOCKER = "The watcher drops events when a file is renamed";
 const SESSION: ParsedSession = {
   ...FIXTURE_SESSIONS[0]!,
   notes: [
-    { cp: 1, raw: "", type: "decision", by: "human", text: "Debounce at 100 ms and move on" },
-    { cp: 1, raw: "", type: "blocker", by: "agent", text: BLOCKER },
+    { cp: 1, type: "decision", by: "human", text: "Debounce at 100 ms and move on" },
+    { cp: 1, type: "blocker", by: "agent", text: BLOCKER },
   ],
 };
 const NOTES: NoteRef[] = [
@@ -65,7 +67,6 @@ const NOTES: NoteRef[] = [
     session: SESSION.frontmatter.id,
     cp: 1,
     index: 1,
-    raw: "",
     type: "blocker",
     by: "agent",
     text: BLOCKER,
@@ -83,7 +84,7 @@ describe("Needs you", () => {
     renderAt("#/needs-you", stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
     expect(await screen.findByText(BLOCKER)).toBeDefined();
-    expect(await screen.findByText(SESSION.goal[0]!.text)).toBeDefined();
+    expect(await screen.findByText(SESSION.goal!)).toBeDefined();
     expect(screen.getByText("[cp 1]")).toBeDefined();
     expect(screen.getByText("blocker")).toBeDefined();
   });
@@ -123,13 +124,46 @@ describe("Needs you", () => {
 });
 
 describe("Health", () => {
+  /**
+   * The three readings a `DoctorEntry` can produce: a probe that matches the contract-tested
+   * version, one whose binary is not on PATH, and one that is installed but both off-version and
+   * unable to read its store. `/api/health` sends the probe, never a verdict, so the page derives
+   * all three from these fields alone.
+   */
   const HEALTH: Health = {
     cli: "0.0.1",
     repo: "github.com/ManasHardas/workledger",
     harnesses: [
-      { harness: "claude-code", hooksInstalled: true, lastSeenAt: "2026-09-09T08:02:00Z", problems: [] },
-      { harness: "cursor", hooksInstalled: false, lastSeenAt: null, problems: [] },
-      { harness: "codex", hooksInstalled: true, lastSeenAt: "2026-09-08T10:00:00Z", problems: ["hook script exits 1"] },
+      {
+        harness: "claude-code",
+        binary: "/opt/homebrew/bin/claude",
+        version: "2.4.1",
+        contract_tested_version: "2.4.x",
+        store: "/Users/m/.claude/projects",
+        store_readable: true,
+        projects: 12,
+        last_activity: "2026-09-09T08:02:00Z",
+      },
+      {
+        harness: "cursor",
+        binary: null,
+        version: null,
+        contract_tested_version: "1.7.x",
+        store: "/Users/m/.cursor/chats",
+        store_readable: true,
+        projects: null,
+        last_activity: null,
+      },
+      {
+        harness: "codex",
+        binary: "/usr/local/bin/codex",
+        version: "0.9.2",
+        contract_tested_version: "1.2.x",
+        store: "/Users/m/.codex/sessions",
+        store_readable: false,
+        projects: null,
+        last_activity: null,
+      },
     ],
     index: { path: "~/.workledger/index.sqlite", bytes: 262_144, openSessions: 1 },
     config: { valid: false, problems: ["repos[0].path is not a directory"] },
@@ -143,17 +177,29 @@ describe("Health", () => {
     renderAt("#/health", stubSource({ health: async () => HEALTH }));
 
     expect((await statusOf("claude-code")).textContent).toBe("ok");
+    // No harness fault reads `broken` — `workledger doctor` grades them all warn-or-ok, and this
+    // page must not disagree with the terminal about the same machine.
     expect((await statusOf("cursor")).textContent).toBe("warn");
-    expect((await statusOf("codex")).textContent).toBe("broken");
+    expect((await statusOf("codex")).textContent).toBe("warn");
     expect((await statusOf("Index")).textContent).toBe("ok");
     expect((await statusOf("Config")).textContent).toBe("broken");
     expect((await statusOf("Last hook")).textContent).toBe("warn");
   });
 
-  it("shows the doctor detail: problems, open sessions and the last hook", async () => {
+  it("shows the doctor detail: the probe, its complaints, open sessions and the last hook", async () => {
     renderAt("#/health", stubSource({ health: async () => HEALTH }));
 
-    expect(await screen.findByText("hook script exits 1")).toBeDefined();
+    // The real probe fields, not a placeholder summary.
+    const claude = within(await screen.findByRole("listitem", { name: "claude-code" }));
+    expect(claude.getByText(/\/opt\/homebrew\/bin\/claude/)).toBeDefined();
+    expect(claude.getByText(/2\.4\.1 · contract tested against 2\.4\.x/)).toBeDefined();
+    expect(claude.getByText(/12 projects/)).toBeDefined();
+    expect(claude.getByText(/last activity 2026-09-09T08:02:00Z/)).toBeDefined();
+
+    expect(screen.getByText("`cursor` is not on PATH")).toBeDefined();
+    expect(screen.getByText("installed 0.9.2, contract tested against 1.2.x")).toBeDefined();
+    expect(screen.getByText("/Users/m/.codex/sessions is not readable")).toBeDefined();
+
     expect(screen.getByText("repos[0].path is not a directory")).toBeDefined();
     expect(screen.getByText(/1 open session/)).toBeDefined();
     expect(screen.getByText("no hook has fired yet")).toBeDefined();
