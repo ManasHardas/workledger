@@ -17,10 +17,31 @@ export { DEBOUNCE_MS, POLL_MS, startWatcher } from "./watcher.js";
 export type { WatchMode, Watcher, WatcherOptions } from "./watcher.js";
 export { resolvedNotes, toBacklogView, toSessionView } from "./views.js";
 export type { BacklogView, Line, NoteLine, NoteRef, RemainingLine, SessionView } from "./views.js";
-export { ApiError } from "./errors.js";
+export { ApiError, toApiError } from "./errors.js";
 export type { ErrorBody } from "./errors.js";
 export { KeyedMutex } from "./mutex.js";
 export { isOpError, opErrorDetails } from "./ops.js";
+export { JOB_POLL_MS, startJobWatcher } from "./job-watcher.js";
+export type { JobWatcher, JobWatcherOptions } from "./job-watcher.js";
+export type {
+  BackfillEstimate,
+  BackfillInput,
+  ExcerptSpan,
+  ExtractEstimate,
+  Job,
+  JobOps,
+  RepairInput,
+  ScanSummary,
+} from "./jobs.js";
+export {
+  buildExcerpt,
+  excerptCachePath,
+  readCachedExcerpt,
+  readSpan,
+  renderTurns,
+  writeCachedExcerpt,
+} from "./excerpt.js";
+export type { Excerpt, Turn } from "./excerpt.js";
 export type {
   BacklogOps,
   EditPatch,

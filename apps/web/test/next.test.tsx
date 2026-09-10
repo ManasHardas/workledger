@@ -113,6 +113,26 @@ function spySource(over: Partial<LedgerSource> = {}) {
     resolveNote: async () => {
       throw new Error("unused");
     },
+    // P3's job surface. `Next` never calls it, so every method says so rather than pretending.
+    listJobs: async () => [],
+    scan: async () => {
+      throw new Error("unused");
+    },
+    repair: async () => {
+      throw new Error("unused");
+    },
+    backfill: async () => {
+      throw new Error("unused");
+    },
+    cancelJob: async () => {
+      throw new Error("unused");
+    },
+    retryJob: async () => {
+      throw new Error("unused");
+    },
+    excerpt: async () => {
+      throw new Error("unused");
+    },
     subscribe: (handler) => {
       emit = handler;
       return () => {

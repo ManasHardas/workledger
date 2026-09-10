@@ -19,8 +19,23 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { BacklogOpError } from "../backlog-ops.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
+import { cancelJob, enqueueJob, listJobs, retryJob } from "../jobs/queue.js";
 import { findRepoRoot, isEnabled } from "../ledger-fs.js";
+import type { IndexDb } from "../index/db.js";
+import type { ExcerptSpan, Job, JobOps, ScanSummary } from "@workledger/server";
+
+/**
+ * How often `serve` runs the orphan sweep — docs/contracts/p3/cli.md §scan: "and every 5 minutes
+ * inside `serve`".
+ *
+ * The sweep is `stat`-only and budgeted at 200 ms for 500 open sessions
+ * (plans/feature-p3-data-flow.md §Budgets), so it costs nothing to keep running; what it buys is
+ * that a session whose harness died while the UI was open turns from a stale `open` row into a
+ * `crashed` one with a repair queued, without anybody typing a command.
+ */
+export const SCAN_INTERVAL_MS = 5 * 60_000;
 
 /** Options commander parses for `serve`. */
 export interface ServeOptions {
@@ -30,6 +45,8 @@ export interface ServeOptions {
   port?: number;
   /** `--no-open` sets this false; commander defaults it to true. */
   open?: boolean;
+  /** Orphan-sweep cadence in ms; the contract's 5 minutes by default. Tests pass a short one. */
+  scanIntervalMs?: number;
 }
 
 /** Everything the command touches outside itself, so a test can drive it without a browser. */
@@ -120,6 +137,171 @@ export function openBrowser(url: string, io: ServeIo, platform: string = process
   }
 }
 
+/**
+ * The index-backed half of the server, per `docs/contracts/p3/api.md`.
+ *
+ * This is the same injection `ops` is, for the same reason: `@workledger/server` must not import
+ * `better-sqlite3` (it is the package that deliberately reports the index by path and size rather
+ * than opening it), and it cannot import `packages/cli` at all without a cycle. So the server
+ * declares the shape (`JobOps`) and this function satisfies it — which makes a drift a `tsc`
+ * error here rather than a 500 at runtime.
+ *
+ * Each call opens and closes its own connection. A long-lived one would be cheaper, but it would
+ * also hold a SQLite handle across the whole life of a `serve` process while `workledger repair`
+ * and `backfill` write the same file from other processes; the connection-per-call keeps the
+ * `BEGIN IMMEDIATE` windows short and lets `openIndex` re-run migrations another process applied.
+ *
+ * `backfill` and `estimateExtract` are absent: they belong to the CLI modules of #56 and #54, and
+ * the server answers 501 for a route whose op it was not given rather than inventing an answer.
+ *
+ * @param startRepair what a queued resume repair hands off to. Injectable because the default
+ * spawns the harness, which a test must be able to decline without also declining the queueing
+ * this function is responsible for.
+ */
+export function jobOps(
+  io: ServeIo,
+  startRepair: (ulid: string) => void = (ulid) => void runQueuedRepair(ulid, io),
+): JobOps {
+  const home = io.env["WORKLEDGER_HOME"]?.trim();
+
+  async function withDb<T>(body: (db: IndexDb) => Promise<T> | T): Promise<T> {
+    const { openIndex } = await import("../index/db.js");
+    const db = openIndex(home ? { home } : {});
+    try {
+      return await body(db);
+    } finally {
+      db.close();
+    }
+  }
+
+  return {
+    listJobs: (repoRoot, status) =>
+      withDb((db) => {
+        const rows = listJobs(db, repoRoot) as Job[];
+        return status === undefined ? rows : rows.filter((job) => job.status === status);
+      }),
+
+    scan: (repoRoot) =>
+      withDb(async (db): Promise<ScanSummary> => {
+        const [{ runScan }, { newSessionId }] = await Promise.all([
+          import("./scan.js"),
+          import("@workledger/core/ids"),
+        ]);
+        const result = await runScan({ db, root: repoRoot, now: () => new Date(), newId: newSessionId });
+        return { orphaned: result.orphans.length, queued: result.queued };
+      }),
+
+    repair: (repoRoot, input) =>
+      withDb(async (db): Promise<Job> => {
+        const session = db.getSessionByUlid(input.session);
+        if (session === undefined || session.repo_path !== repoRoot) {
+          throw new BacklogOpError(`no session ${input.session} in this repo`, "not-found");
+        }
+        const { newSessionId } = await import("@workledger/core/ids");
+        // With consent, an extraction is its own kind of job: the resume path cannot produce the
+        // digest (that is why the caller reached for `--extract`), and #54's runner claims
+        // `extract` rows. Without it, this is the ordinary resume repair.
+        const kind = input.extract && input.consent ? "extract" : "repair";
+        const { job } = enqueueJob(db, {
+          kind,
+          sessionUlid: input.session,
+          repoPath: repoRoot,
+          newId: newSessionId,
+          now: new Date(),
+        });
+        // 202 means "queued", so the response is sent before the harness runs. The resume is
+        // started here and deliberately not awaited; its outcome lands on the job row, which the
+        // server's poller turns into `job.changed`.
+        if (kind === "repair") startRepair(input.session);
+        return job as Job;
+      }),
+
+    cancelJob: (repoRoot, id) =>
+      withDb((db) => {
+        const result = cancelJob(db, id, new Date());
+        if ("message" in result) throw asJobOpError(result.message, id);
+        return result as Job;
+      }),
+
+    retryJob: (repoRoot, id) =>
+      withDb((db) => {
+        const result = retryJob(db, id);
+        if ("message" in result) throw asJobOpError(result.message, id);
+        return result as Job;
+      }),
+
+    excerptSpan: (repoRoot, ulid, cp) =>
+      withDb((db): ExcerptSpan | undefined => {
+        const session = db.getSessionByUlid(ulid);
+        if (session === undefined || session.repo_path !== repoRoot) return undefined;
+        const path_ = session.transcript_path;
+        if (path_ === null || path_ === "") return undefined;
+
+        // `[offset(n-1), offset(n))` — data-flow §Excerpts. Checkpoint 1 starts at byte 0 because
+        // there is no checkpoint 0; a `cp` past the end of the list is not a checkpoint at all.
+        const checkpoints = db.listCheckpoints(ulid);
+        const end = checkpoints.find((row) => row.n === cp);
+        if (end === undefined) return undefined;
+        const start = checkpoints.find((row) => row.n === cp - 1);
+        return {
+          transcriptPath: path_,
+          from: start?.transcript_offset ?? 0,
+          to: end.transcript_offset,
+        };
+      }),
+  };
+}
+
+/**
+ * `queue.ts` reports a refused cancel/retry as a message rather than a throw. The server needs
+ * the class instead: an unknown id is the contract's 404, and a job in the wrong state is its 409.
+ */
+function asJobOpError(message: string, id: string): BacklogOpError {
+  return new BacklogOpError(message, message === `no job ${id}` ? "not-found" : "conflict");
+}
+
+/**
+ * Run the repair the route just queued, in the background.
+ *
+ * `runRepair` re-enqueues idempotently (`jobs_active_per_session` is unique while not done), so it
+ * claims the very row the route returned rather than adding a second one. Its own failures are
+ * already recorded on that row, which is the channel the UI is watching, so nothing is thrown out
+ * of here — an unhandled rejection would take the whole `serve` process down over one repair.
+ */
+async function runQueuedRepair(ulid: string, io: ServeIo): Promise<void> {
+  try {
+    const [{ runRepair }, { claudeCodeAdapter }, { newSessionId }, { openIndex }] = await Promise.all([
+      import("./repair.js"),
+      import("../adapters/claude-code.js"),
+      import("@workledger/core/ids"),
+      import("../index/db.js"),
+    ]);
+    const home = io.env["WORKLEDGER_HOME"]?.trim();
+    const db = openIndex(home ? { home } : {});
+    try {
+      const session = db.getSessionByUlid(ulid);
+      if (session === undefined) return;
+      await runRepair(
+        ulid,
+        { force: true },
+        {
+          db,
+          root: session.repo_path,
+          adapter: claudeCodeAdapter,
+          stdout: io.stderr,
+          stderr: io.stderr,
+          now: () => new Date(),
+          newId: newSessionId,
+        },
+      );
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    io.stderr(`serve: repair ${ulid} failed to start: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /** Resolve when the process is asked to stop: `SIGINT`, `SIGTERM`, or `io.signal`. */
 function untilStopped(io: ServeIo): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -166,9 +348,11 @@ export async function serveCommand(
   const dir = webDir();
   const built = hasWebBuild(dir);
   const home = io.env["WORKLEDGER_HOME"];
+  const jobs = jobOps(io);
   const app = createApp({
     repoRoot: root,
     ops,
+    jobs,
     cliVersion: VERSION,
     env: io.env,
     ...(home ? { home } : {}),
@@ -190,7 +374,19 @@ export async function serveCommand(
   if (!built) io.stdout("workledger serve: no built UI yet — serving a placeholder page");
   if (options.open !== false) (io.openUrl ?? ((target: string) => openBrowser(target, io)))(url);
 
+  // cli.md §scan: "and every 5 minutes inside `serve`". A sweep that throws — a locked index, a
+  // ledger deleted underneath the process — is reported and skipped, never fatal: the server is
+  // serving, and one missed sweep is caught by the next one.
+  const sweep = setInterval(() => {
+    void jobs.scan(root).catch((error: unknown) => {
+      io.stderr(`workledger serve: scan failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, options.scanIntervalMs ?? SCAN_INTERVAL_MS);
+  // A pending interval must not be what keeps the process alive; the listener already is.
+  sweep.unref?.();
+
   await untilStopped(io);
+  clearInterval(sweep);
   await server.close();
   app.close();
   return EXIT_OK;

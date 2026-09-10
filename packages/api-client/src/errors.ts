@@ -16,12 +16,22 @@ export class ApiClientError extends Error {
   readonly code: string;
   /** The HTTP status, absent when the failure happened before or instead of a response. */
   readonly status: number | undefined;
+  /**
+   * Whatever the error body carried beside `error`.
+   *
+   * P3's `consent-required` puts the extraction `estimate` next to the error (p3/api.md:
+   * "extract without consent → 409 `{ code: "consent-required", estimate }`"), and the whole
+   * point of that refusal is to put the number in front of the operator — so it has to survive
+   * the trip through the rejection rather than being discarded as an unknown field.
+   */
+  readonly detail: Record<string, unknown> | undefined;
 
-  constructor(code: string, message: string, status?: number) {
+  constructor(code: string, message: string, status?: number, detail?: Record<string, unknown>) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.status = status;
+    this.detail = detail;
   }
 }
 

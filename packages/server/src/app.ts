@@ -24,12 +24,16 @@ import { briefMaxTokens } from "./brief.js";
 import { defaultHome } from "./health.js";
 import { errorBody } from "./errors.js";
 import { eventRoutes } from "./routes/events.js";
+import { jobRoutes } from "./routes/jobs.js";
 import { ledgerId, ledgerPaths } from "./paths.js";
 import { readRoutes } from "./routes/read.js";
 import { staticHandler } from "./routes/static.js";
+import { startJobWatcher } from "./job-watcher.js";
 import { startWatcher } from "./watcher.js";
 import { writeRoutes } from "./routes/write.js";
 import type { BacklogOps } from "./ops.js";
+import type { JobOps } from "./jobs.js";
+import type { JobWatcher } from "./job-watcher.js";
 import type { HealthEnv } from "./health.js";
 import type { Watcher } from "./watcher.js";
 
@@ -44,6 +48,13 @@ export interface CreateAppOptions {
    * handed in by `workledger serve`.
    */
   ops: BacklogOps;
+  /**
+   * The index-backed job and excerpt operations of `docs/contracts/p3/api.md`, handed in the
+   * same way and for the same reason as `ops` (`./jobs.ts`). Without it the P3 routes are absent
+   * and `/api/jobs` is a 404 like any other unrouted path — a P2-only server, which is what a
+   * build that predates the injection is.
+   */
+  jobs?: JobOps;
   /** `~/.workledger` or wherever the index lives; only its path and size are read. */
   home?: string;
   /** The built `apps/web`; without it a non-`/api` path is a 404 rather than the app shell. */
@@ -62,6 +73,8 @@ export interface CreateAppOptions {
   pollMs?: number;
   /** SSE keep-alive interval; api.md's 15 s by default. */
   pingMs?: number;
+  /** Jobs-table poll interval behind `job.changed`; 2 s by default. */
+  jobPollMs?: number;
 }
 
 /** A listening server. */
@@ -79,6 +92,8 @@ export interface ServerApp {
   watcher: Watcher;
   /** The per-id write lock (data-flow §Writes), exposed so a test can observe it. */
   mutex: KeyedMutex;
+  /** The `job.changed` poller, or `undefined` when no `jobs` ops were injected. */
+  jobWatcher?: JobWatcher;
   /** Bind `127.0.0.1`. `port` defaults to 0 — a random high port (api.md preamble). */
   start(options?: { port?: number }): Promise<RunningServer>;
   /** Stop the watcher. Does not touch a server started by {@link ServerApp.start}. */
@@ -135,6 +150,22 @@ export function createApp(options: CreateAppOptions): ServerApp {
   app.route("/api", writeRoutes({ model, ops: options.ops, repoRoot, mutex }));
   app.route("/api", eventRoutes({ bus, ...(options.pingMs === undefined ? {} : { pingMs: options.pingMs }) }));
 
+  // The P3 routes exist only when their backend does; see `CreateAppOptions.jobs`.
+  const jobWatcher =
+    options.jobs === undefined
+      ? undefined
+      : startJobWatcher({
+          ops: options.jobs,
+          repoRoot,
+          bus,
+          pollMs: options.jobPollMs,
+          // A locked or half-migrated index must not take the stream down with it.
+          onError: () => {},
+        });
+  if (options.jobs !== undefined) {
+    app.route("/api", jobRoutes({ ops: options.jobs, repoRoot, home: health.home }));
+  }
+
   // Every unmatched `/api` path is a 404 in the contract's shape and must never fall through to
   // the static handler, which would answer it with the app shell.
   app.all("/api/*", (c) => c.json({ error: { code: "not_found", message: `no route ${new URL(c.req.url).pathname}` } }, 404));
@@ -163,6 +194,7 @@ export function createApp(options: CreateAppOptions): ServerApp {
     events: bus,
     watcher,
     mutex,
+    ...(jobWatcher === undefined ? {} : { jobWatcher }),
     async start(startOptions = {}): Promise<RunningServer> {
       const { serve } = await import("@hono/node-server");
       return await new Promise<RunningServer>((resolve, reject) => {
@@ -189,6 +221,7 @@ export function createApp(options: CreateAppOptions): ServerApp {
     },
     close(): void {
       watcher.close();
+      jobWatcher?.close();
     },
   };
 }

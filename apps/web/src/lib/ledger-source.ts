@@ -22,29 +22,40 @@ import {
 } from "./fixtures.js";
 
 import type {
+  BackfillEstimate,
   BacklogStatus,
   BacklogView,
+  Excerpt,
   Health,
+  Job,
   LedgerSource,
   NoteRef,
   NoteType,
   ParsedSession,
+  ScanSummary,
   SessionQuery,
 } from "@workledger/api-client";
 
 export type {
   Actor,
+  BackfillEstimate,
+  BackfillRequest,
   BacklogStatus,
   BacklogView,
   DoctorEntry,
   EditPatch,
+  Excerpt,
+  ExtractEstimate,
   Health,
+  Job,
   LedgerEvent,
   LedgerSource,
   NoteRef,
   NoteType,
   ParsedSession,
+  ScanSummary,
   SessionQuery,
+  Turn,
 } from "@workledger/api-client";
 
 /** The rejection every write takes on a source whose `capabilities.write` is false. */
@@ -124,6 +135,25 @@ class FixtureSource implements LedgerSource {
   rank = readOnly<BacklogView>;
   merge = readOnly<{ source: BacklogView; target: BacklogView }>;
   resolveNote = readOnly<ParsedSession>;
+
+  /**
+   * P3's job surface, degraded the way §14.2 requires of a source that is not a local server.
+   *
+   * There is no queue behind a fixture, so the list is empty rather than invented, and every
+   * mutation takes the same `read-only` rejection the backlog writes take. `excerpt` refuses for
+   * a second reason as well: `capabilities.provenance` is false here, and a view that asked
+   * anyway must get an error rather than a plausible-looking transcript that never existed.
+   */
+  async listJobs(): Promise<Job[]> {
+    return [];
+  }
+
+  scan = readOnly<ScanSummary>;
+  repair = readOnly<Job>;
+  backfill = readOnly<{ jobs: Job[]; estimate: BackfillEstimate }>;
+  cancelJob = readOnly<Job>;
+  retryJob = readOnly<Job>;
+  excerpt = readOnly<Excerpt>;
 
   subscribe(): () => void {
     return () => {};

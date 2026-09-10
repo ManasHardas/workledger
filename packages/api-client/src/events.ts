@@ -61,8 +61,17 @@ export interface SubscribeOptions {
   clearTimeout?: (handle: unknown) => void;
 }
 
-/** api.md §SSE names the events; `ping` is the keep-alive and carries nothing for the UI. */
-const EVENT_NAMES = ["session.changed", "backlog.changed", "notes.changed", "health.changed"];
+/**
+ * api.md §SSE names the events; `ping` is the keep-alive and carries nothing for the UI.
+ * `job.changed` is P3's addition (docs/contracts/p3/api.md).
+ */
+const EVENT_NAMES = [
+  "session.changed",
+  "backlog.changed",
+  "notes.changed",
+  "health.changed",
+  "job.changed",
+];
 
 /** Parse one frame into a `LedgerEvent`, or `undefined` if it is not one. */
 export function toLedgerEvent(name: string, data: string): LedgerEvent | undefined {
@@ -83,6 +92,13 @@ export function toLedgerEvent(name: string, data: string): LedgerEvent | undefin
   if (name === "backlog.changed") {
     const id = record["id"];
     return typeof id === "string" ? { type: "backlog.changed", id } : undefined;
+  }
+  if (name === "job.changed") {
+    const id = record["id"];
+    const status = record["status"];
+    return typeof id === "string" && typeof status === "string"
+      ? { type: "job.changed", id, status }
+      : undefined;
   }
   return name === "notes.changed" ? { type: "notes.changed" } : { type: "health.changed" };
 }

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { createApp } from "../src/app.js";
 import type { ServerApp } from "../src/app.js";
 import type { BacklogOps, ItemResult, MergeResult, OpContext, ResolveNoteResult } from "../src/ops.js";
+import type { ExcerptSpan, Job, JobOps, RepairInput, ScanSummary } from "../src/jobs.js";
 
 /** `<repo>/.workledger`, four directories up from this file. */
 export const DOGFOOD_LEDGER = fileURLToPath(new URL("../../../.workledger", import.meta.url));
@@ -131,4 +132,69 @@ export function appFor(repo: TempRepo, overrides: Partial<Parameters<typeof crea
     homeDir: repo.root,
     ...overrides,
   });
+}
+
+/**
+ * A stand-in for the index-backed ops `workledger serve` injects (`src/jobs.ts`).
+ *
+ * Same reasoning as {@link FakeOps}: this package cannot open `index.sqlite` — that is the whole
+ * point of the injection — so the tests here assert the half the server owns (route wiring, body
+ * validation, consent, the status each refusal maps to, the `job.changed` diff) against a job
+ * table held in memory. `estimateExtract` and `backfill` are settable so the 501 path of a build
+ * without them is reachable too.
+ */
+export class FakeJobOps implements JobOps {
+  readonly calls: OpCall[] = [];
+  /** The job table, in the order `listJobs` returns it. */
+  rows: Job[] = [];
+  /** Thrown by the next op call, if set. */
+  next: Error | undefined;
+  /** `undefined` — the shape of a build before #54 / #56 — unless a test sets one. */
+  estimateExtract: JobOps["estimateExtract"];
+  backfill: JobOps["backfill"];
+  /** What `excerptSpan` answers; `undefined` is "no such session or checkpoint". */
+  span: ExcerptSpan | undefined;
+
+  #record<T>(op: string, args: unknown[], value: T): T {
+    this.calls.push({ op, args });
+    if (this.next !== undefined) {
+      const error = this.next;
+      this.next = undefined;
+      throw error;
+    }
+    return value;
+  }
+
+  listJobs = async (repoRoot: string, status?: string): Promise<Job[]> =>
+    this.#record("listJobs", [repoRoot, status], this.rows);
+  scan = async (repoRoot: string): Promise<ScanSummary> =>
+    this.#record("scan", [repoRoot], { orphaned: 2, queued: 1 });
+  repair = async (repoRoot: string, input: RepairInput): Promise<Job> =>
+    this.#record("repair", [repoRoot, input], fakeJob({ kind: input.extract ? "extract" : "repair" }));
+  cancelJob = async (repoRoot: string, id: string): Promise<Job> =>
+    this.#record("cancelJob", [repoRoot, id], fakeJob({ id, status: "cancelled" }));
+  retryJob = async (repoRoot: string, id: string): Promise<Job> =>
+    this.#record("retryJob", [repoRoot, id], fakeJob({ id, status: "queued" }));
+  excerptSpan = async (repoRoot: string, ulid: string, cp: number): Promise<ExcerptSpan | undefined> =>
+    this.#record("excerptSpan", [repoRoot, ulid, cp], this.span);
+}
+
+/** One `jobs` row with every column filled, so a test only names what it cares about. */
+export function fakeJob(over: Partial<Job> = {}): Job {
+  return {
+    id: "01JQ8ZK4T00000000000000JOB",
+    kind: "repair",
+    session_ulid: "01JQ8ZK4T0000000000000000A",
+    repo_path: "/tmp/repo",
+    status: "queued",
+    attempts: 0,
+    created_at: "2026-09-09T09:00:00.000Z",
+    started_at: null,
+    finished_at: null,
+    heartbeat_at: null,
+    error: null,
+    cost_estimate_usd: null,
+    log_path: null,
+    ...over,
+  };
 }

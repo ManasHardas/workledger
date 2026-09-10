@@ -83,13 +83,26 @@ function readErrorBody(body: unknown): ErrorBody["error"] | undefined {
  */
 export async function toApiError(url: string, response: HttpResponse): Promise<ApiClientError> {
   let parsed: ErrorBody["error"] | undefined;
+  let body: unknown;
   try {
-    parsed = readErrorBody(await response.json());
+    body = await response.json();
+    parsed = readErrorBody(body);
   } catch {
     parsed = undefined;
   }
   if (parsed !== undefined) {
-    return new ApiClientError(parsed.code, parsed.message, response.status);
+    // Everything but `error` is kept as `detail`; P3's `consent-required` carries its `estimate`
+    // there, and a future field arrives at the caller instead of being dropped in transit.
+    const rest: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (key !== "error") rest[key] = value;
+    }
+    return new ApiClientError(
+      parsed.code,
+      parsed.message,
+      response.status,
+      Object.keys(rest).length === 0 ? undefined : rest,
+    );
   }
   return new ApiClientError(
     `http-${response.status}`,

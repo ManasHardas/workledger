@@ -11,15 +11,20 @@ import type { EventSourceCtor } from "./events.js";
 import type { FetchLike } from "./http.js";
 import type {
   Actor,
+  BackfillEstimate,
+  BackfillRequest,
   BacklogStatus,
   BacklogView,
   EditPatch,
+  Excerpt,
   Health,
+  Job,
   LedgerEvent,
   LedgerSource,
   NoteRef,
   NoteType,
   ParsedSession,
+  ScanSummary,
   SourceCapabilities,
 } from "./types.js";
 
@@ -47,11 +52,13 @@ function commaList(values: readonly string[] | undefined): string | undefined {
 
 export class LocalServerSource implements LedgerSource {
   /**
-   * The local server owns the ledger files, so it can write and it watches. `provenance` is false
-   * because nothing on this wire carries a signature or a transcript pointer — that arrives with
-   * the P6 card sources, and a view must not light up a provenance affordance before then.
+   * The local server owns the ledger files, so it can write and it watches. `provenance` became
+   * true in P3 (docs/contracts/p3/api.md): `GET /api/sessions/:ulid/excerpt` hands back the
+   * transcript turns behind a checkpoint, which is the affordance the flag gates — a view may now
+   * offer "show me what this came from" against a local server. It stays false for a source that
+   * cannot reach the machine the transcript is on.
    */
-  readonly capabilities: SourceCapabilities = { write: true, live: true, provenance: false };
+  readonly capabilities: SourceCapabilities = { write: true, live: true, provenance: true };
 
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
@@ -193,6 +200,36 @@ export class LocalServerSource implements LedgerSource {
     return this.#write("resolveNote", () =>
       this.#post<ParsedSession>("/api/notes/resolve", { ...ref, decision }),
     );
+  }
+
+  listJobs(status?: string): Promise<Job[]> {
+    return this.#get<Job[]>(`/api/jobs${queryString({ status })}`);
+  }
+
+  scan(): Promise<ScanSummary> {
+    return this.#write("scan", () => this.#post<ScanSummary>("/api/jobs/scan"));
+  }
+
+  repair(input: { session: string; extract?: boolean; consent?: boolean }): Promise<Job> {
+    return this.#write("repair", () => this.#post<Job>("/api/jobs/repair", input));
+  }
+
+  backfill(input: BackfillRequest): Promise<{ jobs: Job[]; estimate: BackfillEstimate }> {
+    return this.#write("backfill", () =>
+      this.#post<{ jobs: Job[]; estimate: BackfillEstimate }>("/api/jobs/backfill", input),
+    );
+  }
+
+  cancelJob(id: string): Promise<Job> {
+    return this.#write("cancelJob", () => this.#post<Job>(`/api/jobs/${encodeURIComponent(id)}/cancel`));
+  }
+
+  retryJob(id: string): Promise<Job> {
+    return this.#write("retryJob", () => this.#post<Job>(`/api/jobs/${encodeURIComponent(id)}/retry`));
+  }
+
+  excerpt(ulid: string, cp: number): Promise<Excerpt> {
+    return this.#get<Excerpt>(`/api/sessions/${encodeURIComponent(ulid)}/excerpt${queryString({ cp })}`);
   }
 
   subscribe(handler: (event: LedgerEvent) => void): () => void {

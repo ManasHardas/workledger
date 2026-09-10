@@ -115,12 +115,75 @@ export interface Health {
   lastHookAt: string | null;
 }
 
-/** The four SSE events of api.md §SSE, in the shape the UI subscribes to. */
+/** The SSE events of api.md §SSE, in the shape the UI subscribes to. */
 export type LedgerEvent =
   | { type: "session.changed"; ulid: string }
   | { type: "backlog.changed"; id: string }
   | { type: "notes.changed" }
-  | { type: "health.changed" };
+  | { type: "health.changed" }
+  /** docs/contracts/p3/api.md: `job.changed { id, status }`. */
+  | { type: "job.changed"; id: string; status: string };
+
+/** A `jobs` row on the wire — docs/contracts/p3/cli.md §Jobs, unchanged. */
+export interface Job {
+  id: string;
+  kind: string;
+  session_ulid: string;
+  repo_path: string;
+  status: string;
+  attempts: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  heartbeat_at: string | null;
+  error: string | null;
+  cost_estimate_usd: number | null;
+  log_path: string | null;
+}
+
+/** `POST /api/jobs/scan`. */
+export interface ScanSummary {
+  orphaned: number;
+  queued: number;
+}
+
+/** What extracting one session would cost (cli.md §repair step 4). */
+export interface ExtractEstimate {
+  bytes: number;
+  model: string;
+  usd: number;
+}
+
+/** What backfilling would cost (cli.md §backfill step 2). */
+export interface BackfillEstimate {
+  count: number;
+  bytes: number;
+  oldest: string | null;
+  seconds: number;
+}
+
+/** `POST /api/jobs/backfill` body. `consent: false` is the dry estimate. */
+export interface BackfillRequest {
+  since?: string;
+  concurrency?: number;
+  extractFallback?: boolean;
+  consent: boolean;
+}
+
+/** One rendered transcript turn. Tool inputs and outputs are counted, never returned. */
+export interface Turn {
+  role: "user" | "assistant";
+  text: string;
+  tools: number;
+}
+
+/** `GET /api/sessions/:ulid/excerpt?cp=<n>`. */
+export interface Excerpt {
+  cp: number;
+  /** `[offset(n-1), offset(n))` — the transcript byte range this rendering came from. */
+  offset: [number, number];
+  turns: Turn[];
+}
 
 /** `GET /api/sessions` query. */
 export interface SessionQuery {
@@ -177,6 +240,21 @@ export interface LedgerSource {
     ref: { session: string; cp: number; index: number },
     decision: string,
   ): Promise<ParsedSession>;
+  // P3 (docs/contracts/p3/api.md). A source whose server predates P3 answers these with a 404,
+  // which surfaces as the contract's `ApiClientError` rather than as a silent empty list.
+  listJobs(status?: string): Promise<Job[]>;
+  scan(): Promise<ScanSummary>;
+  /**
+   * Queue a repair. `extract` without `consent` rejects with `code: "consent-required"`, and the
+   * rejection carries the `estimate` the operator has to see before agreeing.
+   */
+  repair(input: { session: string; extract?: boolean; consent?: boolean }): Promise<Job>;
+  /** `consent: false` queues nothing and returns the estimate with an empty `jobs` list. */
+  backfill(input: BackfillRequest): Promise<{ jobs: Job[]; estimate: BackfillEstimate }>;
+  cancelJob(id: string): Promise<Job>;
+  retryJob(id: string): Promise<Job>;
+  /** Rejects with `code: "transcript_missing"` when the transcript is gone from this machine. */
+  excerpt(ulid: string, cp: number): Promise<Excerpt>;
   // live: no-op unsubscribe when capabilities.live is false
   subscribe(handler: (event: LedgerEvent) => void): () => void;
 }

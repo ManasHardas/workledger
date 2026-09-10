@@ -39,6 +39,14 @@ function stubSource(overrides: Partial<LedgerSource> = {}): LedgerSource {
     rank: (id, rank) => fixture.rank(id, rank),
     merge: (id, into) => fixture.merge(id, into),
     resolveNote: (ref, decision) => fixture.resolveNote(ref, decision),
+    // P3's job surface, delegated like the rest; no view under test reaches for it yet.
+    listJobs: (status) => fixture.listJobs(status),
+    scan: () => fixture.scan(),
+    repair: (input) => fixture.repair(input),
+    backfill: (input) => fixture.backfill(input),
+    cancelJob: (id) => fixture.cancelJob(id),
+    retryJob: (id) => fixture.retryJob(id),
+    excerpt: (ulid, cp) => fixture.excerpt(ulid, cp),
     subscribe: () => () => {},
     ...overrides,
   };
