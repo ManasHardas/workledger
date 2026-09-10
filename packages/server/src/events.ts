@@ -1,16 +1,20 @@
 /**
  * The SSE event bus (api.md §SSE). Five event names, each with the payload the contract names,
  * fanned out to every open `/api/events` stream.
+ *
+ * Every payload carries `repo` — docs/contracts/p8/daemon-and-api.md §Multi-repo endpoints,
+ * "SSE events gain `repo: <id>`; a client filters" — because one stream now serves every repo
+ * on the machine and a per-repo view has to know which ledger an invalidation belongs to.
  */
 
 /** The events `/api/events` emits, plus the keep-alive. */
 export type LedgerEvent =
-  | { event: "session.changed"; data: { ulid: string } }
-  | { event: "backlog.changed"; data: { id: string } }
-  | { event: "notes.changed"; data: Record<string, never> }
-  | { event: "health.changed"; data: Record<string, never> }
+  | { event: "session.changed"; data: { ulid: string; repo: string } }
+  | { event: "backlog.changed"; data: { id: string; repo: string } }
+  | { event: "notes.changed"; data: { repo: string } }
+  | { event: "health.changed"; data: { repo: string } }
   /** docs/contracts/p3/api.md: "SSE `job.changed { id, status }` added to `/api/events`". */
-  | { event: "job.changed"; data: { id: string; status: string } };
+  | { event: "job.changed"; data: { id: string; status: string; repo: string } };
 
 /** A subscriber. Returning is enough; the bus never awaits a listener. */
 export type Listener = (event: LedgerEvent) => void;

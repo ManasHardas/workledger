@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appFor, seedRepo } from "./helpers.js";
 import { startWatcher } from "../src/watcher.js";
 import { ledgerPaths } from "../src/paths.js";
+import { repoId } from "../src/repos.js";
 import type { TempRepo } from "./helpers.js";
 import type { ServerApp, RunningServer } from "../src/app.js";
 
@@ -102,7 +103,8 @@ describe("GET /api/events", () => {
 
     const change = frames.find(matches);
     expect(change, `frames seen: ${JSON.stringify(frames)}`).toBeDefined();
-    expect(JSON.parse(change!.data)).toEqual({ id });
+    // P8: every event names its repo, so one stream can carry the whole machine.
+    expect(JSON.parse(change!.data)).toEqual({ id, repo: repoId(repo.root) });
     expect(elapsed).toBeLessThan(2000);
     // The read model was invalidated before the event went out, so the GET already sees it.
     const item = await server.app.request(`/api/backlog/${id}`);

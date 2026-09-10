@@ -10,6 +10,7 @@
  * Only transitions are emitted. A poll that finds the same statuses emits nothing, which is what
  * keeps an idle server's stream carrying nothing but the 15 s ping.
  */
+import { repoId as hashRepoId } from "./repos.js";
 import type { EventBus } from "./events.js";
 import type { Job, JobOps } from "./jobs.js";
 
@@ -19,6 +20,8 @@ export const JOB_POLL_MS = 2000;
 export interface JobWatcherOptions {
   ops: JobOps;
   repoRoot: string;
+  /** The id stamped on every `job.changed` (P8 §Multi-repo endpoints); derived from `repoRoot` by default. */
+  repoId?: string | undefined;
   bus: EventBus;
   pollMs?: number | undefined;
   /**
@@ -45,6 +48,7 @@ export interface JobWatcher {
  */
 export function startJobWatcher(options: JobWatcherOptions): JobWatcher {
   const pollMs = options.pollMs ?? JOB_POLL_MS;
+  const repo = options.repoId ?? hashRepoId(options.repoRoot);
   const seen = new Map<string, string>();
   let closed = false;
   // Polls never overlap: a slow index read must not queue a second one behind it.
@@ -66,7 +70,7 @@ export function startJobWatcher(options: JobWatcherOptions): JobWatcher {
     for (const job of jobs) {
       if (seen.get(job.id) === job.status) continue;
       seen.set(job.id, job.status);
-      options.bus.emit({ event: "job.changed", data: { id: job.id, status: job.status } });
+      options.bus.emit({ event: "job.changed", data: { id: job.id, status: job.status, repo } });
     }
   }
 
