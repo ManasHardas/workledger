@@ -21,7 +21,7 @@
 **Next required activities (in order):**
 1. ⏳ P2 Wave 1: server + api-client + backlog-ops (Backend, parallel with the Frontend scaffold), then the web views, then `serve` packaging (Infra).
 2. ⏳ P2 Wave 2 (one QA e2e over `serve`), Wave 3 tag `p2-shipped`.
-3. ⏳ P3 (repair, backfill), P4 (Cursor, Codex), P5 (team), P6 (Dome card), P7 (design).
+3. ⏳ P3 finish (#54 #56 #57), P4 (#59), P5 (#63 #64), then P7 when Figma inputs exist. P6 deferred by the operator.
 
 **Operating mode:** ACTIVE, Clause #12 lean (one reviewer per PR, one fix-cycle, merge on green).
 

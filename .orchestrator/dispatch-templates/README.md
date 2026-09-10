@@ -64,3 +64,7 @@ Implement issue **#<N>** — `<issue title>`. Read full spec via `gh issue view 
 ## Clause #12 — Lean mode (PERMANENT)
 
 `clause-12-lean-mode.md`. Operator directive, 2026-09-09: one reviewer per PR by default, one fix-cycle then merge or split, reviews under 150 words and Blockers-only, five-line issues, builder reports under 100 words, no side quests, no new process artifacts, merge on green, paperwork batched at session close, direct commits for amendments and chore-closes. Paste its body into every dispatch brief.
+
+## Clause #13 — Prototype mode (PERMANENT)
+
+`clause-13-prototype-mode.md`. Operator directive, 2026-09-09: the other gear. One agent per sub-phase end to end, no review round, the orchestrator verifies by running the product, contracts still freeze first, tests still land with the code. Never on a credential surface. Use it for a first working version to react to; use Lean or Full to harden.

@@ -12,7 +12,7 @@ this framework); `plans/velocity.json` replaces them as data arrives.
 | **P3** | Recovery and backfill | Orphan scan, `repair` by headless resume, `backfill` with the lookback selector, extraction fallback with consent and cost display, Jobs view | 2–3 | `p3-shipped` |
 | **P4** | More harnesses | Cursor adapter (`followup_message`, `additional_context`, `user_email`); Codex adapter after day-one verification of its stop hook | 2–3 | `p4-shipped` |
 | **P5** | Team | `auto_commit` option, teammate onboarding path, private sessions and private paths, `identities.yaml`, `doctor` completeness | 2 | `p5-shipped` |
-| **P6** | Dome card | `CardFSSource`, `publish --target cardfs`, `pull --from cardfs`, `apps/card` with the SDK bootstrap, `dome` theme, subtree mirror to `DomeHQ/card-workledger` | 3–4 | `p6-shipped` |
+| **P6** (deferred 2026-09-09 by the operator; spec and contracts on main) | Dome card | `CardFSSource`, `publish --target cardfs`, `pull --from cardfs`, `apps/card` with the SDK bootstrap, `dome` theme, subtree mirror to `DomeHQ/card-workledger` | 3–4 | `p6-shipped` |
 | **P7** | Design pass | Figma variables into `packages/tokens`, Code Connect files, PWA and mobile polish | 2–3 | `p7-shipped` |
 
 Dependencies: P2 needs P1's ledger and CLI. P3 needs P2's server for jobs. P4 is independent of P3.
