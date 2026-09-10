@@ -38,12 +38,19 @@ export default tseslint.config(
     },
   },
   {
-    // `packages/tokens/scripts/*.mjs` is plain Node ESM like `scripts/*.mjs` above, and gets the
-    // same treatment: declare the globals it uses rather than switching `no-undef` off.
-    files: ["packages/tokens/scripts/**/*.mjs"],
+    // `packages/tokens/scripts/*.mjs` and `apps/web/scripts/*.mjs` are plain Node ESM like
+    // `scripts/*.mjs` above, and get the same treatment: declare the globals they use rather than
+    // switching `no-undef` off.
+    files: ["packages/tokens/scripts/**/*.mjs", "apps/web/scripts/**/*.mjs"],
     languageOptions: {
       sourceType: "module",
-      globals: { URL: "readonly", console: "readonly" },
+      globals: {
+        URL: "readonly",
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
     },
   },
   {
