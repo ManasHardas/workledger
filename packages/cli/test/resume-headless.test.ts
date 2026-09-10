@@ -67,12 +67,22 @@ describe("resumeHeadless", () => {
       "record a checkpoint",
       "--resume",
       "hs-1",
-      "--permission-mode",
-      "acceptEdits",
       "--allowedTools",
       "Bash(workledger checkpoint*)",
       "",
     ]);
+  });
+
+  it("passes no --permission-mode at all", async () => {
+    // `acceptEdits` auto-approves the edit tools *regardless of* `--allowedTools`, which would
+    // let an unattended repair write the repo it was only asked to describe. Headless `-p`
+    // denies anything outside `--allowedTools` on its own.
+    fakeClaude('printf "%s\\n" "$@" > argv.txt');
+
+    await resume("hs-1", options());
+
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(path.join(dir, "argv.txt"), "utf8")).not.toContain("--permission-mode");
   });
 
   it("reports a non-zero exit without throwing", async () => {
@@ -90,6 +100,34 @@ describe("resumeHeadless", () => {
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBeNull();
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("kills the whole process group, not just the harness", async () => {
+    // A coding agent is a process that spawns processes. This stub is the shape of the real
+    // failure: `claude` exits the moment its tool is running in the background, and the tool
+    // outlives it holding the stdio pipes it inherited. Signalling one pid returned at T+30 s.
+    fakeClaude(
+      [
+        "sh -c 'sleep 30' &",
+        "echo $! > grandchild.pid",
+        // The harness itself stays alive, as a real one would while its tool works.
+        "sleep 30",
+      ].join("\n"),
+    );
+
+    const started = Date.now();
+    const result = await resume("hs-1", options({ timeoutMs: 2000 }));
+    const elapsed = Date.now() - started;
+
+    expect(result.timedOut).toBe(true);
+    expect(elapsed, `returned after ${elapsed} ms`).toBeLessThan(4000);
+
+    const { readFileSync } = await import("node:fs");
+    const pid = Number(readFileSync(path.join(dir, "grandchild.pid"), "utf8").trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    // Signal 0 tests for existence; the grandchild must be gone with the group.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(() => process.kill(pid, 0), `pid ${pid} survived the kill`).toThrow(/ESRCH/);
   });
 
   it("reports a harness that is not installed as a spawn error", async () => {

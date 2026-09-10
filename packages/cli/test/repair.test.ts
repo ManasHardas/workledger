@@ -7,7 +7,7 @@
  * `trigger: repair` stamp is the one thing this issue exists to produce, and only the whole path
  * from `pending_trigger` through `stampTrigger` to the rendered frontmatter can establish it.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -15,8 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { parseSessionText } from "@workledger/core";
 
+import process from "node:process";
+
 import { EXIT_JOB_FAILED, EXIT_OK, EXIT_USAGE } from "../src/exit-codes.js";
-import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
+import { CLAUDE_BIN_ENV, claudeCodeAdapter } from "../src/adapters/claude-code.js";
 import { openIndex } from "../src/index/db.js";
 import { getJob, listJobs } from "../src/jobs/queue.js";
 import { runCheckpoint, stdinFrom } from "../src/commands/checkpoint.js";
@@ -152,6 +154,7 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
+  delete process.env[CLAUDE_BIN_ENV];
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -309,5 +312,41 @@ describe("runRepair — eligibility and --extract", () => {
     );
     expect(err).toContain("repair: extraction arrives with #54");
     expect(listJobs(db, repo)).toEqual([]);
+  });
+});
+
+describe("runRepair — the real adapter against a stub harness", () => {
+  /** Install a fake `claude`; the real adapter finds it through the env var. */
+  function fakeClaude(body: string): void {
+    const bin = path.join(dir, "claude");
+    writeFileSync(bin, `#!/bin/sh\n${body}\n`, "utf8");
+    chmodSync(bin, 0o755);
+    process.env[CLAUDE_BIN_ENV] = bin;
+  }
+
+  it("returns on the timeout even when the harness left a grandchild running", async () => {
+    crashedSession();
+    // The shape of the real failure: `claude` backgrounds a tool and both outlive the timeout,
+    // holding the stdio pipes they inherited. Killing one pid returned at T+30 s, not T+2 s.
+    fakeClaude(["sh -c 'sleep 30' &", "echo $! > grandchild.pid", "sleep 30"].join("\n"));
+
+    const started = Date.now();
+    const code = await runRepair(ULID, { timeout: 2 }, repairIo(claudeCodeAdapter));
+    const elapsed = Date.now() - started;
+
+    expect(code).toBe(EXIT_JOB_FAILED);
+    expect(elapsed, `repair returned after ${elapsed} ms`).toBeLessThan(5000);
+    expect(listJobs(db, repo)[0]).toMatchObject({ status: "failed" });
+    expect(listJobs(db, repo)[0]?.error).toContain("killed after 2s");
+
+    // Written into the child's cwd, which `repair` pins to the repo — asserting that too.
+    const pid = Number(readFileSync(path.join(repo, "grandchild.pid"), "utf8").trim());
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Signal 0 only tests for existence. The grandchild must have gone with the group.
+    expect(() => process.kill(pid, 0), `pid ${pid} survived the kill`).toThrow(/ESRCH/);
+
+    // And the session is untouched: a repair that killed its harness repaired nothing.
+    expect(frontmatter().frontmatter.status).toBe("crashed");
+    expect(db.getSessionByUlid(ULID)?.pending_trigger).toBeNull();
   });
 });
