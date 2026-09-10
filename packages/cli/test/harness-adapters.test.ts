@@ -385,7 +385,7 @@ describe("codexAdapter.resumeHeadless", () => {
     typeof codexAdapter.resumeHeadless
   >;
 
-  it("spawns `codex exec resume --sandbox workspace-write <id> <instruction>`", async () => {
+  it("spawns `codex exec --sandbox workspace-write resume <id> <instruction>`", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wl-codex-resume-"));
     const bin = path.join(dir, "codex");
     writeFileSync(bin, '#!/bin/sh\nprintf "%s\\n" "$@" > argv.txt\necho done\n', "utf8");
@@ -402,9 +402,9 @@ describe("codexAdapter.resumeHeadless", () => {
     expect(result).toMatchObject({ exitCode: 0, timedOut: false });
     expect(readFileSync(path.join(dir, "argv.txt"), "utf8").split("\n").slice(0, 6)).toEqual([
       "exec",
-      "resume",
       "--sandbox",
       CODEX_SANDBOX,
+      "resume",
       "session-42",
       "record a checkpoint",
     ]);

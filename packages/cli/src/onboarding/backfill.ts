@@ -7,14 +7,23 @@
  * a transcript the way `repair --extract` does, `createBackfilledSession` and `enqueueJob` open
  * the rows the way `workledger backfill` does, and `drainBackfillJobs` runs them with the same
  * handler. What is new is the shape — several repos at once, a `90d` window, a method rather than
- * a fallback flag — and the `source: "onboarding"` tag that lets `status` report the wizard's own
- * jobs and nothing else.
+ * a fallback flag, Codex sessions beside Claude Code's — and the `source: "onboarding"` tag that
+ * lets `status` report the wizard's own jobs and nothing else.
+ *
+ * Codex sessions come from `enumerateCodexStore` and are planned by the same `planBackfill`,
+ * against the `codex` harness's rows. A resume queues the same `repair` job for them: the row's
+ * `harness` column is what `resumeSession` picks its adapter by, so the drain runs
+ * `codex exec resume` for those rows and `claude --resume` for the rest without this file
+ * choosing. Extraction is different — the P3 extractor parses Claude Code transcripts only — so
+ * under method `extract` Codex sessions are not counted, not priced and not queued; the plan
+ * reports them as `unsupported.codex` and the run leaves them for a later `resume`.
  *
  * Two refusals have their own wire status (`../../server/src/onboarding.ts`): `run` without
  * `consent: true`, and `run` with method `extract` when `ANTHROPIC_API_KEY` is absent. Both are
  * raised *before* a row is written.
  */
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
+import { codexAdapter } from "../adapters/codex.js";
 import { BacklogOpError } from "../backlog-ops.js";
 import {
   createBackfilledSession,
@@ -29,6 +38,8 @@ import { enqueueJob } from "../jobs/queue.js";
 import { isEnabled } from "../ledger-fs.js";
 import { withIndex } from "./io.js";
 import { OnboardingRefusalError, assertRepoPaths } from "./repo-path.js";
+import { enumerateCodexStore } from "./stores.js";
+import type { HarnessAdapter } from "../adapters/types.js";
 import type { BackfillIo, BackfillPlan } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
 import type { OnboardingIo } from "./io.js";
@@ -56,9 +67,12 @@ function apiKey(io: OnboardingIo): string | undefined {
 /** One repo's plan, priced with its own `config.yaml`. */
 interface RepoPlan {
   root: string;
+  /** The Claude Code store's plan. */
   plan: BackfillPlan;
+  /** The Codex store's plan. Resume only: its `fresh` never reaches the extraction path. */
+  codex: BackfillPlan;
   concurrency: number;
-  /** The extraction cost of every fresh session, summed. */
+  /** The extraction cost of every fresh Claude Code session, summed. */
   tokens: number;
   usd: number;
 }
@@ -68,14 +82,15 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
   const plans: RepoPlan[] = [];
   for (const root of assertRepoPaths(input.repos)) {
     const config = loadConfig(root);
-    const plan = planBackfill(enumerateStore(io.homeDir, root), {
+    const options = {
       db,
-      harness: claudeCodeAdapter.harness,
       since: input.since,
       now: io.now(),
       concurrency: config.backfill.concurrency,
       secondsPerSession: config.backfill.seconds_per_session,
-    });
+    };
+    const plan = planBackfill(enumerateStore(io.homeDir, root), { ...options, harness: claudeCodeAdapter.harness });
+    const codex = planBackfill(enumerateCodexStore(io.homeDir, root), { ...options, harness: codexAdapter.harness });
     let tokens = 0;
     let usd = 0;
     for (const session of plan.fresh) {
@@ -85,9 +100,15 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
       tokens += estimate.inputTokens + estimate.outputTokens;
       usd += estimate.usd;
     }
-    plans.push({ root, plan, concurrency: config.backfill.concurrency, tokens, usd });
+    plans.push({ root, plan, codex, concurrency: config.backfill.concurrency, tokens, usd });
   }
   return plans;
+}
+
+/** `unsupported` for the extraction method: the fresh Codex sessions it cannot digest, if any. */
+function unsupportedFor(plans: readonly RepoPlan[]): Pick<PlanResult, "unsupported"> {
+  const codex = plans.reduce((sum, entry) => sum + entry.codex.fresh.length, 0);
+  return codex === 0 ? {} : { unsupported: { codex } };
 }
 
 /** The plan step: how many sessions, and what digesting them costs by the chosen method. */
@@ -96,21 +117,26 @@ export async function backfillPlan(input: PlanInput, io: OnboardingIo): Promise<
   if (input.since === "none") return { sessions: 0, estimate: null };
   return await withIndex(io, async (db) => {
     const plans = await planRepos(input, io, db);
-    const sessions = plans.reduce((sum, entry) => sum + entry.plan.fresh.length, 0);
+    const sessions = plans.reduce((sum, entry) => sum + entry.plan.fresh.length + entry.codex.fresh.length, 0);
     if (input.method === "none") return { sessions, estimate: null };
     if (input.method === "extract") {
       return {
-        sessions,
+        sessions: plans.reduce((sum, entry) => sum + entry.plan.fresh.length, 0),
         estimate: {
           tokens: plans.reduce((sum, entry) => sum + entry.tokens, 0),
           usd: plans.reduce((sum, entry) => sum + entry.usd, 0),
           needsApiKey: apiKey(io) === undefined,
         },
+        ...unsupportedFor(plans),
       };
     }
     return {
       sessions,
-      estimate: { seconds: plans.reduce((sum, entry) => sum + entry.plan.estimateSeconds, 0) },
+      // Each harness's estimate is its own ceiling at the repo's concurrency; the sum can be at
+      // most one session's worth above a single reckoning of both, and never below it.
+      estimate: {
+        seconds: plans.reduce((sum, entry) => sum + entry.plan.estimateSeconds + entry.codex.estimateSeconds, 0),
+      },
     };
   });
 }
@@ -121,13 +147,24 @@ export interface QueuedBackfill extends RunResult {
   repos: string[];
 }
 
-/** The `BackfillIo` for one repo, over a shared connection. */
-async function backfillIo(db: IndexDb, root: string, io: OnboardingIo): Promise<BackfillIo> {
+/**
+ * The `BackfillIo` for one repo, over a shared connection.
+ *
+ * `adapter` names the harness a session row is opened under (`createBackfilledSession` writes
+ * its `harness`); the drain does not read it, because `resumeSession` picks the adapter by the
+ * row.
+ */
+async function backfillIo(
+  db: IndexDb,
+  root: string,
+  io: OnboardingIo,
+  adapter: HarnessAdapter = claudeCodeAdapter,
+): Promise<BackfillIo> {
   const ids = await import("@workledger/core/ids");
   return {
     db,
     root,
-    adapter: claudeCodeAdapter,
+    adapter,
     homeDir: io.homeDir,
     stdout: io.stderr,
     stderr: io.stderr,
@@ -146,7 +183,8 @@ async function backfillIo(db: IndexDb, root: string, io: OnboardingIo): Promise<
  * draining to {@link drainOnboardingBackfill}, which `serve` starts in the background and
  * `workledger onboard` awaits. Method `resume` queues `repair` jobs, the P3 kind a resume is;
  * method `extract` queues `extract` jobs, so no harness is ever resumed for a session the operator
- * chose not to resume.
+ * chose not to resume — and, because the extractor cannot read a Codex transcript, queues nothing
+ * for a Codex session (the plan reported it as `unsupported`).
  */
 export async function queueOnboardingBackfill(input: RunInput, io: OnboardingIo): Promise<QueuedBackfill> {
   assertRepoPaths(input.repos);
@@ -173,19 +211,23 @@ export async function queueOnboardingBackfill(input: RunInput, io: OnboardingIo)
     const jobs: Job[] = [];
     const repos: string[] = [];
     for (const entry of await planRepos(input, io, db)) {
-      if (entry.plan.fresh.length === 0) continue;
-      const bio = await backfillIo(db, entry.root, io);
-      for (const session of entry.plan.fresh) {
-        const ulid = await createBackfilledSession(session, bio);
-        const { job } = enqueueJob(db, {
-          kind: input.method === "extract" ? "extract" : "repair",
-          sessionUlid: ulid,
-          repoPath: entry.root,
-          newId: bio.newId,
-          now: io.now(),
-          source: ONBOARDING_SOURCE,
-        });
-        jobs.push(job as Job);
+      const queue: Array<[BackfillPlan, HarnessAdapter]> = [[entry.plan, claudeCodeAdapter]];
+      if (input.method === "resume") queue.push([entry.codex, codexAdapter]);
+      if (queue.every(([plan]) => plan.fresh.length === 0)) continue;
+      for (const [plan, adapter] of queue) {
+        const bio = await backfillIo(db, entry.root, io, adapter);
+        for (const session of plan.fresh) {
+          const ulid = await createBackfilledSession(session, bio);
+          const { job } = enqueueJob(db, {
+            kind: input.method === "extract" ? "extract" : "repair",
+            sessionUlid: ulid,
+            repoPath: entry.root,
+            newId: bio.newId,
+            now: io.now(),
+            source: ONBOARDING_SOURCE,
+          });
+          jobs.push(job as Job);
+        }
       }
       repos.push(entry.root);
     }

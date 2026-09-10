@@ -30,6 +30,7 @@ import { DEFAULT_TIMEOUT_S, resumeSession } from "./repair.js";
 import { enqueueJob } from "../jobs/queue.js";
 import { runJobs } from "../jobs/runner.js";
 import { findRepoRoot, isEnabled, listOpenBacklogIds, sessionFile, writeFileAtomic } from "../ledger-fs.js";
+import type { Harness } from "@workledger/core/schema";
 import type { ExtractIo } from "../extract/run.js";
 import type { HarnessAdapter } from "../adapters/types.js";
 import type { IndexDb } from "../index/db.js";
@@ -331,7 +332,7 @@ export async function createBackfilledSession(
     createSessionText({
       schema_version: SCHEMA_VERSION,
       id: ulid,
-      harness: io.adapter.harness as "claude-code",
+      harness: io.adapter.harness as Harness,
       harness_session_id: session.harnessSessionId,
       repo: git.repo,
       branch: git.branch,

@@ -92,10 +92,12 @@ export const codexAdapter: HarnessAdapter = {
 };
 
 /**
- * `codex exec resume --sandbox workspace-write <id> "<instruction>"`.
+ * `codex exec --sandbox workspace-write resume <id> "<instruction>"`.
  *
- * The options-then-positionals order is `codex exec resume`'s own usage line. The prompt is the
- * checkpoint instruction, exactly as Claude Code's `-p` argument is.
+ * `--sandbox` belongs to `codex exec`, not to its `resume` subcommand: on codex-cli 0.150.1
+ * `codex exec resume --sandbox …` exits 2 with a usage error, and `codex exec --sandbox … resume
+ * <id> "<prompt>"` resumes (verified 2026-09-09, #85). The prompt is the checkpoint instruction,
+ * exactly as Claude Code's `-p` argument is.
  *
  * Hooks must be trusted for the resumed run to record anything — Codex requires a one-time trust
  * of a project's hook file. `repair` never passes `--dangerously-bypass-hook-trust` silently
@@ -109,7 +111,7 @@ async function resumeHeadless(sessionId: string, options: ResumeOptions): Promis
   const bin = process.env[CODEX_BIN_ENV]?.trim() || "codex";
   return await spawnResume(
     bin,
-    ["exec", "resume", "--sandbox", CODEX_SANDBOX, sessionId, options.instruction],
+    ["exec", "--sandbox", CODEX_SANDBOX, "resume", sessionId, options.instruction],
     options,
   );
 }

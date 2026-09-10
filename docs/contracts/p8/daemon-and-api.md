@@ -46,7 +46,8 @@ GET  /api/onboarding/history?repos=<csv paths>  → { windows: { "7d": { session
 POST /api/onboarding/init      body { repos: string[], harnesses?: string[] }
                                                 → { results: [{ path, ok, hooksWritten: string[], trustSteps: string[], error? }] }
 POST /api/onboarding/plan      body { repos, since: "7d"|"30d"|"90d"|"none", method: "resume"|"extract"|"none" }
-                                                → { sessions, estimate: { seconds } | { tokens, usd, needsApiKey: boolean } | null }
+                                                → { sessions, estimate: { seconds } | { tokens, usd, needsApiKey: boolean } | null, unsupported?: { codex: n } }
+     amendment 3 (2026-09-09, #85): history, plan and run cover Codex sessions (`~/.codex/sessions`, `session_meta.cwd` inside the repo, resumed with `codex exec resume <id>`) beside Claude Code's. Under method "extract" Codex sessions are excluded from `sessions` and the estimate, reported in `unsupported.codex`, and not queued: the P3 extractor parses Claude Code transcripts only.
 POST /api/onboarding/run       body { repos, since, method, consent: true }
                                                 → { jobs: Job[] } (202); method "extract" without ANTHROPIC_API_KEY → 409 { code: "api-key-required" }
 GET  /api/onboarding/status                     → { total, done, failed, running, complete: boolean }

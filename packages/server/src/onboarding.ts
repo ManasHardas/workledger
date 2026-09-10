@@ -106,9 +106,15 @@ export interface ExtractionEstimate {
 
 /** `POST /api/onboarding/plan` response. `estimate` is `null` for method or window `none`. */
 export interface PlanResult {
-  /** Sessions in the window the index has never seen, across `repos`. */
+  /** Sessions in the window the index has never seen, across `repos`, that the method can digest. */
   sessions: number;
   estimate: ResumeEstimate | ExtractionEstimate | null;
+  /**
+   * Fresh sessions the method cannot digest, by harness — absent when there are none. Only
+   * `extract` sets it: the extractor reads Claude Code transcripts, so Codex sessions are
+   * resume-only and wait for a later `resume`.
+   */
+  unsupported?: { codex: number };
 }
 
 /** `POST /api/onboarding/run` body. */
