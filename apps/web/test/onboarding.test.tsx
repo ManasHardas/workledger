@@ -38,6 +38,7 @@ import type {
 const DASHERO = `${FIXTURE_DISCOVER.roots[0]!}/dashero`;
 const KUBERA = `${FIXTURE_DISCOVER.roots[0]!}/kubera`;
 const MENTAT = `${FIXTURE_DISCOVER.roots[0]!}/mentat`;
+const WORKLEDGER = `${FIXTURE_DISCOVER.roots[0]!}/workledger`;
 
 function job(overrides: Partial<Job> = {}): Job {
   return {
@@ -175,7 +176,7 @@ describe("wizard state in the hash", () => {
 });
 
 describe("projects step", () => {
-  it("lists known repos pre-checked when suggested, found repos unchecked, tracked repos locked", async () => {
+  it("lists known repos pre-checked when suggested, found repos unchecked, tracked repos unchecked but tickable", async () => {
     const { source, calls } = stubSource();
     renderWizard(source);
     await screen.findByRole("heading", { name: "Choose the repos to track" });
@@ -184,10 +185,12 @@ describe("projects step", () => {
     const known = screen.getByRole("group", { name: "Repos with agent sessions" });
     const found = screen.getByRole("group", { name: `Other git repos under ${FIXTURE_DISCOVER.roots[0]!}` });
 
+    // #109: a tracked repo stays selectable so it can be backfilled again; the badge says it is covered.
     const workledger = within(known).getByRole("checkbox", { name: "workledger" }) as HTMLInputElement;
-    expect(workledger.checked).toBe(true);
-    expect(workledger.disabled).toBe(true);
+    expect(workledger.checked).toBe(false);
+    expect(workledger.disabled).toBe(false);
     expect(within(known).getByText("already tracked")).toBeDefined();
+    expect(within(known).getByText("select to backfill")).toBeDefined();
 
     const dashero = within(known).getByRole("checkbox", { name: "dashero" }) as HTMLInputElement;
     expect(dashero.checked).toBe(true);
@@ -316,6 +319,41 @@ describe("projects step", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next: choose history" }));
     await waitFor(() => expect(state().step).toBe("history"));
     expect(state().repos).toEqual([DASHERO, KUBERA]);
+  });
+
+  it("a tracked repo ticked for backfill is left out of init, listed as unchanged, and carried to history (#109)", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source);
+    await screen.findByRole("heading", { name: "Choose the repos to track" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "workledger" }));
+    await waitFor(() => expect(state().repos).toEqual([DASHERO, KUBERA, WORKLEDGER]));
+    expect(screen.getByText("3 repos selected · 1 repo already tracked")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Repos enabled" });
+    // The hook files of a tracked repo are never rewritten: init only gets the new ones.
+    expect(calls.at(-1)).toBe(`initRepos:[{"repos":${JSON.stringify([DASHERO, KUBERA])}}]`);
+    const results = screen.getByRole("list", { name: "Init results" });
+    const row = within(results).getByText("workledger").closest("li")!;
+    expect(within(row).getByText("already tracked")).toBeDefined();
+    expect(within(row).getByText("Hooks unchanged.")).toBeDefined();
+    expect(screen.getByText(/workledger init ran in 2 repos; 1 repo was already tracked/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next: choose history" }));
+    await waitFor(() => expect(state().step).toBe("history"));
+    expect(state().repos).toEqual([DASHERO, KUBERA, WORKLEDGER]);
+  });
+
+  it("a selection of tracked repos only skips init and goes straight to history (#109)", async () => {
+    const { source, calls } = stubSource();
+    renderWizard(source, wizardHref({ ...INITIAL_STATE, repos: [WORKLEDGER] }));
+    await screen.findByRole("heading", { name: "Choose the repos to track" });
+    expect((screen.getByRole("checkbox", { name: "workledger" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("1 repo selected · 1 repo already tracked")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(state().step).toBe("history"));
+    expect(state().repos).toEqual([WORKLEDGER]);
+    expect(calls.some((call) => call.startsWith("initRepos:"))).toBe(false);
   });
 });
 
