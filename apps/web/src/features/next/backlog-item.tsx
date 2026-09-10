@@ -8,9 +8,11 @@ import { Input } from "../../components/ui/input.js";
 import { SelectField } from "../../components/ui/select-field.js";
 import { TextareaField } from "../../components/ui/textarea-field.js";
 import { cn } from "../../lib/cn.js";
+import { ActorName, isActor } from "../identity/actor-name.js";
 
 import type { BacklogActions } from "./backlog-actions.js";
 import type { BacklogView } from "../../lib/ledger-source.js";
+import type { IdentityMap } from "../identity/live.js";
 
 const PRIORITIES = ["none", "p1", "p2", "p3"] as const;
 
@@ -26,12 +28,8 @@ export interface BacklogItemProps {
   error?: string;
   onSelect: () => void;
   onEditingChange: (editing: boolean) => void;
-}
-
-/** `Name <email>` for a display line; the assign form keeps the two fields apart. */
-function ownerLine(item: BacklogView): string {
-  const owner = item.frontmatter.owner;
-  return owner ? `${owner.name} <${owner.email}>` : "Unassigned";
+  /** `.workledger/identities.yaml`; empty when the repo has no file (P5 contract). */
+  identities: IdentityMap;
 }
 
 /**
@@ -51,6 +49,7 @@ export function BacklogItem({
   error,
   onSelect,
   onEditingChange,
+  identities,
 }: BacklogItemProps) {
   const { frontmatter: fm } = item;
   const [title, setTitle] = useState(fm.title);
@@ -106,9 +105,19 @@ export function BacklogItem({
         )}
         <p className="text-xs text-muted-foreground">
           {fm.id} · {fm.proposed_by.harness} · session {fm.proposed_by.session} · checkpoint{" "}
-          {fm.proposed_by.checkpoint}
+          {fm.proposed_by.checkpoint} · proposed by{" "}
+          <ActorName actor={fm.proposed_by.author} identities={identities} />
         </p>
-        <p className="text-xs text-muted-foreground">{ownerLine(item)}</p>
+        <p className="text-xs text-muted-foreground">
+          Owner:{" "}
+          {fm.owner ? <ActorName actor={fm.owner} identities={identities} /> : "Unassigned"}
+          {fm.confirmed_by ? (
+            <>
+              {" · confirmed by "}
+              <ActorName actor={fm.confirmed_by} identities={identities} />
+            </>
+          ) : null}
+        </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {editing ? (
@@ -239,6 +248,28 @@ export function BacklogItem({
             Unassign
           </Button>
         </div>
+
+        {/*
+          The audit trail, newest last, as the file records it. A history `by` is a person for a
+          UI or CLI edit and a `{ session, checkpoint }` for an agent-originated one — only the
+          first has an email, so only the first is a name the identities map can replace.
+        */}
+        {fm.history.length === 0 ? null : (
+          <ul aria-label="History" className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {fm.history.map((entry, index) => (
+              <li key={`${entry.at}-${index}`}>
+                {entry.at} · {entry.op}
+                {" · "}
+                {isActor(entry.by) ? (
+                  <ActorName actor={entry.by} identities={identities} />
+                ) : (
+                  `session ${entry.by.session}`
+                )}
+                {entry.diff ? ` · ${entry.diff}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
 
         {error ? (
           <p role="alert" className="text-sm text-destructive">

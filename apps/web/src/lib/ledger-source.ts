@@ -27,6 +27,7 @@ import type {
   BacklogView,
   Excerpt,
   Health,
+  Identity,
   Job,
   LedgerSource,
   NoteRef,
@@ -47,6 +48,7 @@ export type {
   Excerpt,
   ExtractEstimate,
   Health,
+  Identity,
   Job,
   LedgerEvent,
   LedgerSource,
@@ -123,6 +125,16 @@ class FixtureSource implements LedgerSource {
 
   async health(): Promise<Health> {
     return FIXTURE_HEALTH;
+  }
+
+  /**
+   * No identities file behind a fixture, so no names to map. The empty list is the contract's
+   * "Missing file: emails display as before" (docs/contracts/p5/config-and-identities.md) — a
+   * view falls back to the email rather than to a placeholder, which is the same path a real repo
+   * that never wrote the file takes.
+   */
+  async listIdentities(): Promise<Identity[]> {
+    return [];
   }
 
   accept = readOnly<BacklogView>;

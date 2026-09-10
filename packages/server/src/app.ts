@@ -146,7 +146,7 @@ export function createApp(options: CreateAppOptions): ServerApp {
 
   const mutex = new KeyedMutex();
   const app = new Hono();
-  app.route("/api", readRoutes({ model, health, maxTokens: () => briefMaxTokens(paths) }));
+  app.route("/api", readRoutes({ model, health, maxTokens: () => briefMaxTokens(paths), paths }));
   app.route("/api", writeRoutes({ model, ops: options.ops, repoRoot, mutex }));
   app.route("/api", eventRoutes({ bus, ...(options.pingMs === undefined ? {} : { pingMs: options.pingMs }) }));
 

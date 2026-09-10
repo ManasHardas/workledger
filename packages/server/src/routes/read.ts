@@ -6,9 +6,11 @@ import { Hono } from "hono";
 
 import { renderBrief } from "../brief.js";
 import { buildHealth } from "../health.js";
+import { listIdentities } from "../identities.js";
 import { badRequest, notFound } from "../errors.js";
 import { parseLimit } from "../read-model.js";
 import type { HealthEnv } from "../health.js";
+import type { LedgerPaths } from "../paths.js";
 import type { ReadModel } from "../read-model.js";
 
 /** What the read routes need from `createApp`. */
@@ -17,9 +19,14 @@ export interface ReadRouteDeps {
   health: HealthEnv;
   /** `brief.max_tokens` from the repo config, re-read per request so an edit takes effect. */
   maxTokens: () => number;
+  /** The served repo's ledger paths, for the files no read model holds. */
+  paths: LedgerPaths;
 }
 
-/** `/api/sessions`, `/api/backlog`, `/api/notes`, `/api/brief`, `/api/health`. */
+/**
+ * `/api/sessions`, `/api/backlog`, `/api/notes`, `/api/brief`, `/api/health`,
+ * `/api/identities`.
+ */
 export function readRoutes(deps: ReadRouteDeps): Hono {
   const api = new Hono();
 
@@ -80,6 +87,15 @@ export function readRoutes(deps: ReadRouteDeps): Hono {
   });
 
   api.get("/health", (c) => c.json(buildHealth(deps.model, deps.health)));
+
+  /**
+   * `.workledger/identities.yaml`, read per request rather than cached.
+   *
+   * The file is a handful of lines and the client re-reads it only on `health.changed`, so a
+   * cache would buy nothing and cost the one thing that matters here: a name added by hand while
+   * `serve` is running has to show up without a restart.
+   */
+  api.get("/identities", (c) => c.json(listIdentities(deps.paths)));
 
   return api;
 }

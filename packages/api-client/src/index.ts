@@ -42,6 +42,7 @@ export type {
   ExtractEstimate,
   Harness,
   Health,
+  Identity,
   Job,
   LedgerEvent,
   LedgerSource,

@@ -5,6 +5,7 @@ import { GROUP_LABELS, canRun, compareItems, flatten, groupByStatus, reorder } f
 import { useBacklog } from "./use-backlog.js";
 import { Badge } from "../../components/ui/badge.js";
 import { useSource } from "../../lib/source-context.js";
+import { useIdentities } from "../identity/live.js";
 import { BacklogItem } from "./backlog-item.js";
 
 import type { BacklogAction } from "./backlog-model.js";
@@ -30,6 +31,8 @@ function isTyping(target: EventTarget | null): boolean {
 export function NextView() {
   const source = useSource();
   const backlog = useBacklog();
+  // One read for the whole list rather than one per card: the map is the same for every item.
+  const identities = useIdentities();
   const actions = useMemo(() => backlogActions(source, backlog.run), [source, backlog.run]);
   const canWrite = source.capabilities.write;
 
@@ -179,6 +182,7 @@ export function NextView() {
                           onEditingChange={(editing) =>
                             setEditingId(editing ? item.frontmatter.id : null)
                           }
+                          identities={identities}
                         />
                       </li>
                     ))}

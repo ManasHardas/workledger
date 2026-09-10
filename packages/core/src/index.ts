@@ -6,6 +6,7 @@
 export * from "./schema.js";
 export * from "./ids.js";
 export * from "./frontmatter.js";
+export * from "./identities.js";
 export * from "./tokens.js";
 export * from "./brief.js";
 export * from "./secretscan-patterns.js";

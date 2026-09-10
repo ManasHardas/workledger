@@ -15,6 +15,7 @@ type ParsedSession = { frontmatter: SessionFrontmatter; goal: string|null; done:
 type BacklogView   = { frontmatter: BacklogItem; body: string };
 type NoteRef       = NoteLine & { session: string; index: number };  // session ulid; index = position within its checkpoint (amended 2026-09-09)
 type Health        = { cli: string; repo: string; harnesses: DoctorEntry[]; index: { path: string; bytes: number; openSessions: number }; config: { valid: boolean; problems: string[] }; lastHookAt: string|null };
+type Identity      = { email: string; name: string; dome_user: string|null };  // one row of .workledger/identities.yaml (added 2026-09-09, additive)
 ```
 
 `SessionFrontmatter` and `BacklogItem` are the frozen P1 schemas. `ParsedSession` comes from
@@ -31,6 +32,7 @@ type Health        = { cli: string; repo: string; harnesses: DoctorEntry[]; inde
 | GET | `/api/notes` | `type` (comma list), `open=true` (unresolved only) | `NoteRef[]` newest first |
 | GET | `/api/brief` | `max_tokens` | `text/plain` (same bytes as `workledger brief`) |
 | GET | `/api/health` | | `Health` |
+| GET | `/api/identities` | | `Identity[]` by `email` asc; `[]` when the file is absent (docs/contracts/p5/config-and-identities.md) |
 | POST | `/api/backlog/:id/accept` | | `BacklogView` |
 | POST | `/api/backlog/:id/discard` | | `BacklogView` |
 | POST | `/api/backlog/:id/done` | | `BacklogView` (`done_by: null`, history `op: status`) |

@@ -2,7 +2,7 @@
  * The GET half of `docs/contracts/p2/api.md`, read against a temp copy of this repo's dogfood
  * ledger: every documented shape, the orderings, the `q` search, and the one error body.
  */
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -15,6 +15,7 @@ import type { TempRepo } from "./helpers.js";
 import type { ServerApp } from "../src/app.js";
 import type { BacklogView, NoteRef, SessionView } from "../src/views.js";
 import type { Health } from "../src/health.js";
+import type { Identity } from "../src/identities.js";
 
 let repo: TempRepo;
 let server: ServerApp;
@@ -251,6 +252,68 @@ describe("GET /api/health", () => {
     expect(body.config.problems.some((p) => p.includes("01M2Z00000000000000000000.md"))).toBe(true);
     // The bad file is dropped from the read model rather than taking the endpoint down.
     expect((await getJson<SessionView[]>("/api/sessions")).body.every((s) => s.frontmatter.id !== "01M2Z00000000000000000000")).toBe(true);
+  });
+});
+
+/**
+ * docs/contracts/p5/config-and-identities.md: the rows of `.workledger/identities.yaml`, and
+ * "Missing file: emails display as before" — which on the wire is an empty list, never a 404 and
+ * never a 500, because the client's fallback is "keep showing the email".
+ */
+describe("GET /api/identities", () => {
+  const FLOW = [
+    "schema_version: 1",
+    "identities:",
+    "  - { email: Grace@Example.com, name: Grace Hopper, dome_user: u_grace }",
+    "  - { email: ada@example.com, name: Ada Lovelace, dome_user: null }",
+    "",
+  ].join("\n");
+
+  it("is an empty list when the repo has no identities file", async () => {
+    // The dogfood ledger the harness copies has no `identities.yaml`; assert that rather than
+    // assume it, so a future dogfood file turns this into a failure instead of a silent pass.
+    expect(existsSync(path.join(repo.ledger, "identities.yaml"))).toBe(false);
+    const { status, body } = await getJson<Identity[]>("/api/identities");
+    expect(status).toBe(200);
+    expect(body).toEqual([]);
+  });
+
+  it("returns every row by email, lower-cased key order, with dome_user filled in", async () => {
+    writeFileSync(path.join(repo.ledger, "identities.yaml"), FLOW, "utf8");
+    const { status, body } = await getJson<Identity[]>("/api/identities");
+    expect(status).toBe(200);
+    // Sorted by the lower-cased email, so `ada` precedes `Grace` despite the file's order.
+    expect(body).toEqual([
+      { email: "ada@example.com", name: "Ada Lovelace", dome_user: null },
+      { email: "Grace@Example.com", name: "Grace Hopper", dome_user: "u_grace" },
+    ]);
+  });
+
+  it("re-reads the file per request, so an edit lands without a restart", async () => {
+    writeFileSync(path.join(repo.ledger, "identities.yaml"), FLOW, "utf8");
+    expect((await getJson<Identity[]>("/api/identities")).body).toHaveLength(2);
+
+    rmSync(path.join(repo.ledger, "identities.yaml"));
+    expect((await getJson<Identity[]>("/api/identities")).body).toEqual([]);
+  });
+
+  it("honours config.identities_file and degrades to [] on a malformed file", async () => {
+    writeFileSync(path.join(repo.ledger, "team.yaml"), FLOW, "utf8");
+    expect((await getJson<Identity[]>("/api/identities")).body).toEqual([]);
+
+    writeFileSync(
+      path.join(repo.ledger, "config.yaml"),
+      "schema_version: 1\nidentities_file: team.yaml\n",
+      "utf8",
+    );
+    expect((await getJson<Identity[]>("/api/identities")).body).toHaveLength(2);
+
+    // A file that is not the documented shape is the same answer a missing one gives: the map is
+    // a display layer, and it must never be the reason a page 500s.
+    writeFileSync(path.join(repo.ledger, "team.yaml"), "identities: [\n", "utf8");
+    const { status, body } = await getJson<Identity[]>("/api/identities");
+    expect(status).toBe(200);
+    expect(body).toEqual([]);
   });
 });
 

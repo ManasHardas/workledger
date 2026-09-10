@@ -105,6 +105,20 @@ export interface DoctorEntry {
   last_activity: string | null;
 }
 
+/**
+ * One row of `.workledger/identities.yaml` — docs/contracts/p5/config-and-identities.md.
+ *
+ * A display map, never a rewrite: the ledger keeps whatever `Actor` was written into it, and a
+ * view looks an email up here (case-insensitively) to decide what name to *show*. An email with
+ * no row, and a repo with no file at all, both mean "show the email", which is why the absent
+ * case is an empty list rather than an error.
+ */
+export interface Identity {
+  email: string;
+  name: string;
+  dome_user: string | null;
+}
+
 /** `GET /api/health`. */
 export interface Health {
   cli: string;
@@ -226,6 +240,11 @@ export interface LedgerSource {
   listNotes(q?: { type?: NoteType[]; open?: boolean }): Promise<NoteRef[]>;
   brief(maxTokens?: number): Promise<string>;
   health(): Promise<Health>;
+  /**
+   * P5 (docs/contracts/p5/config-and-identities.md). Empty when the repo has no identities file,
+   * which is the contract's "emails display as before" — never an error.
+   */
+  listIdentities(): Promise<Identity[]>;
   // writes: reject with { code: "read-only" } when capabilities.write is false
   accept(id: string): Promise<BacklogView>;
   discard(id: string): Promise<BacklogView>;
