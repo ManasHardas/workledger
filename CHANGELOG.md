@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 — P5 Team (2026-09-09)
+
+- `auto_commit: false | on_checkpoint | on_session_end`: one commit touching only `.workledger/`, never a push, skipped during merge/rebase/cherry-pick, never changes a hook's exit code.
+- `private_paths`: repo-relative globs that make a session private (boundary record only, never blocked).
+- `.workledger/identities.yaml`: email to name mapping used by `brief`, `backlog show|list`, the UI (Next, Needs you), and `GET /api/identities`.
+- `workledger init --teammate`: onboarding for a clone that already carries the hooks; `scan --all` and `doctor` cover every enabled repo on the machine.
+- `.workledger/README.md` documents the clone path and conflict handling.
+
 ## 0.2.0 — P3 Recovery and backfill, P4 Codex and Cursor (2026-09-09)
 
 - `workledger scan`: orphaned sessions (transcript idle past `orphan_minutes`) become `crashed` with a queued repair; runs opportunistically at SessionStart and every 5 minutes under `serve`.

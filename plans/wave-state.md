@@ -6,11 +6,11 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S2, P1, P2, P4 shipped; P3 one PR from done)
+## Current state — 2026-09-09 (post-S2, P1–P5 shipped)
 
-**Phase:** P3 finishing (#56 Jobs UI in flight; #53 #54 #55 #57 merged) and P5 starting (#63 in flight). Tags: `p1-shipped`, `p2-shipped`, `p4-shipped` (PR #67). P6 deferred by the operator; P7 blocked on Figma inputs.
+**Phase:** P7 Wave 0 (token sync script, Code Connect skeletons; #73 building). Tags: `p1-shipped` … `p5-shipped` (version 0.3.0). P6 deferred by the operator; P7 Wave 1 blocked on the operator's Figma file and node ids.
 
-**Wave:** P3 Wave 1 last slot (#56); P5 Wave 1 first slot (#63). Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
+**Wave:** P7 Wave 0 only. Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
 
 **Last session:** S2 (same conversation as S1, continued under Clause #12 lean mode): merged #26 #27 #28 #29 #30, amendment 3, dogfood on this repo (three live sessions), CHANGELOG, tag.
 
