@@ -33,12 +33,14 @@ import { defaultHome } from "./health.js";
 import { errorBody } from "./errors.js";
 import { eventRoutes } from "./routes/events.js";
 import { jobRoutes } from "./routes/jobs.js";
+import { onboardingRoutes } from "./routes/onboarding.js";
 import { readRoutes } from "./routes/read.js";
 import { repoRoutes } from "./routes/repos.js";
 import { staticHandler } from "./routes/static.js";
 import { writeRoutes } from "./routes/write.js";
 import type { BacklogOps } from "./ops.js";
 import type { JobOps } from "./jobs.js";
+import type { OnboardingOps } from "./onboarding.js";
 import type { JobWatcher } from "./job-watcher.js";
 import type { HealthEnv } from "./health.js";
 import type { KeyedMutex } from "./mutex.js";
@@ -66,6 +68,8 @@ export interface CreateAppOptions {
    * build that predates the injection is.
    */
   jobs?: JobOps;
+  /** The P8 onboarding operations (`./onboarding.ts`), injected like `jobs`; absent → no `/api/onboarding/*`. */
+  onboarding?: OnboardingOps;
   /** `~/.workledger` or wherever the index lives; only its path and size are read. */
   home?: string;
   /** The built `apps/web`; without it a non-`/api` path is a 404 rather than the app shell. */
@@ -162,6 +166,18 @@ export function createApp(options: CreateAppOptions): ServerApp {
   // The P3 routes exist only when their backend does; see `CreateAppOptions.jobs`.
   if (options.jobs !== undefined) {
     app.route("/api", jobRoutes({ ops: options.jobs, repo, home: health.home }));
+  }
+  // The onboarding routes are machine-wide (no `repo` parameter — contract amendment 1). In
+  // machine mode a repo the wizard just enabled joins the registry at once; single-repo mode
+  // serves its one repo and nothing else.
+  if (options.onboarding !== undefined) {
+    app.route(
+      "/api",
+      onboardingRoutes({
+        ops: options.onboarding,
+        ...(mode === "machine" ? { onEnabled: (root: string) => void registry.add(root) } : {}),
+      }),
+    );
   }
 
   // Every unmatched `/api` path is a 404 in the contract's shape and must never fall through to

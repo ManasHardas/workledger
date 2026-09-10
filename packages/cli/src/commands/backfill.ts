@@ -86,6 +86,33 @@ export function projectSlug(repoPath: string): string {
 }
 
 /**
+ * The first line of a transcript, read with one bounded positioned read — never the whole file.
+ * `undefined` when the file cannot be opened or read. Shared with the Codex store enumeration
+ * in `src/onboarding/stores.ts`, whose first record is a `session_meta` with the same two facts
+ * one level down.
+ */
+export function readFirstLine(file: string): string | undefined {
+  let text: string;
+  let fd: number;
+  try {
+    fd = openSync(file, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    const buffer = Buffer.allocUnsafe(FIRST_RECORD_BYTES);
+    const read = readSync(fd, buffer, 0, FIRST_RECORD_BYTES, 0);
+    text = buffer.subarray(0, read).toString("utf8");
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+  const newline = text.indexOf("\n");
+  return newline < 0 ? text : text.slice(0, newline);
+}
+
+/**
  * The `cwd` and `timestamp` of a transcript's first record.
  *
  * A bounded positioned read rather than `readFileSync`: a store holds sessions of every size, and
@@ -95,24 +122,8 @@ export function projectSlug(repoPath: string): string {
  * would silently drop a session.
  */
 export function firstRecord(file: string): { cwd: string | null; startedIso: string | null } {
-  let text: string;
-  let fd: number;
-  try {
-    fd = openSync(file, "r");
-  } catch {
-    return { cwd: null, startedIso: null };
-  }
-  try {
-    const buffer = Buffer.allocUnsafe(FIRST_RECORD_BYTES);
-    const read = readSync(fd, buffer, 0, FIRST_RECORD_BYTES, 0);
-    text = buffer.subarray(0, read).toString("utf8");
-  } catch {
-    return { cwd: null, startedIso: null };
-  } finally {
-    closeSync(fd);
-  }
-  const newline = text.indexOf("\n");
-  const line = newline < 0 ? text : text.slice(0, newline);
+  const line = readFirstLine(file);
+  if (line === undefined) return { cwd: null, startedIso: null };
   try {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     const cwd = typeof parsed["cwd"] === "string" ? parsed["cwd"] : null;
@@ -166,8 +177,14 @@ export function enumerateStore(homeDir: string, repoPath: string): StoreSession[
   return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-/** Days in each `--since` window; `all` has none. */
-const SINCE_DAYS: Record<string, number> = { "7d": 7, "14d": 14, "30d": 30 };
+/**
+ * Days in each `--since` window; `all` has none.
+ *
+ * `90d` is not a `--since` value (`SINCE_WINDOWS` still ends at `30d`); it is the widest window
+ * the onboarding wizard offers (docs/contracts/p8/daemon-and-api.md §Onboarding endpoints), and
+ * `src/onboarding/` reaches it through {@link filterSince} rather than re-implementing the cut.
+ */
+const SINCE_DAYS: Record<string, number> = { "7d": 7, "14d": 14, "30d": 30, "90d": 90 };
 
 /**
  * Drop sessions older than the window, measured on file mtime (cli.md step 2).
@@ -418,6 +435,25 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
     });
   }
 
+  const { done, failed } = await drainBackfillJobs(options, io, concurrency);
+  io.stdout(summaryLine(done, failed, plan.skipped.length));
+  return EXIT_OK;
+}
+
+/**
+ * Run every queued backfill job for `io.root` — cli.md step 4, on its own.
+ *
+ * Split out of {@link runBackfill} so the onboarding wizard (`src/onboarding/backfill.ts`),
+ * which queues its jobs from an HTTP request and drains them afterwards, runs the same handler
+ * with the same extraction fallback as `workledger backfill` rather than a second one. The
+ * outcome is counted per *session*: a resume that failed and whose extraction then succeeded is
+ * one `done`, not one of each.
+ */
+export async function drainBackfillJobs(
+  options: Pick<BackfillOptions, "extractFallback">,
+  io: BackfillIo,
+  concurrency: number,
+): Promise<{ done: number; failed: number }> {
   const outcomes = new Map<string, SessionOutcome>();
   await runJobs(io.db, {
     repoPath: io.root,
@@ -434,8 +470,7 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
     if (outcome === "done") done += 1;
     else failed += 1;
   }
-  io.stdout(summaryLine(done, failed, plan.skipped.length));
-  return EXIT_OK;
+  return { done, failed };
 }
 
 /** Jobs this repo still has to run — queued or claimed by a process that may be gone. */
@@ -462,7 +497,7 @@ export function summaryLine(done: number, failed: number, skipped: number): stri
  */
 async function runOneJob(
   job: JobRow,
-  options: BackfillOptions,
+  options: Pick<BackfillOptions, "extractFallback">,
   io: BackfillIo,
   outcomes: Map<string, SessionOutcome>,
 ): Promise<JobResult> {

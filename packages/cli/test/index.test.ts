@@ -124,6 +124,7 @@ describe("openIndex", () => {
       "error",
       "cost_estimate_usd",
       "log_path",
+      "source",
     ]);
   });
 
@@ -175,20 +176,20 @@ describe("migrations", () => {
       .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
       .get(SCHEMA_VERSION_KEY);
 
-    // Bumped by every migration that lands; `0003_repos.sql` is the latest.
-    expect(row?.value).toBe("3");
+    // Bumped by every migration that lands; `0004_job_source.sql` is the latest.
+    expect(row?.value).toBe("4");
   });
 
   it("applies each migration exactly once, in filename order", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "workledger-migrations-"));
-    writeFileSync(path.join(dir, "0005_fifth.sql"), "CREATE TABLE b (x TEXT);");
-    writeFileSync(path.join(dir, "0004_fourth.sql"), "CREATE TABLE a (x TEXT);");
+    writeFileSync(path.join(dir, "0006_sixth.sql"), "CREATE TABLE b (x TEXT);");
+    writeFileSync(path.join(dir, "0005_fifth.sql"), "CREATE TABLE a (x TEXT);");
     const db = open();
 
     // The real migrations have already taken the database past their own versions, so a fresh
     // directory is only applied from the first file that is newer than the recorded version.
-    expect(migrate(db.connection, dir)).toEqual(["0004_fourth.sql", "0005_fifth.sql"]);
-    expect(schemaVersion(db.connection)).toBe(5);
+    expect(migrate(db.connection, dir)).toEqual(["0005_fifth.sql", "0006_sixth.sql"]);
+    expect(schemaVersion(db.connection)).toBe(6);
     expect(migrate(db.connection, dir)).toEqual([]);
 
     rmSync(dir, { recursive: true, force: true });
@@ -211,7 +212,7 @@ describe("migrations", () => {
   });
 
   it("ships a migration next to the module that reads it", () => {
-    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql"]);
+    expect(readMigrations().map((m) => m.name)).toEqual(["0001_init.sql", "0002_jobs.sql", "0003_repos.sql", "0004_job_source.sql"]);
   });
 });
 
@@ -295,8 +296,10 @@ describe("repos (0003_repos.sql)", () => {
   it("is seeded from the sessions an older index already had", () => {
     const db = open();
     // Roll the schema back to before the table existed, re-insert the way 0002 left things,
-    // and let `openIndex` apply 0003 over it.
+    // and let `openIndex` apply 0003 (and 0004, whose column has to go too) over it.
     db.connection.exec("DROP TABLE repos");
+    db.connection.exec("DROP INDEX jobs_by_source_status");
+    db.connection.exec("ALTER TABLE jobs DROP COLUMN source");
     db.connection.prepare("UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'").run();
     db.connection
       .prepare(
