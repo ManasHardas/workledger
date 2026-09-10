@@ -6,13 +6,13 @@
 
 ---
 
-## Current state — 2026-09-09 (post-S2, P1–P5 shipped)
+## Current state — 2026-09-09 (post-S2)
 
-**Phase:** P7 Wave 0 (token sync script, Code Connect skeletons; #73 building). Tags: `p1-shipped` … `p5-shipped` (version 0.3.0). P6 deferred by the operator; P7 Wave 1 blocked on the operator's Figma file and node ids.
+**Phase:** P7. Wave 0 merged (#74: token sync, Code Connect skeletons, Lighthouse script). Wave 1 blocked on the operator's Figma file, node ids, and variables export. Tags: `p1-shipped` … `p5-shipped` (version 0.3.0). P6 deferred by the operator.
 
-**Wave:** P7 Wave 0 only. Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
+**Wave:** P7 Wave 1, blocked on inputs. Lean mode (Clause #12) throughout; Clause #13 exists in agentwaves but is not in force here by operator decision.
 
-**Last session:** S2 (same conversation as S1, continued under Clause #12 lean mode): merged #26 #27 #28 #29 #30, amendment 3, dogfood on this repo (three live sessions), CHANGELOG, tag.
+**Last session:** S2 closed after PR #74: 25 build PRs merged (P1 close, P2, P3, P4, P5, P7 Wave 0), five tags, version 0.3.0.
 
 **Carry-over slots:** none.
 
@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | S0 | P1 / design | n/a | 0 | Spec, decision log, roadmap, phase spec, implementation plan, agentwaves vendored |
 | S1 | P1 / Wave 0 → 0.5 → 1 | ACTIVE, serial | 10 (#1 freeze, #15 amendment, 8 builds) | 8/12 slots merged; T-D on slot 5; anchors recalibrated |
-| S2 | P1 / Wave 1 → 3.5, P2 / Wave 0 | ACTIVE, lean | 5 (#26 #27 #28 #29 #30) | P1 shipped; lean mode cut per-slot cost ~3×; bytes default fixed from e2e |
+| S2 | P1 close → P2 → P3 → P4 → P5 → P7 Wave 0 | ACTIVE, lean | 25 | Five phases shipped; ~6.4M implementer + 1.8M reviewer tokens; 8 fix-cycles across 25 PRs |
 
 ---
 
