@@ -36,6 +36,36 @@ export interface BriefSettings {
   max_tokens: number;
 }
 
+/**
+ * The `backfill:` block (docs/contracts/p3/cli.md §Config additions).
+ *
+ * `seconds_per_session` is not a timeout — it is the per-session wall time the estimate printed
+ * before the confirmation prompt is built from, so an operator can see what a 200-session
+ * backfill is going to cost them in minutes before they say yes.
+ */
+export interface BackfillSettings {
+  /** Default `--since` window: one of {@link SINCE_WINDOWS}. */
+  since: string;
+  /** Default `--concurrency`. */
+  concurrency: number;
+  /** What one repaired session is assumed to take, for the estimate only. */
+  seconds_per_session: number;
+}
+
+/** The `extract:` block — the model and the rates the extraction estimate is priced at. */
+export interface ExtractSettings {
+  /** Anthropic model id the extraction fallback calls. */
+  model: string;
+  /** USD per million input tokens, used for the estimate the consent prompt shows. */
+  usd_per_million_input: number;
+  /** USD per million output tokens. */
+  usd_per_million_output: number;
+}
+
+/** The `--since` windows cli.md §`workledger backfill` allows. */
+export const SINCE_WINDOWS = ["7d", "14d", "30d", "all"] as const;
+export type SinceWindow = (typeof SINCE_WINDOWS)[number];
+
 /** The subset of `config.yaml` the hook state machine reads. */
 export interface HookConfig {
   thresholds: Thresholds;
@@ -49,6 +79,10 @@ export interface HookConfig {
   orphan_minutes: number;
   /** Repo paths that are always private: boundary record only, no brief, never a block. */
   private_paths: string[];
+  /** `workledger backfill` defaults (docs/contracts/p3/cli.md §Config additions). */
+  backfill: BackfillSettings;
+  /** `workledger repair --extract` model and rates. */
+  extract: ExtractSettings;
 }
 
 /** The defaults from cli.md, used for a missing file and for every key that does not parse. */
@@ -58,7 +92,22 @@ export const DEFAULT_CONFIG: HookConfig = {
   stale_turns: 5,
   orphan_minutes: 30,
   private_paths: [],
+  backfill: { since: "14d", concurrency: 2, seconds_per_session: 45 },
+  extract: { model: "claude-haiku-4-5", usd_per_million_input: 1, usd_per_million_output: 5 },
 };
+
+/** A fresh deep copy of {@link DEFAULT_CONFIG}, so a caller can never mutate the shared object. */
+export function defaultConfig(): HookConfig {
+  return {
+    thresholds: { ...DEFAULT_CONFIG.thresholds },
+    brief: { ...DEFAULT_CONFIG.brief },
+    stale_turns: DEFAULT_CONFIG.stale_turns,
+    orphan_minutes: DEFAULT_CONFIG.orphan_minutes,
+    private_paths: [...DEFAULT_CONFIG.private_paths],
+    backfill: { ...DEFAULT_CONFIG.backfill },
+    extract: { ...DEFAULT_CONFIG.extract },
+  };
+}
 
 /** Absolute path of a repo's `.workledger/config.yaml`. */
 export function configFile(root: string): string {
@@ -205,6 +254,31 @@ function positiveInt(value: Scalar | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * A positive, finite number — unlike {@link positiveInt} this keeps a fraction, because a rate
+ * of `0.8` USD per million tokens is a legitimate `extract` value and rounding it to `1` would
+ * quietly overstate every estimate printed from it.
+ */
+function positiveNumber(value: Scalar | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(unquote(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** A non-empty string, or `fallback`. */
+function nonEmpty(value: Scalar | undefined, fallback: string): string {
+  if (value === undefined) return fallback;
+  const text = unquote(value);
+  return text === "" ? fallback : text;
+}
+
+/** One of {@link SINCE_WINDOWS}, or `fallback`. */
+function sinceWindow(value: Scalar | undefined, fallback: string): string {
+  if (value === undefined) return fallback;
+  const text = unquote(value);
+  return (SINCE_WINDOWS as readonly string[]).includes(text) ? text : fallback;
+}
+
 /** `true` / `false`, or `fallback` for anything else. */
 function boolean(value: Scalar | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -219,6 +293,8 @@ export function parseConfig(text: string): HookConfig {
   const entries = readEntries(text);
   const thresholds = mapping(entries.get("thresholds"));
   const brief = mapping(entries.get("brief"));
+  const backfill = mapping(entries.get("backfill"));
+  const extract = mapping(entries.get("extract"));
   const defaults = DEFAULT_CONFIG;
   return {
     thresholds: {
@@ -233,6 +309,25 @@ export function parseConfig(text: string): HookConfig {
     stale_turns: positiveInt(entries.get("stale_turns")?.value, defaults.stale_turns),
     orphan_minutes: positiveInt(entries.get("orphan_minutes")?.value, defaults.orphan_minutes),
     private_paths: sequence(entries.get("private_paths")) ?? [...defaults.private_paths],
+    backfill: {
+      since: sinceWindow(backfill["since"], defaults.backfill.since),
+      concurrency: positiveInt(backfill["concurrency"], defaults.backfill.concurrency),
+      seconds_per_session: positiveInt(
+        backfill["seconds_per_session"],
+        defaults.backfill.seconds_per_session,
+      ),
+    },
+    extract: {
+      model: nonEmpty(extract["model"], defaults.extract.model),
+      usd_per_million_input: positiveNumber(
+        extract["usd_per_million_input"],
+        defaults.extract.usd_per_million_input,
+      ),
+      usd_per_million_output: positiveNumber(
+        extract["usd_per_million_output"],
+        defaults.extract.usd_per_million_output,
+      ),
+    },
   };
 }
 
@@ -245,7 +340,7 @@ export function loadConfig(root: string): HookConfig {
   try {
     text = readFileSync(configFile(root), "utf8");
   } catch {
-    return { ...DEFAULT_CONFIG, thresholds: { ...DEFAULT_CONFIG.thresholds } };
+    return defaultConfig();
   }
   return parseConfig(text);
 }
@@ -292,6 +387,11 @@ export const DEFAULT_CONFIG_YAML = [
   "orphan_minutes: 30",
   "private_paths: []",
   "auto_commit: false",
+  // P3 (docs/contracts/p3/cli.md §Config additions). Emitted so the knobs are discoverable in
+  // the file rather than only in the contract; both blocks fall back to the same values when a
+  // repo enabled before P3 has no line for them.
+  "backfill: { since: 14d, concurrency: 2, seconds_per_session: 45 }",
+  "extract: { model: claude-haiku-4-5, usd_per_million_input: 1, usd_per_million_output: 5 }",
   "",
 ].join("\n");
 

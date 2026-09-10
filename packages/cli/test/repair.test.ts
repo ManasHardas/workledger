@@ -304,13 +304,18 @@ describe("runRepair — eligibility and --extract", () => {
     expect(await runRepair(ULID, {}, repairIo(checkpointingAdapter()))).toBe(EXIT_OK);
   });
 
-  it("refuses --extract with the issue that will implement it", async () => {
+  it("hands --extract to the extraction path instead of resuming", async () => {
     crashedSession();
+    const adapter = checkpointingAdapter();
 
-    expect(await runRepair(ULID, { extract: true }, repairIo(claudeCodeAdapter))).toBe(
+    // No transcript path on the row, so extraction stops at its first check — which is enough to
+    // establish that `--extract` took the other branch. The extraction path itself is covered end
+    // to end, against a mocked `fetch`, in `extract.test.ts`.
+    expect(await runRepair(ULID, { extract: true, yes: true }, repairIo(adapter))).toBe(
       EXIT_JOB_FAILED,
     );
-    expect(err).toContain("repair: extraction arrives with #54");
+    expect(err.join("\n")).toContain("has no transcript path");
+    expect(adapter.seen, "--extract must never resume the session").toEqual([]);
     expect(listJobs(db, repo)).toEqual([]);
   });
 });

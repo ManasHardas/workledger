@@ -10,7 +10,7 @@ import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
 /**
  * The commands `--help` must list: the six from docs/contracts/p1/cli.md, `serve`
  * (docs/contracts/p2/api.md) and `note` alongside the now-live `backlog`
- * (docs/contracts/p2/backlog-cli.md), and `scan`, `repair` and `jobs` from P3
+ * (docs/contracts/p2/backlog-cli.md), and `scan`, `repair`, `backfill` and `jobs` from P3
  * (docs/contracts/p3/cli.md).
  */
 const COMMANDS = [
@@ -22,6 +22,7 @@ const COMMANDS = [
   "serve",
   "scan",
   "repair",
+  "backfill",
   "jobs",
   "backlog",
   "note",
@@ -42,6 +43,7 @@ const OPTIONS: Record<string, string[]> = {
   serve: ["--repo", "--port", "--no-open"],
   scan: ["--repo", "--json"],
   repair: ["--extract", "--yes", "--timeout", "--force"],
+  backfill: ["--repo", "--since", "--concurrency", "--dry-run", "--yes", "--extract-fallback"],
   jobs: ["--repo", "--json", "--cancel", "--retry"],
   // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
   // is registered here beyond the pass-through argument.
@@ -74,7 +76,7 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the eleven commands", () => {
+  it("registers exactly the twelve commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 

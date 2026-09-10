@@ -43,6 +43,14 @@ describe("config.yaml", () => {
       orphan_minutes: 30,
       private_paths: [],
       auto_commit: false,
+      // P3 additions (docs/contracts/p3/cli.md §Config additions). `Config` is loose, so
+      // these pass through validation unchanged and reach the fast loader as typed values.
+      backfill: { since: "14d", concurrency: 2, seconds_per_session: 45 },
+      extract: {
+        model: "claude-haiku-4-5",
+        usd_per_million_input: 1,
+        usd_per_million_output: 5,
+      },
     });
     // And the fast loader reads the same file to the same values.
     expect(loadConfig(root)).toEqual(DEFAULT_CONFIG);
