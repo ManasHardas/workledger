@@ -11,6 +11,7 @@
  * caller that is neither is refused too. The refusal carries the code the route maps to 400.
  */
 import { realpathSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { OnboardingRefusalCode } from "@workledger/server";
@@ -72,6 +73,32 @@ export function rootPathProblem(given: string): string | undefined {
     return `${given} does not exist`;
   }
   return isDirectory(real) ? undefined : `${given} is not a directory`;
+}
+
+/**
+ * Where scratch lives: `os.tmpdir()` plus both spellings of `/tmp` (macOS resolves it to
+ * `/private/tmp`). A test-fixture repo under one of these is nobody's project.
+ */
+export const OS_TEMP_DIRS: readonly string[] = [os.tmpdir(), "/tmp", "/private/tmp"];
+
+/** `true` when `given` is one of `tempDirs` or below one, both sides resolved through symlinks. */
+export function underTempDir(given: string, tempDirs: readonly string[] = OS_TEMP_DIRS): boolean {
+  let real: string;
+  try {
+    real = realpathSync(given);
+  } catch {
+    return false;
+  }
+  for (const temp of tempDirs) {
+    let base: string;
+    try {
+      base = realpathSync(temp);
+    } catch {
+      continue;
+    }
+    if (real === base || real.startsWith(base.endsWith(path.sep) ? base : `${base}${path.sep}`)) return true;
+  }
+  return false;
 }
 
 /** Every entry of `roots`, or the first refusal. */

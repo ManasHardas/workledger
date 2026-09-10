@@ -28,6 +28,8 @@ export interface OnboardingIo {
   now: () => Date;
   /** Overrides `WORKLEDGER_HOME` for the index. Absent means the environment's. */
   indexHome?: string | undefined;
+  /** Directories nothing under is a project; absent means the OS temp dirs (`OS_TEMP_DIRS`). */
+  tempDirs?: readonly string[] | undefined;
 }
 
 /** The real process. */

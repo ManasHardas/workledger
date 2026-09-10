@@ -67,6 +67,8 @@ let indexHome: string;
 let repoA: string;
 let repoB: string;
 let repoC: string;
+/** The test's own "OS temp dir", reached through a symlink so the realpath comparison is exercised. */
+let tempDir: string;
 let err: string[];
 let io: OnboardingIo;
 
@@ -97,6 +99,10 @@ beforeEach(() => {
   makeRepo(path.join(projects, ".hidden", "secret"));
   // Too deep: `Projects/1/2/3/deep` is four levels down, the walk stops at three.
   makeRepo(path.join(projects, "1", "2", "3", "deep"));
+  // Everything here is under the real `os.tmpdir()`, so the temp filter is pointed elsewhere.
+  tempDir = path.join(dir, "tmp");
+  mkdirSync(tempDir, { recursive: true });
+  symlinkSync(tempDir, path.join(dir, "tmp-link"));
 
   for (const { id, repo, ageDays } of LAYOUT) {
     const cwd = repo === "a" ? repoA : repoB;
@@ -129,6 +135,7 @@ beforeEach(() => {
     stderr: (line) => void err.push(line),
     now: () => NOW,
     indexHome,
+    tempDirs: [path.join(dir, "tmp-link")],
   };
 });
 
@@ -189,13 +196,39 @@ describe("discoverRepos", () => {
       name: "repo-a",
       hasGit: true,
       enabled: false,
+      suggested: true,
       // The Codex session in `repo-a/packages` counts for the repo above it.
       harnessSessions: { "claude-code": 2, codex: 1 },
       lastSessionAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
     });
     expect(result.known[1]?.harnessSessions).toEqual({ "claude-code": 1 });
     expect(result.found.map((c) => c.path)).toEqual([repoC]);
-    expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, harnessSessions: {}, lastSessionAt: null });
+    expect(result.found[0]).toMatchObject({ name: "repo-c", hasGit: true, enabled: false, suggested: true, harnessSessions: {}, lastSessionAt: null });
+  });
+
+  it("walks a root that is itself a repo, lists it unsuggested, and still does not enter nested repos", () => {
+    const mono = path.join(dir, "mono");
+    const one = path.join(mono, "one");
+    const two = path.join(mono, "lib", "two");
+    for (const repo of [mono, one, two, path.join(one, "inner")]) makeRepo(repo);
+    const result = discoverRepos({ roots: [mono] }, io);
+
+    expect(result.found.map((c) => [c.path, c.suggested])).toEqual([
+      [mono, false],
+      [two, true],
+      [one, true],
+    ]);
+  });
+
+  it("drops a store cwd under the temp dir from known, resolved through symlinks", () => {
+    const scratch = path.join(tempDir, "scratch");
+    makeRepo(scratch);
+    writeTranscript(path.join(home, CLAUDE_STORE, projectSlug(scratch), "hs-gamma.jsonl"), "hs-gamma", scratch, NOW);
+    const result = discoverRepos({}, io);
+
+    expect(result.known.map((c) => c.path)).toEqual([repoA, repoB]);
+    // Named as a root it is still found, and still not worth pre-checking.
+    expect(discoverRepos({ roots: [tempDir] }, io).found).toMatchObject([{ path: scratch, suggested: false }]);
   });
 
   it("refuses a root that is relative, missing, or not a directory", () => {
@@ -482,7 +515,11 @@ describe("the injected OnboardingOps", () => {
       (repos, method) => void drained.push([repos, method]),
     );
 
-    expect((await ops.discover()).known.map((c) => c.path)).toEqual([repoA, repoB]);
+    // Built from serve's io, the temp filter is the real one and this whole fixture is under
+    // `os.tmpdir()`: the stores' repos are dropped from `known`, and the walk lists them unsuggested.
+    const discovered = await ops.discover();
+    expect(discovered.known).toEqual([]);
+    expect(discovered.found.map((c) => [c.path, c.suggested])).toEqual([[repoB, false], [repoA, false], [repoC, false]]);
     expect((await ops.history([repoA])).windows["90d"].sessions).toBe(3);
     expect((await ops.init({ repos: [repoA] })).results[0]?.ok).toBe(true);
     expect((await ops.plan({ repos: [repoA], since: "7d", method: "resume" })).sessions).toBe(2);

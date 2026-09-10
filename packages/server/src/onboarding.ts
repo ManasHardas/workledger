@@ -33,6 +33,11 @@ export interface RepoCandidate {
   hasGit: boolean;
   /** `.workledger/config.yaml` exists — `init` has already run here. */
   enabled: boolean;
+  /**
+   * Worth pre-checking (amendment 2): `hasGit`, not under the OS temp dir, and not an ancestor of
+   * another candidate — a `~/Projects` that is itself a git repo holds repos, it is not one to track.
+   */
+  suggested: boolean;
   /** Sessions per harness store that name this repo as their working directory. */
   harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
@@ -41,7 +46,7 @@ export interface RepoCandidate {
 
 /** `GET /api/onboarding/discover`. `found` never repeats a path already in `known`. */
 export interface DiscoverResult {
-  /** Repos the harness stores have sessions for — pre-checked in the wizard. */
+  /** Repos the harness stores have sessions for — pre-checked in the wizard when `suggested`. */
   known: RepoCandidate[];
   /** `.git` directories under `roots` the stores do not mention. */
   found: RepoCandidate[];

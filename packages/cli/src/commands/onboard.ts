@@ -43,7 +43,7 @@ export interface OnboardOptions {
   json?: boolean;
   /** Comma-separated roots to walk for `.git` directories; default `~/Projects`. */
   roots?: string;
-  /** Comma-separated repo paths to enable; default every `known` repo. */
+  /** Comma-separated repo paths to enable; default every `suggested` `known` repo. */
   select?: string;
   since?: string;
   method?: string;
@@ -111,8 +111,9 @@ function sessionsLabel(candidate: RepoCandidate): string {
 /**
  * Which repos to enable.
  *
- * `--select` wins; otherwise the default is every `known` repo (the ones with agent history),
- * and on a terminal the operator can pick by number from the combined list instead.
+ * `--select` wins; otherwise the default is every `known` repo (the ones with agent history)
+ * that is `suggested` — the wizard's pre-check — and on a terminal the operator can pick by
+ * number from the combined list instead.
  */
 async function selectRepos(
   discover: DiscoverResult,
@@ -123,7 +124,8 @@ async function selectRepos(
   const selected = csv(options.select);
   if (selected.length > 0) return selected;
   const all = [...discover.known, ...discover.found];
-  const fallback = discover.known.map((candidate) => candidate.path);
+  const preselected = discover.known.map((candidate, index) => [candidate, index + 1] as const).filter(([c]) => c.suggested);
+  const fallback = preselected.map(([candidate]) => candidate.path);
   if (!ask) return fallback.length > 0 ? fallback : undefined;
 
   io.stdout("Projects:");
@@ -134,7 +136,7 @@ async function selectRepos(
   if (all.length === 0) return undefined;
   const answer = await io.ask(
     "Select repos to track (numbers, comma-separated)",
-    discover.known.map((_, index) => String(index + 1)).join(",") || "none",
+    preselected.map(([, n]) => String(n)).join(",") || "none",
   );
   if (answer === "none") return undefined;
   const picks: string[] = [];

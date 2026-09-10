@@ -8,14 +8,19 @@
  * path is in one list or the other, never both.
  *
  * A session recorded in a subdirectory counts for the repo above it: Claude Code slugs the
- * working directory, not the repo, and `packages/cli` is not a project of its own.
+ * working directory, not the repo, and `packages/cli` is not a project of its own. A session
+ * whose directory is gone or under the OS temp dir counts for nothing (amendment 2): a test
+ * fixture that ran an agent is not a project either.
+ *
+ * `suggested` is what the wizard pre-checks: a git repo outside the temp dirs that holds no other
+ * candidate. A `~/Projects` with its own `.git` is walked *and* listed, unsuggested.
  */
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { configFile } from "../config.js";
 import { findRepoRoot } from "../ledger-fs.js";
-import { assertRootPaths } from "./repo-path.js";
+import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
 import { claudeProjects, codexSessions, isDirectory } from "./stores.js";
 import type { OnboardingIo } from "./io.js";
 import type { DiscoverResult, RepoCandidate } from "@workledger/server";
@@ -47,23 +52,31 @@ function candidate(repo: string): RepoCandidate {
     // A file as well as a directory: a git worktree's `.git` is a file pointing at the main one.
     hasGit: existsSync(path.join(repo, ".git")),
     enabled: existsSync(configFile(repo)),
+    // Settled once every candidate is in, by `discoverRepos`.
+    suggested: false,
     harnessSessions: {},
     lastSessionAt: null,
   };
 }
 
-/** The repo a session's working directory belongs to, or the directory itself. */
-function repoOf(cwd: string): string | undefined {
-  if (!isDirectory(cwd)) return undefined;
+/**
+ * The repo a session's working directory belongs to, or the directory itself; `undefined` for a
+ * directory that is gone or under one of `tempDirs`.
+ */
+function repoOf(cwd: string, tempDirs: readonly string[]): string | undefined {
+  if (!isDirectory(cwd) || underTempDir(cwd, tempDirs)) return undefined;
   return findRepoRoot(cwd) ?? path.resolve(cwd);
 }
 
-/** Every `.git` directory under `root`, at most {@link FOUND_DEPTH} levels down. A repo is not entered. */
+/**
+ * Every `.git` directory under `root`, at most {@link FOUND_DEPTH} levels down. The root itself
+ * is a candidate when it has one, and is walked regardless; a repo below it is not entered.
+ */
 function walkRoot(root: string, into: (repo: string) => void): void {
   const walk = (dir: string, depth: number): void => {
     if (existsSync(path.join(dir, ".git"))) {
       into(dir);
-      return;
+      if (depth > 0) return;
     }
     if (depth >= FOUND_DEPTH) return;
     let entries;
@@ -86,6 +99,7 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
   // the caller named has to be an absolute existing directory (`./repo-path.ts`).
   const roots = assertRootPaths((options.roots ?? []).map((root) => expandRoot(root, io)));
   if (roots.length === 0) roots.push(path.join(io.homeDir, DEFAULT_ROOT));
+  const tempDirs = io.tempDirs ?? OS_TEMP_DIRS;
 
   const known = new Map<string, RepoCandidate>();
   const bump = (repo: string, harness: "claude-code" | "codex", sessions: number, newestMs: number): void => {
@@ -100,12 +114,12 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
 
   for (const project of claudeProjects(io.homeDir)) {
     if (project.cwd === undefined || project.sessions === 0) continue;
-    const repo = repoOf(project.cwd);
+    const repo = repoOf(project.cwd, tempDirs);
     if (repo !== undefined) bump(repo, "claude-code", project.sessions, project.newestMs);
   }
   for (const session of codexSessions(io.homeDir)) {
     if (session.cwd === null) continue;
-    const repo = repoOf(session.cwd);
+    const repo = repoOf(session.cwd, tempDirs);
     if (repo !== undefined) bump(repo, "codex", 1, session.mtimeMs);
   }
 
@@ -114,6 +128,12 @@ export function discoverRepos(options: { roots?: string[] | undefined }, io: Onb
     walkRoot(root, (repo) => {
       if (!known.has(repo) && !found.has(repo)) found.set(repo, candidate(repo));
     });
+  }
+
+  const all = [...known.values(), ...found.values()];
+  const holdsAnother = (repo: string): boolean => all.some((other) => other.path.startsWith(`${repo}${path.sep}`));
+  for (const entry of all) {
+    entry.suggested = entry.hasGit && !underTempDir(entry.path, tempDirs) && !holdsAnother(entry.path);
   }
 
   return {
