@@ -2,21 +2,24 @@ import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
+import { ListRow, RowMeta } from "../../components/ui/list-row.js";
 import { messageOf } from "../../lib/errors.js";
 import type { AppSource, InitResult, Workspace } from "../../lib/ledger-source.js";
 import { announceReposChanged } from "./live.js";
 import { formatRelative } from "./format.js";
 
 /**
- * One folder from `GET /api/workspaces` (amendment 12) — Home's second group.
+ * One folder from `GET /api/workspaces` (amendment 12) — Home's second group, as a row.
  *
  * Not a link, unlike {@link RepoCard}: a folder is not a repo, so it has no ledger to open. The
  * operator's rule is the whole point of the separation — "simply because transcripts are found in
- * a folder doesn't mean that folder is a repo and hence a project" — so the card states what is
- * actually known (sessions started here, tracked repos under it, hooks) and offers the one action
+ * a folder doesn't mean that folder is a repo and hence a project" — so the row states what is
+ * actually known (hooks, sessions started here, when the last one was) and offers the one action
  * that changes anything: installing the workledger hooks into the folder, which is
  * `POST /api/onboarding/init` with `workspaces: [path]` and no repo.
+ *
+ * The nav lists these folders by name; this row is what the nav's link leads to, so it carries
+ * what the nav cannot — the path, the recency, and the action.
  */
 export function WorkspaceCard({
   workspace,
@@ -30,32 +33,33 @@ export function WorkspaceCard({
   onInstalled: () => void;
 }) {
   return (
-    <Card className="h-full">
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          {workspace.hooksInstalled ? (
-            <Badge variant="outline" className="border-transparent bg-success text-success-foreground">
-              hooks installed
-            </Badge>
-          ) : (
-            <Badge variant="warning">no hooks</Badge>
-          )}
-          {workspace.registered ? <Badge variant="secondary">registered</Badge> : null}
-        </div>
-        <CardTitle>{workspace.name}</CardTitle>
-        <CardDescription className="break-all font-mono">{workspace.path}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-          <Stat label="sessions" value={String(workspace.sessions)} />
-          <Stat label="last session" value={formatRelative(workspace.lastSessionAt, now)} />
-          <Stat label="tracked repos" value={String(workspace.repos.length)} />
-        </dl>
-        {workspace.hooksInstalled ? null : (
-          <InstallHooks path={workspace.path} source={source} onInstalled={onInstalled} />
+    <ListRow aria-label={workspace.name}>
+      {/* `basis-48` rather than a column below `sm`: see the note in `next/backlog-item.tsx` —
+          `flex-col` plus `flex-wrap` wraps into a second column and grows the row sideways. */}
+      <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+        {workspace.hooksInstalled ? (
+          <Badge variant="outline" className="shrink-0 border-transparent bg-success text-success-foreground">
+            hooks
+          </Badge>
+        ) : (
+          <Badge variant="warning" className="shrink-0">
+            no hooks
+          </Badge>
         )}
-      </CardContent>
-    </Card>
+        <span className="min-w-0 flex-1 truncate text-sm" title={workspace.path}>
+          {workspace.name}
+        </span>
+        <span className="hidden min-w-0 shrink truncate font-mono text-xs text-subtle-foreground md:inline">
+          {workspace.path}
+        </span>
+      </div>
+      <RowMeta>{`${String(workspace.sessions)} sessions`}</RowMeta>
+      <RowMeta>{`${String(workspace.repos.length)} tracked repos`}</RowMeta>
+      <RowMeta className="hidden sm:inline">{formatRelative(workspace.lastSessionAt, now)}</RowMeta>
+      {workspace.hooksInstalled ? null : (
+        <InstallHooks path={workspace.path} source={source} onInstalled={onInstalled} />
+      )}
+    </ListRow>
   );
 }
 
@@ -79,10 +83,10 @@ function refusalIn(result: InitResult, folder: string): string | null {
  * The action. `repos: []` with the folder in `workspaces` is amendment 12's relaxation: the repos
  * under it are already tracked, and `init` must never touch one the operator did not select.
  *
- * The button reports its own failure beside itself rather than through the page's error panel —
- * the rest of Home is still perfectly readable when one folder cannot be hooked — and it stays
- * enabled, because every refusal here is one the operator can act on (add a repo under the
- * folder, fix the permissions) and then retry.
+ * A quiet control, like every other per-row action (#134). It reports its own failure beside
+ * itself rather than through the page's error panel — the rest of Home is still perfectly readable
+ * when one folder cannot be hooked — and it stays enabled, because every refusal here is one the
+ * operator can act on (add a repo under the folder, fix the permissions) and then retry.
  */
 function InstallHooks({
   path,
@@ -119,24 +123,15 @@ function InstallHooks({
   };
 
   return (
-    <div className="flex flex-col items-start gap-2">
-      <Button variant="outline" size="sm" disabled={busy} onClick={install}>
+    <>
+      <Button variant="quiet" size="xs" disabled={busy} onClick={install}>
         {busy ? "Installing…" : "Install hooks"}
       </Button>
       {error === null ? null : (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="basis-full text-xs text-destructive">
           Could not install hooks: {error}
         </p>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="m-0 text-base font-semibold tabular-nums">{value}</dd>
-    </div>
+    </>
   );
 }

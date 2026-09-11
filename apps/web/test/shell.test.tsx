@@ -134,7 +134,9 @@ describe("legacy redirects", () => {
 describe("app shell", () => {
   it("renders Home and the machine-wide tabs in the nav on Home", async () => {
     renderAt("#/");
-    await screen.findByRole("heading", { name: "Projects", level: 2 });
+    // Home is a status overview now, not a second copy of the nav (#134): its own title is
+    // "Overview", and the project list and the machine-wide tabs are the nav's job.
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
     const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
     const hrefs = within(nav)
       .getAllByRole("link")
@@ -332,8 +334,13 @@ describe("routes render fixture data", () => {
     expect(await screen.findByText("github.com/ManasHardas/workledger")).toBeDefined();
     expect(await screen.findByText("claude-code")).toBeDefined();
     expect(await screen.findByText("cursor")).toBeDefined();
-    // The reading the page derives from the fixture's probe: `cursor` has no binary on PATH.
-    expect(await screen.findByText("`cursor` is not on PATH")).toBeDefined();
+    // The reading the page derives from the fixture's probe: `cursor` has no binary on PATH. The
+    // complaint itself is evidence, so the row counts it and the panel behind it says what it is.
+    const row = await screen.findByRole("listitem", { name: "cursor" });
+    expect(within(row).getByText("2 problems")).toBeDefined();
+    fireEvent.click(within(row).getByRole("button", { name: "cursor" }));
+    const panel = await screen.findByRole("dialog");
+    expect(within(panel).getByText("`cursor` is not on PATH")).toBeDefined();
   });
 
   it("shows a loading state before the first read resolves", () => {

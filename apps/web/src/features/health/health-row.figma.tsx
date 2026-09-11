@@ -1,18 +1,13 @@
 /**
  * Code Connect mapping for one Health row — **skeleton**; see `apps/web/CODE_CONNECT.md`.
  *
- * `Row` is internal to `health-report.tsx`, so this uses Code Connect's example-only form —
- * `figma.connect(url, …)` with no component — and shows the composition the node stands for. When
- * the component is exported, the operator adds it as the first argument and shortens the example.
+ * `HealthRow` is internal to `health-report.tsx`, so this uses Code Connect's example-only form —
+ * `figma.connect(url, …)` with no component — and shows the composition the node stands for: the
+ * shared `ListRow`, a status chip, the reading's name, and how many complaints doctor made. The
+ * complaints themselves are in the right panel (docs/design/direction.md rule 3), not on the row.
  */
 import { Badge } from "../../components/ui/badge.js";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card.js";
+import { ListRow, RowList, RowTitle } from "../../components/ui/list-row.js";
 import figma from "../../lib/code-connect.js";
 
 /** The same reading-to-variant rule `health-report.tsx` applies, restated for the snippet. */
@@ -22,23 +17,20 @@ figma.connect("https://www.figma.com/design/FIGMA_FILE_KEY?node-id=NODE_ID_HEALT
   props: {
     status: figma.enum("Status", { Ok: "ok", Warn: "warn", Broken: "broken" } as const),
     label: figma.string("Label"),
-    detail: figma.string("Detail"),
-    problem: figma.string("Problem"),
+    problems: figma.string("Problems"),
+    selected: figma.boolean("Selected"),
   },
   example: (props) => (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={VARIANT[props.status]}>{props.status}</Badge>
-          <CardTitle>{props.label}</CardTitle>
-        </div>
-        <CardDescription className="break-words">{props.detail}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
-          <li>{props.problem}</li>
-        </ul>
-      </CardContent>
-    </Card>
+    <RowList>
+      <ListRow selected={props.selected} aria-label={props.label}>
+        <Badge variant={VARIANT[props.status]} className="shrink-0">
+          {props.status}
+        </Badge>
+        <RowTitle aria-haspopup="dialog">{props.label}</RowTitle>
+        <span className="shrink-0 text-xs tabular-nums text-subtle-foreground">
+          {props.problems}
+        </span>
+      </ListRow>
+    </RowList>
   ),
 });

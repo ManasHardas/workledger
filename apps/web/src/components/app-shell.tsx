@@ -287,7 +287,16 @@ function Sidebar({
             <ViewIcon name={item.icon} />
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.count === undefined ? null : (
-              <span className="shrink-0 text-xs tabular-nums text-subtle-foreground">{item.count}</span>
+              // The selected row is one colour: its count inherits the row's accent rather than
+              // sitting on the selected surface in tertiary grey, which is below 4.5:1 there.
+              <span
+                className={cn(
+                  "shrink-0 text-xs tabular-nums",
+                  item.current ? "" : "text-subtle-foreground",
+                )}
+              >
+                {item.count}
+              </span>
             )}
           </a>
           </Dismissing>

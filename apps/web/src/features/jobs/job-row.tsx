@@ -1,182 +1,100 @@
-import { useCallback, useState } from "react";
-import type { SyntheticEvent } from "react";
-
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
-import { Card, CardContent, CardHeader } from "../../components/ui/card.js";
-import { messageOf } from "../../lib/errors.js";
+import { ConfirmAction, ListRow, RowActions, RowMeta, RowTitle } from "../../components/ui/list-row.js";
 import { repoHref } from "../../lib/router.js";
-import { detailHref } from "../ledger/detail-route.js";
-import { canCancel, canRetry, elapsed, formatWhen, shortId, statusVariant, waitingSentence, waitingUntil } from "./format.js";
+import { canCancel, canRetry, elapsed, shortId, statusVariant, waitingUntil } from "./format.js";
 
 import type { Job, Repo } from "../../lib/ledger-source.js";
 
 /**
- * One `jobs` row: what it is, what it is doing, to which session, and what went wrong.
+ * One `jobs` row (`docs/design/direction.md` §Density): what it is, what it is doing, and how long
+ * it has been at it.
  *
- * Every field the contract's row carries that a human can act on is on screen — status, kind,
- * session, attempts, the three timestamps and the error — because the reason this view exists is
- * that a repair that failed at 3am must be legible at 9am without opening the index.
+ * At most three chips, and each of them carries state and nothing else (rule 2): the status, the
+ * kind, and — for a queued job whose `retry_after` is still ahead — that it is waiting for the
+ * harness's usage window (#100). The attempt count is a number, so it sits with the other numbers
+ * on the right rather than becoming a fourth chip.
  *
- * The session is a link into the Ledger rather than 26 characters of ULID as text: the job is only
- * interesting next to the session it is repairing. `repoId` is the repo that link lives under;
+ * The three timestamps, the error, the resumed session's log and the link into the Ledger are the
+ * evidence for the row, so they are in the right panel (rule 3, `job-panel.tsx`), which the
+ * session id opens. Retry and Cancel stay on the row: they are what the operator does *to* the
+ * queue, and cancelling loses work, so it is a quiet control whose confirming step is the only
+ * place the destructive colour appears (#134).
+ *
  * `repo`, when given, is the machine-wide tab's repo column (P8) and links to that repo's queue.
- *
- * A job with a `log_path` gets a collapsed "Log" section (#97): the resumed session's own output,
- * read through `readLog` only when opened — it is the one record of why a resume that exited 0
- * recorded nothing, and the parent supplies the read so the machine-wide tab can scope it to the
- * row's repo.
- *
- * A queued job with a `retry_after` still ahead is waiting for the harness's usage window
- * (#100): it says so with the reset in local time, in place of the error line that would
- * otherwise read as a failure.
  */
 export function JobRow({
   job,
-  repoId,
   repo,
   now,
+  selected,
   pending,
   error,
+  onOpen,
   onCancel,
   onRetry,
-  readLog,
   canWrite,
 }: {
   job: Job;
-  repoId: string;
   repo?: Repo;
   now: number;
+  selected: boolean;
   pending: boolean;
   error: string | undefined;
+  onOpen: () => void;
   onCancel: () => void;
   onRetry: () => void;
-  readLog: () => Promise<string>;
   canWrite: boolean;
 }) {
   const waitUntil = waitingUntil(job, now);
   return (
-    <li aria-label={`${job.kind} ${shortId(job.id)}`}>
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-            {waitUntil === undefined ? null : <Badge variant="outline">waiting</Badge>}
-            <Badge variant="secondary">{job.kind}</Badge>
-            {job.attempts > 1 ? (
-              <Badge variant="outline">{`${String(job.attempts)} attempts`}</Badge>
-            ) : null}
-            <span className="font-mono text-xs text-muted-foreground">{shortId(job.id)}</span>
-            {repo === undefined ? null : (
-              <a
-                href={repoHref(repo.id, "jobs")}
-                aria-label={`${repo.name} — Jobs`}
-                className="rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {repo.name}
-              </a>
-            )}
-          </div>
-          <a
-            href={detailHref(repoId, job.session_ulid)}
-            className="w-fit rounded-sm font-mono text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {job.session_ulid}
-          </a>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-xs sm:grid-cols-[auto_1fr_auto_1fr]">
-            <Field label="created" value={formatWhen(job.created_at)} />
-            <Field label="started" value={formatWhen(job.started_at)} />
-            <Field label="finished" value={formatWhen(job.finished_at)} />
-            <Field label="elapsed" value={elapsed(job, now)} />
-          </dl>
-
-          {waitUntil !== undefined ? (
-            <p role="status" className="text-xs text-muted-foreground">
-              {waitingSentence(waitUntil, now)}
-            </p>
-          ) : job.error === null || job.error === "" ? null : (
-            <p className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs text-destructive">
-              {job.error}
-            </p>
-          )}
-
-          {error === undefined ? null : (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          )}
-
-          {job.log_path === null ? null : <JobLog readLog={readLog} />}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canWrite || pending || !canCancel(job.status)}
-              onClick={onCancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canWrite || pending || !canRetry(job.status)}
-              onClick={onRetry}
-            >
-              Retry
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </li>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="col-span-2 grid grid-cols-subgrid">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="m-0 font-mono">{value}</dd>
-    </div>
-  );
-}
-
-/** The collapsed log, read on the first open and re-read on every open after. */
-function JobLog({ readLog }: { readLog: () => Promise<string> }) {
-  const [result, setResult] = useState<
-    { state: "idle" } | { state: "loading" } | { state: "error"; message: string } | { state: "ready"; text: string }
-  >({ state: "idle" });
-
-  const onToggle = useCallback(
-    (event: SyntheticEvent<HTMLDetailsElement>) => {
-      if (!event.currentTarget.open) return;
-      setResult({ state: "loading" });
-      readLog().then(
-        (text) => setResult({ state: "ready", text }),
-        (error: unknown) => setResult({ state: "error", message: messageOf(error) }),
-      );
-    },
-    [readLog],
-  );
-
-  return (
-    <details className="text-xs" onToggle={onToggle}>
-      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Log</summary>
-      {result.state === "loading" ? (
-        <p role="status" className="mt-1 text-muted-foreground">
-          Loading…
+    <ListRow selected={selected} aria-label={`${job.kind} ${shortId(job.id)}`}>
+      <Badge variant={statusVariant(job.status)} className="shrink-0">
+        {job.status}
+      </Badge>
+      <Badge variant="secondary" className="shrink-0">
+        {job.kind}
+      </Badge>
+      {waitUntil === undefined ? null : (
+        <Badge variant="outline" className="shrink-0">
+          waiting
+        </Badge>
+      )}
+      <RowTitle aria-haspopup="dialog" className="font-mono text-xs" onClick={onOpen}>
+        {job.session_ulid}
+      </RowTitle>
+      {repo === undefined ? null : (
+        <a
+          href={repoHref(repo.id, "jobs")}
+          aria-label={`${repo.name} — Jobs`}
+          className="shrink-0 rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {repo.name}
+        </a>
+      )}
+      {job.attempts > 1 ? <RowMeta>{`${String(job.attempts)} attempts`}</RowMeta> : null}
+      <RowMeta>{elapsed(job, now)}</RowMeta>
+      <RowActions>
+        <Button
+          variant="quiet"
+          size="xs"
+          disabled={!canWrite || pending || !canRetry(job.status)}
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+        <ConfirmAction
+          label="Cancel"
+          confirmLabel="Confirm cancel"
+          disabled={!canWrite || pending || !canCancel(job.status)}
+          onConfirm={onCancel}
+        />
+      </RowActions>
+      {error === undefined ? null : (
+        <p role="alert" className="basis-full text-xs text-destructive">
+          {error}
         </p>
-      ) : result.state === "error" ? (
-        <p role="alert" className="mt-1 text-destructive">
-          Could not read the log: {result.message}
-        </p>
-      ) : result.state === "ready" ? (
-        <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono">
-          {result.text === "" ? "(empty)" : result.text}
-        </pre>
-      ) : null}
-    </details>
+      )}
+    </ListRow>
   );
 }

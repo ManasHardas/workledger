@@ -1,62 +1,70 @@
 import { Badge } from "../../components/ui/badge.js";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card.js";
+import { ListRow, RowMeta, RowTitle } from "../../components/ui/list-row.js";
 import type { Repo } from "../../lib/ledger-source.js";
 import { repoHref } from "../../lib/router.js";
 import { formatRelative } from "./format.js";
 
 /**
- * One tracked repo, summarised: name, path, the four counts `/api/repos` carries and the health
- * reading (plans/feature-p8-onboarding-home.md §Scope 2). The whole card is one link into that
- * repo's Ledger, the same shape as a session card, so Tab reaches it and Enter opens it.
+ * One tracked repo, as a status row on Home (#134).
+ *
+ * Home is not a second copy of the nav: the nav already lists the projects and the five views, so
+ * the row here is about *state* — the health reading, what is waiting, and when the repo last
+ * showed a sign of life. Every count is a link to the view that holds it (rule 4), so the row is
+ * three ways into the repo rather than one.
  */
 export function RepoCard({ repo, now }: { repo: Repo; now: number }) {
   return (
-    <a
-      href={repoHref(repo.id, "ledger")}
-      aria-label={repo.name}
-      className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-    >
-      <Card className="h-full transition-colors hover:bg-muted">
-        <CardHeader>
-          <div className="flex flex-wrap items-center gap-2">
-            <HealthBadge health={repo.health} />
-            {repo.harnesses.map((harness) => (
-              <Badge key={harness} variant="secondary">
-                {harness}
-              </Badge>
-            ))}
-          </div>
-          <CardTitle>{repo.name}</CardTitle>
-          <CardDescription className="break-all font-mono">{repo.path}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-            <Stat label="sessions · 7d" value={String(repo.sessions7d)} />
-            <Stat label="open backlog" value={String(repo.openBacklog)} />
-            <Stat label="open notes" value={String(repo.openNotes)} />
-            <Stat label="last hook" value={formatRelative(repo.lastHookAt, now)} />
-          </dl>
-        </CardContent>
-      </Card>
-    </a>
+    <ListRow aria-label={repo.name}>
+      <HealthBadge health={repo.health} />
+      <RowTitle href={repoHref(repo.id, "ledger")} className="font-medium">
+        {repo.name}
+      </RowTitle>
+      {/* The path disambiguates two repos with the same basename. It has no space to wrap at, so
+          it truncates rather than pushing the row past a 375 px viewport (rule 5) — and below
+          `md` it is gone entirely, where the name alone has to do. */}
+      <span className="hidden min-w-0 shrink truncate font-mono text-xs text-subtle-foreground md:inline">
+        {repo.path}
+      </span>
+      <Count repo={repo} view="next" value={repo.openBacklog} noun="open backlog" />
+      <Count repo={repo} view="needs" value={repo.openNotes} noun="open notes" />
+      <Count repo={repo} view="ledger" value={repo.sessions7d} noun="sessions in the last 7 days" />
+      <RowMeta className="hidden sm:inline">{formatRelative(repo.lastHookAt, now)}</RowMeta>
+    </ListRow>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/**
+ * A count, as a link to the view that counts it (rule 4). The number is what is painted; the
+ * accessible name says what it is a count of, because "4" on its own names nothing.
+ */
+function Count({
+  repo,
+  view,
+  value,
+  noun,
+}: {
+  repo: Repo;
+  view: "ledger" | "next" | "needs";
+  value: number;
+  noun: string;
+}) {
   return (
-    <div className="flex flex-col">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="m-0 text-base font-semibold tabular-nums">{value}</dd>
-    </div>
+    <a
+      href={repoHref(repo.id, view)}
+      aria-label={`${repo.name} — ${String(value)} ${noun}`}
+      className="shrink-0 rounded-sm px-1 text-xs tabular-nums text-subtle-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {value}
+    </a>
   );
 }
 
 /** Same three readings, same tokens, as the Health view's rows. */
 export function HealthBadge({ health }: { health: Repo["health"] }) {
-  if (health === "broken") return <Badge variant="destructive">broken</Badge>;
-  if (health === "warn") return <Badge variant="warning">warn</Badge>;
+  if (health === "broken") return <Badge variant="destructive" className="shrink-0">broken</Badge>;
+  if (health === "warn") return <Badge variant="warning" className="shrink-0">warn</Badge>;
   return (
-    <Badge variant="outline" className="border-transparent bg-success text-success-foreground">
+    <Badge variant="outline" className="shrink-0 border-transparent bg-success text-success-foreground">
       ok
     </Badge>
   );

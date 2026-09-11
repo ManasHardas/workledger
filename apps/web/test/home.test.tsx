@@ -5,7 +5,7 @@ import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { formatRelative } from "../src/features/home/format.js";
 import { REPOS_REFRESH_MS, announceReposChanged } from "../src/features/home/live.js";
-import { FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
+import { FIXTURE_JOBS_ALL, FIXTURE_NOTES_ALL, FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
 import { createSource, type AppSource, type InitInput, type InitResult, type LedgerEvent, type Repo, type Workspace } from "../src/lib/ledger-source.js";
 import { repoHref } from "../src/lib/router.js";
 
@@ -84,22 +84,30 @@ function withWorkspaces(list: Workspace[], init?: (input: InitInput) => Promise<
 describe("Home — folders with sessions (amendment 11)", () => {
   const [DOME, NOTES, HARD_TALKS] = FIXTURE_WORKSPACES as [Workspace, Workspace, Workspace];
 
-  it("shows the projects first and the non-repo folders in a second group below", async () => {
+  it("puts the status groups first and the non-repo folders in a group below", async () => {
     renderHome();
-    const headings = await screen.findAllByRole("heading", { level: 2 });
-    expect(headings.map((h) => h.textContent)).toEqual(["Projects", "Folders with sessions"]);
+    // Home has one title of its own now; the groups under it are sections (#134).
+    const title = await screen.findByRole("heading", { level: 2 });
+    expect(title.textContent).toBe("Overview");
+    const groups = within(screen.getByRole("main")).getAllByRole("heading", { level: 3 });
+    expect(groups.map((h) => h.textContent)).toEqual([
+      "Needs you",
+      "Running",
+      "Projects",
+      "Folders with sessions",
+    ]);
 
     const folders = screen.getByRole("list", { name: "Folders with sessions" });
-    const cards = within(folders).getAllByRole("listitem");
-    expect(cards).toHaveLength(FIXTURE_WORKSPACES.length);
-    // No folder pretends to be a project: none of these cards is a link into a ledger.
+    const rows = within(folders).getAllByRole("listitem");
+    expect(rows).toHaveLength(FIXTURE_WORKSPACES.length);
+    // No folder pretends to be a project: none of these rows is a link into a ledger.
     expect(within(folders).queryAllByRole("link")).toEqual([]);
 
     // A folder with transcripts and no repo under it is still listed — that is the operator's
     // rule ("simply because transcripts are found in a folder doesn't mean that folder is a
     // repo"): it belongs here, never in Projects.
-    expect(cards[1]!.textContent).toContain(NOTES.path);
-    expect(within(cards[1]!).getByText("tracked repos").nextElementSibling?.textContent).toBe("0");
+    expect(rows[1]!.textContent).toContain(NOTES.path);
+    expect(within(rows[1]!).getByText("0 tracked repos")).toBeDefined();
     expect(within(screen.getByRole("list", { name: "Projects" })).queryByText(NOTES.path)).toBeNull();
   });
 
@@ -111,18 +119,15 @@ describe("Home — folders with sessions (amendment 11)", () => {
     expect(first.textContent).toContain(DOME.name);
     expect(first.textContent).toContain(DOME.path);
     expect(within(first).getByText("no hooks")).toBeDefined();
-    expect(within(first).getByText("sessions").nextElementSibling?.textContent).toBe(String(DOME.sessions));
-    expect(within(first).getByText("tracked repos").nextElementSibling?.textContent).toBe("2");
-    expect(within(first).getByText("last session").nextElementSibling?.textContent).toBe(
-      formatRelative(DOME.lastSessionAt, NOW),
-    );
+    expect(within(first).getByText(`${String(DOME.sessions)} sessions`)).toBeDefined();
+    expect(within(first).getByText("2 tracked repos")).toBeDefined();
+    expect(within(first).getByText(formatRelative(DOME.lastSessionAt, NOW))).toBeDefined();
 
     const hooked = within(folders).getAllByRole("listitem")[2]!;
     expect(hooked.textContent).toContain(HARD_TALKS.name);
-    expect(within(hooked).getByText("hooks installed")).toBeDefined();
-    expect(within(hooked).getByText("registered")).toBeDefined();
+    expect(within(hooked).getByText("hooks")).toBeDefined();
     expect(within(hooked).queryByRole("button", { name: "Install hooks" })).toBeNull();
-    expect(within(hooked).getByText("last session").nextElementSibling?.textContent).toBe("never");
+    expect(within(hooked).getByText("never")).toBeDefined();
   });
 
   it("installs hooks with POST /api/onboarding/init carrying the folder and no repo, then re-reads", async () => {
@@ -144,8 +149,9 @@ describe("Home — folders with sessions (amendment 11)", () => {
     });
 
     expect(inits).toEqual([{ repos: [], workspaces: [DOME.path] }]);
-    // The re-read replaces the action with the installed badge; nothing needs a reload.
-    expect(await screen.findByText("hooks installed")).toBeDefined();
+    // The re-read replaces the action with the installed chip; nothing needs a reload.
+    expect(await screen.findByText("hooks")).toBeDefined();
+    expect(screen.queryByText("no hooks")).toBeNull();
     expect(screen.queryByRole("button", { name: "Install hooks" })).toBeNull();
   });
 
@@ -225,41 +231,73 @@ describe("Home — folders with sessions (amendment 11)", () => {
 });
 
 describe("Home", () => {
-  it("renders one card per repo with its counts, health and a link into its Ledger", async () => {
+  it("renders one status row per repo, every count a link to the view that counts it", async () => {
     renderHome();
-    await screen.findByRole("heading", { name: "Projects", level: 2 });
-
     const list = await screen.findByRole("list", { name: "Projects" });
-    const cards = within(list).getAllByRole("link");
-    expect(cards.map((card) => card.getAttribute("href"))).toEqual(
-      FIXTURE_REPOS.map((repo) => repoHref(repo.id, "ledger")),
-    );
 
-    const first = within(list).getByRole("link", { name: WORKLEDGER.name });
+    const first = within(list).getByRole("listitem", { name: WORKLEDGER.name });
+    expect(within(first).getByRole("link", { name: WORKLEDGER.name }).getAttribute("href")).toBe(
+      repoHref(WORKLEDGER.id, "ledger"),
+    );
     expect(within(first).getByText(WORKLEDGER.path)).toBeDefined();
     expect(within(first).getByText("ok")).toBeDefined();
-    expect(within(first).getByText("sessions · 7d").nextElementSibling?.textContent).toBe("3");
-    expect(within(first).getByText("open backlog").nextElementSibling?.textContent).toBe("4");
-    expect(within(first).getByText("open notes").nextElementSibling?.textContent).toBe("2");
-    expect(within(first).getByText("last hook").nextElementSibling?.textContent).toBe("1 h ago");
-    expect(within(first).getByText("claude-code")).toBeDefined();
+    expect(within(first).getByText("1 h ago")).toBeDefined();
 
-    const second = within(list).getByRole("link", { name: DASHERO.name });
+    // Rule 4: every count is a link to the thing it counts, and its name says what it counts.
+    const count = (noun: string, value: number) =>
+      within(first).getByRole("link", { name: `${WORKLEDGER.name} — ${String(value)} ${noun}` });
+    expect(count("open backlog", 4).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "next"));
+    expect(count("open notes", 2).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "needs"));
+    expect(count("sessions in the last 7 days", 3).getAttribute("href")).toBe(
+      repoHref(WORKLEDGER.id, "ledger"),
+    );
+
+    const second = within(list).getByRole("listitem", { name: DASHERO.name });
     expect(within(second).getByText("warn")).toBeDefined();
-    expect(within(second).getByText("last hook").nextElementSibling?.textContent).toBe("never");
-    expect(within(second).getByText("codex")).toBeDefined();
+    expect(within(second).getByText("never")).toBeDefined();
   });
 
-  it("links to the wizard and to the machine-wide tabs", async () => {
+  it("orders the projects by what changed most recently", async () => {
+    renderHome();
+    const list = await screen.findByRole("list", { name: "Projects" });
+    const names = within(list)
+      .getAllByRole("listitem")
+      .map((row) => row.getAttribute("aria-label"));
+    // `dashero` has never fired a hook, so it is last however many repos there are.
+    expect(names).toEqual([WORKLEDGER.name, DASHERO.name]);
+  });
+
+  it("links the wizard, and each group's count to the list it is the top of", async () => {
     renderHome();
     await screen.findByRole("list", { name: "Projects" });
     // Scoped to the middle pane: the left nav carries its own "Add projects" at the bottom
     // (docs/design/direction.md §Shell), so the unscoped name is two links now.
     const main = within(screen.getByRole("main"));
     expect(main.getByRole("link", { name: "Add projects" }).getAttribute("href")).toBe("#/onboarding");
-    const across = screen.getByRole("navigation", { name: "Across projects" });
-    expect(within(across).getByRole("link", { name: "Needs you" }).getAttribute("href")).toBe("#/needs");
-    expect(within(across).getByRole("link", { name: "Jobs" }).getAttribute("href")).toBe("#/jobs");
+    // Home no longer carries a second copy of the nav's tabs: the counts are the links (rule 4).
+    expect(screen.queryByRole("navigation", { name: "Across projects" })).toBeNull();
+    expect(
+      main.getByRole("link", { name: /open questions and blockers — Needs you$/ }).getAttribute("href"),
+    ).toBe("#/needs");
+    expect(
+      main.getByRole("link", { name: /jobs running or queued — Jobs$/ }).getAttribute("href"),
+    ).toBe("#/jobs");
+  });
+
+  it("shows what needs the operator and what is running, across projects", async () => {
+    renderHome();
+    const needs = await screen.findByRole("list", { name: "Needs you" });
+    for (const note of FIXTURE_NOTES_ALL) {
+      const row = within(needs).getByRole("link", { name: note.text });
+      expect(row.getAttribute("href")).toBe(repoHref(note.repo.id, "needs"));
+    }
+    // The fixture queue has one failed repair and nothing running: the group says both.
+    const running = await screen.findByRole("list", { name: "Running" });
+    const job = FIXTURE_JOBS_ALL[0]!;
+    expect(within(running).getByText("failed")).toBeDefined();
+    expect(within(running).getByRole("link", { name: job.session_ulid }).getAttribute("href")).toBe(
+      repoHref(job.repo.id, "jobs"),
+    );
   });
 
   it("sends a first visit with nothing tracked to the wizard, and shows the empty state after that", async () => {
@@ -296,8 +334,11 @@ describe("Home", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     const list = screen.getByRole("list", { name: "Projects" });
-    const card = () => within(list).getByRole("link", { name: WORKLEDGER.name });
-    expect(within(card()).getByText("sessions · 7d").nextElementSibling?.textContent).toBe("3");
+    const sessions = (n: number) =>
+      within(list).getByRole("link", {
+        name: `${WORKLEDGER.name} — ${String(n)} sessions in the last 7 days`,
+      });
+    expect(sessions(3)).toBeDefined();
     expect(live.reads).toBe(1);
 
     sessions7d = 4;
@@ -311,7 +352,7 @@ describe("Home", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(live.reads).toBe(2);
-    expect(within(card()).getByText("sessions · 7d").nextElementSibling?.textContent).toBe("4");
+    expect(sessions(4)).toBeDefined();
     vi.useRealTimers();
   });
 
@@ -325,7 +366,7 @@ describe("Home", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     const list = () => screen.getByRole("list", { name: "Projects" });
-    expect(within(list()).queryByRole("link", { name: DASHERO.name })).toBeNull();
+    expect(within(list()).queryByRole("listitem", { name: DASHERO.name })).toBeNull();
     expect(live.reads).toBe(1);
 
     // The daemon's frame for a repo `init` just enabled: the new card appears without a reload.
@@ -336,7 +377,7 @@ describe("Home", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(live.reads).toBe(2);
-    expect(within(list()).getByRole("link", { name: DASHERO.name })).toBeDefined();
+    expect(within(list()).getByRole("listitem", { name: DASHERO.name })).toBeDefined();
 
     // The wizard's belt-and-braces refresh from inside the tab schedules the same read.
     await act(async () => {

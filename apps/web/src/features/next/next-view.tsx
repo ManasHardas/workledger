@@ -4,9 +4,12 @@ import { backlogActions } from "./backlog-actions.js";
 import { GROUP_LABELS, canRun, compareItems, flatten, groupByStatus, reorder } from "./backlog-model.js";
 import { useBacklog } from "./use-backlog.js";
 import { Badge } from "../../components/ui/badge.js";
+import { Button } from "../../components/ui/button.js";
+import { RowList, RowSection } from "../../components/ui/list-row.js";
 import { useSource } from "../../lib/source-context.js";
 import { useIdentities } from "../identity/live.js";
 import { BacklogItem } from "./backlog-item.js";
+import { BacklogPanel } from "./backlog-panel.js";
 
 import type { BacklogAction } from "./backlog-model.js";
 import type { BacklogView } from "../../lib/ledger-source.js";
@@ -22,7 +25,11 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * Next — the repo's backlog, grouped by status and editable in place (design spec §8).
+ * Next — the repo's backlog, grouped by status, on the shell's list rhythm (#134).
+ *
+ * Each group is a section of 32 px rows; a row carries the title, at most three state chips and
+ * the writes a person makes at a glance, and everything else — the body, the provenance, the
+ * owner, the history, the merge target — is in the right panel, which the title opens (rule 3).
  *
  * Every edit is a `LedgerSource` call, never a file write: the source is the local server, which
  * runs the same `backlog-ops` function `workledger backlog …` runs, so the CLI and this list can
@@ -31,12 +38,13 @@ function isTyping(target: EventTarget | null): boolean {
 export function NextView() {
   const source = useSource();
   const backlog = useBacklog();
-  // One read for the whole list rather than one per card: the map is the same for every item.
+  // One read for the whole list rather than one per row: the map is the same for every item.
   const identities = useIdentities();
   const actions = useMemo(() => backlogActions(source, backlog.run), [source, backlog.run]);
   const canWrite = source.capabilities.write;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -51,6 +59,13 @@ export function NextView() {
   selectedRef.current = selectedId;
 
   const groups = groupByStatus(items);
+  const opened = items.find((item) => item.frontmatter.id === openId) ?? null;
+
+  // An item that left the list — discarded and hidden, or merged away — must not leave its panel
+  // behind describing something that is no longer there.
+  useEffect(() => {
+    if (openId !== null && !items.some((item) => item.frontmatter.id === openId)) setOpenId(null);
+  }, [items, openId]);
 
   const onKey = useCallback(
     (event: KeyboardEvent) => {
@@ -109,9 +124,9 @@ export function NextView() {
   };
 
   return (
-    <section aria-labelledby="next-heading" className="flex flex-col gap-4">
+    <section aria-labelledby="next-heading" className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="next-heading" className="text-xl font-semibold">
+        <h2 id="next-heading" className="text-xl font-semibold leading-title">
           Next
         </h2>
         {canWrite ? null : <Badge variant="outline">read-only source</Badge>}
@@ -133,33 +148,48 @@ export function NextView() {
           The backlog is empty. Agent-proposed items appear here as checkpoints land.
         </p>
       ) : (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-5">
           {groups.map((group) => {
             const collapsed = group.status === "discarded" && !showDiscarded;
             return (
-              <div key={group.status} className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                    {GROUP_LABELS[group.status]}
-                  </h3>
-                  <span className="text-xs text-muted-foreground">{group.items.length}</span>
-                  {group.status === "discarded" ? (
-                    <button
-                      type="button"
-                      className="text-xs underline text-muted-foreground"
+              <RowSection
+                key={group.status}
+                id={`next-group-${group.status}`}
+                title={GROUP_LABELS[group.status]}
+                count={group.items.length}
+                action={
+                  group.status === "discarded" ? (
+                    <Button
+                      variant="quiet"
+                      size="xs"
                       aria-expanded={showDiscarded}
                       onClick={() => setShowDiscarded((prior) => !prior)}
                     >
                       {showDiscarded ? "Hide discarded" : "Show discarded"}
-                    </button>
-                  ) : null}
-                </div>
+                    </Button>
+                  ) : undefined
+                }
+              >
                 {collapsed ? null : (
-                  <ul aria-label={GROUP_LABELS[group.status]} className="flex flex-col gap-3">
+                  <RowList aria-label={GROUP_LABELS[group.status]}>
                     {group.items.map((item) => (
-                      <li
+                      <BacklogItem
                         key={item.frontmatter.id}
-                        aria-label={item.frontmatter.title}
+                        item={item}
+                        actions={actions}
+                        canWrite={canWrite}
+                        selected={selectedId === item.frontmatter.id}
+                        editing={editingId === item.frontmatter.id}
+                        busy={item.frontmatter.id in backlog.pending}
+                        error={backlog.errors[item.frontmatter.id]}
+                        onSelect={() => setSelectedId(item.frontmatter.id)}
+                        onOpen={() => {
+                          setSelectedId(item.frontmatter.id);
+                          setOpenId(item.frontmatter.id);
+                        }}
+                        onEditingChange={(editing) =>
+                          setEditingId(editing ? item.frontmatter.id : null)
+                        }
                         draggable={canWrite}
                         onDragStart={() => setDraggingId(item.frontmatter.id)}
                         onDragEnd={() => setDraggingId(null)}
@@ -168,31 +198,26 @@ export function NextView() {
                           event.preventDefault();
                           onDrop(item);
                         }}
-                      >
-                        <BacklogItem
-                          item={item}
-                          others={items.filter((o) => o.frontmatter.id !== item.frontmatter.id)}
-                          actions={actions}
-                          canWrite={canWrite}
-                          selected={selectedId === item.frontmatter.id}
-                          editing={editingId === item.frontmatter.id}
-                          busy={item.frontmatter.id in backlog.pending}
-                          error={backlog.errors[item.frontmatter.id]}
-                          onSelect={() => setSelectedId(item.frontmatter.id)}
-                          onEditingChange={(editing) =>
-                            setEditingId(editing ? item.frontmatter.id : null)
-                          }
-                          identities={identities}
-                        />
-                      </li>
+                      />
                     ))}
-                  </ul>
+                  </RowList>
                 )}
-              </div>
+              </RowSection>
             );
           })}
         </div>
       )}
+
+      <BacklogPanel
+        item={opened}
+        others={items.filter((item) => item.frontmatter.id !== openId)}
+        actions={actions}
+        canWrite={canWrite}
+        busy={openId !== null && openId in backlog.pending}
+        error={openId === null ? undefined : backlog.errors[openId]}
+        identities={identities}
+        onClose={() => setOpenId(null)}
+      />
     </section>
   );
 }

@@ -183,6 +183,23 @@ const card = (title: string) => screen.getByRole("listitem", { name: title });
 const press = (button: string, title: string) =>
   fireEvent.click(within(card(title)).getByRole("button", { name: button }));
 
+/**
+ * The right panel (#134): everything a row leaves out — the body, the provenance, the owner, the
+ * merge target, the history — lives behind the row's title, which opens it.
+ */
+const openPanel = async (title: string) => {
+  fireEvent.click(within(card(title)).getByRole("button", { name: title }));
+  return screen.findByRole("dialog");
+};
+const pressIn = (panel: HTMLElement, button: string) =>
+  fireEvent.click(within(panel).getByRole("button", { name: button }));
+
+/** Discard is a two-step control now: a quiet button, then the one that confirms it. */
+const discard = (title: string) => {
+  press("Discard", title);
+  press("Confirm discard", title);
+};
+
 afterEach(cleanup);
 
 describe("grouping and provenance", () => {
@@ -221,12 +238,45 @@ describe("grouping and provenance", () => {
     expect(titles).toEqual(["Later tie", PROPOSED.frontmatter.title, "Older tie"]);
   });
 
-  it("shows the harness, session and checkpoint an item came from", async () => {
+  it("shows the harness, session and checkpoint an item came from, in the panel", async () => {
     await renderNext();
-    const provenance = within(card(PROPOSED.frontmatter.title)).getByText(
-      /claude-code · session 01JBPX2M4H6E1TSA7VYJ0G8WQD · checkpoint 2/,
+    // Rule 3: provenance is evidence, so it is never on the row.
+    expect(
+      within(card(PROPOSED.frontmatter.title)).queryByText(/01JBPX2M4H6E1TSA7VYJ0G8WQD/),
+    ).toBeNull();
+    const panel = await openPanel(PROPOSED.frontmatter.title);
+    expect(within(panel).getByText("claude-code")).toBeDefined();
+    expect(
+      within(panel).getByText(/session 01JBPX2M4H6E1TSA7VYJ0G8WQD · cp 2/),
+    ).toBeDefined();
+  });
+
+  it("keeps each row on the list rhythm, with the accent bar only on the selected one", async () => {
+    await renderNext();
+    const row = card(PROPOSED.frontmatter.title);
+    expect(row.className).toContain("min-h-row");
+    expect(row.className).toContain("hover:bg-muted");
+    expect(row.hasAttribute("data-selected")).toBe(false);
+
+    fireEvent.keyDown(window, { key: "j" });
+    await waitFor(() =>
+      expect(card(PROPOSED.frontmatter.title).hasAttribute("data-selected")).toBe(true),
     );
-    expect(provenance).toBeDefined();
+    // Nothing hardcodes a colour: the bar is the primary token, the surface the selected one.
+    const selected = card(PROPOSED.frontmatter.title);
+    expect(selected.className).toContain("bg-selected");
+    expect(selected.querySelector("span[aria-hidden='true']")!.className).toContain("bg-primary");
+  });
+
+  it("never scrolls sideways at 375 px: the title gives up its width, nothing else does", async () => {
+    await renderNext();
+    const row = card(PROPOSED.frontmatter.title);
+    const title = within(row).getByRole("button", { name: PROPOSED.frontmatter.title });
+    // `min-w-0 … truncate` is the whole of rule 5 on a row: every other child is `shrink-0`, so
+    // the one element that can be long is the one that gets clipped.
+    expect(title.className).toContain("min-w-0");
+    expect(title.className).toContain("truncate");
+    expect(row.className).toContain("flex-wrap");
   });
 });
 
@@ -259,15 +309,21 @@ describe("identities", () => {
     ],
   });
 
-  /** Every element whose `title` is `email` inside one card. */
-  const tooltipped = (title: string, email: string) =>
-    within(card(title))
+  /**
+   * Every element whose `title` is `email` inside one item's *panel* — the identities map names
+   * actors, and every actor an item has (proposed_by, owner, confirmed_by, history) is evidence,
+   * so it lives in the panel (#134, rule 3).
+   */
+  const tooltipped = async (title: string, email: string) => {
+    const panel = await openPanel(title);
+    return within(panel)
       .getAllByTitle(email)
       .map((node) => node.textContent);
+  };
 
   it("renders the mapped name for owner, confirmed_by and proposed_by.author", async () => {
     await renderNext({}, MAPPED);
-    const shown = tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email);
+    const shown = await tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email);
     // proposed_by.author, owner and confirmed_by — three actors, one name, one tooltip each.
     expect(shown).toEqual([
       "Manas Hardas (mapped)",
@@ -287,7 +343,8 @@ describe("identities", () => {
     );
     await screen.findByText(HISTORIC.frontmatter.title);
 
-    const history = within(card(HISTORIC.frontmatter.title)).getByRole("list", { name: "History" });
+    const panel = await openPanel(HISTORIC.frontmatter.title);
+    const history = within(panel).getByRole("list", { name: "History" });
     const rows = within(history).getAllByRole("listitem");
     expect(rows[0]!.textContent).toContain("Manas Hardas (mapped)");
     expect(within(rows[0]!).getByTitle(AUTHOR.email)).toBeDefined();
@@ -299,19 +356,19 @@ describe("identities", () => {
   it("falls back to the email when the address is unmapped or the file is absent", async () => {
     // No file at all — the default `renderNext` identities.
     await renderNext();
-    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
+    expect(await tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
       AUTHOR.email,
       AUTHOR.email,
       AUTHOR.email,
     ]);
     // The ledger's own `name` is not the fallback: it is whatever git happened to be configured
     // with, which is the value the file exists to override.
-    expect(within(card(ACCEPTED.frontmatter.title)).queryByText(AUTHOR.name)).toBeNull();
+    expect(within(screen.getByRole("dialog")).queryByText(AUTHOR.name)).toBeNull();
     cleanup();
 
     // A file that maps somebody else leaves this address exactly where the missing file did.
     await renderNext({}, [{ email: "grace@example.com", name: "Grace Hopper", dome_user: null }]);
-    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
+    expect(await tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)).toEqual([
       AUTHOR.email,
       AUTHOR.email,
       AUTHOR.email,
@@ -320,12 +377,15 @@ describe("identities", () => {
 
   it("re-reads the file on health.changed, so an edit lands without a reload", async () => {
     const spy = await renderNext();
-    expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)[0]).toBe(AUTHOR.email);
+    expect((await tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email))[0]).toBe(AUTHOR.email);
 
     spy.setIdentities(MAPPED);
     spy.emit({ type: "health.changed" });
+    const panel = screen.getByRole("dialog");
     await waitFor(() =>
-      expect(tooltipped(ACCEPTED.frontmatter.title, AUTHOR.email)[0]).toBe("Manas Hardas (mapped)"),
+      expect(within(panel).getAllByTitle(AUTHOR.email)[0]!.textContent).toBe(
+        "Manas Hardas (mapped)",
+      ),
     );
   });
 });
@@ -333,14 +393,15 @@ describe("identities", () => {
 describe("the agent-proposed marker", () => {
   it("marks an unconfirmed item and drops the marker once confirmed_by lands", async () => {
     const spy = await renderNext();
-    expect(within(card(PROPOSED.frontmatter.title)).getByText("agent-proposed")).toBeDefined();
+    // At most three chips, and each one carries state (rule 2): the marker is one word now.
+    expect(within(card(PROPOSED.frontmatter.title)).getByText("agent")).toBeDefined();
     // ACCEPTED carries a confirmed_by stamp in the fixture, so it never shows the marker.
-    expect(within(card(ACCEPTED.frontmatter.title)).queryByText("agent-proposed")).toBeNull();
+    expect(within(card(ACCEPTED.frontmatter.title)).queryByText("agent")).toBeNull();
 
     press("Accept", PROPOSED.frontmatter.title);
     expect(spy.calls).toContainEqual(["accept", PROPOSED.frontmatter.id]);
     await waitFor(() =>
-      expect(within(card(PROPOSED.frontmatter.title)).queryByText("agent-proposed")).toBeNull(),
+      expect(within(card(PROPOSED.frontmatter.title)).queryByText("agent")).toBeNull(),
     );
   });
 });
@@ -365,12 +426,44 @@ describe("the status machine", () => {
   it.each([
     ["Accept", "accept", PROPOSED],
     ["Done", "done", PROPOSED],
-    ["Discard", "discard", PROPOSED],
     ["Start", "start", ACCEPTED],
   ] as const)("«%s» calls source.%s", async (label, method, target) => {
     const spy = await renderNext();
     press(label, target.frontmatter.title);
     expect(spy.calls).toContainEqual([method, target.frontmatter.id]);
+  });
+
+  /**
+   * The reviewer's complaint on #128: a solid red Discard sitting in the list. The control is
+   * quiet now, the destructive colour is on the confirming step only, and one click discards
+   * nothing (docs/design/direction.md via #134).
+   */
+  it("«Discard» is a quiet two-step control, and one click discards nothing", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+
+    const quiet = within(card(title)).getByRole("button", { name: "Discard" });
+    expect(quiet.className).not.toContain("bg-destructive");
+    expect(quiet.className).toContain("text-muted-foreground");
+
+    press("Discard", title);
+    expect(spy.calls.some(([name]) => name === "discard")).toBe(false);
+    const confirm = within(card(title)).getByRole("button", { name: "Confirm discard" });
+    // The one place the destructive colour is allowed outside a status chip — as an outline.
+    expect(confirm.className).toContain("text-destructive");
+    expect(confirm.className).toContain("border-destructive");
+
+    fireEvent.click(confirm);
+    expect(spy.calls).toContainEqual(["discard", PROPOSED.frontmatter.id]);
+  });
+
+  it("«Keep» disarms the confirming step without discarding", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    press("Discard", title);
+    press("Keep", title);
+    expect(spy.calls.some(([name]) => name === "discard")).toBe(false);
+    expect(within(card(title)).getByRole("button", { name: "Discard" })).toBeDefined();
   });
 
   it("«Restore» calls source.restore for a done and for a discarded item", async () => {
@@ -384,7 +477,7 @@ describe("the status machine", () => {
 });
 
 describe("editing", () => {
-  it("sends only the fields the human changed", async () => {
+  it("renames in place, on the row, and sends only the title", async () => {
     const spy = await renderNext();
     const title = PROPOSED.frontmatter.title;
     press("Edit", title);
@@ -399,14 +492,13 @@ describe("editing", () => {
     ]);
   });
 
-  it("edits the body through the textarea", async () => {
+  it("edits the body through the panel's textarea", async () => {
     const spy = await renderNext();
-    const title = PROPOSED.frontmatter.title;
-    press("Edit", title);
-    fireEvent.change(within(card(title)).getByLabelText("Body"), {
+    const panel = await openPanel(PROPOSED.frontmatter.title);
+    fireEvent.change(within(panel).getByLabelText("Body"), {
       target: { value: "A dropped stream freezes the view." },
     });
-    press("Save", title);
+    pressIn(panel, "Save body");
     expect(spy.calls).toContainEqual([
       "edit",
       PROPOSED.frontmatter.id,
@@ -414,37 +506,38 @@ describe("editing", () => {
     ]);
   });
 
-  it("sets and clears the priority through edit", async () => {
+  it("sets and clears the priority through the panel", async () => {
     const spy = await renderNext();
-    fireEvent.change(within(card(PROPOSED.frontmatter.title)).getByLabelText("Priority"), {
-      target: { value: "p1" },
-    });
-    fireEvent.change(within(card(ACCEPTED.frontmatter.title)).getByLabelText("Priority"), {
-      target: { value: "none" },
-    });
+    const first = await openPanel(PROPOSED.frontmatter.title);
+    fireEvent.change(within(first).getByLabelText("Priority"), { target: { value: "p1" } });
     expect(spy.calls).toContainEqual(["edit", PROPOSED.frontmatter.id, { priority: "p1" }]);
+
+    // A second row replaces the panel's contents rather than opening a second panel.
+    const second = await openPanel(ACCEPTED.frontmatter.title);
+    fireEvent.change(within(second).getByLabelText("Priority"), { target: { value: "none" } });
     expect(spy.calls).toContainEqual(["edit", ACCEPTED.frontmatter.id, { priority: null }]);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
   });
 });
 
 describe("assign, rank and merge", () => {
   it("assigns an owner by name and email, and unassigns with null", async () => {
     const spy = await renderNext();
-    const title = PROPOSED.frontmatter.title;
-    fireEvent.change(within(card(title)).getByLabelText("Owner name"), {
+    const panel = await openPanel(PROPOSED.frontmatter.title);
+    fireEvent.change(within(panel).getByLabelText("Owner name"), {
       target: { value: "Ada Lovelace" },
     });
-    fireEvent.change(within(card(title)).getByLabelText("Owner email"), {
+    fireEvent.change(within(panel).getByLabelText("Owner email"), {
       target: { value: "ada@example.com" },
     });
-    press("Assign", title);
+    pressIn(panel, "Assign");
     expect(spy.calls).toContainEqual([
       "assign",
       PROPOSED.frontmatter.id,
       { name: "Ada Lovelace", email: "ada@example.com" },
     ]);
 
-    press("Unassign", ACCEPTED.frontmatter.title);
+    pressIn(await openPanel(ACCEPTED.frontmatter.title), "Unassign");
     expect(spy.calls).toContainEqual(["assign", ACCEPTED.frontmatter.id, null]);
   });
 
@@ -497,11 +590,11 @@ describe("assign, rank and merge", () => {
 
   it("merges an item into another one", async () => {
     const spy = await renderNext();
-    const title = PROPOSED.frontmatter.title;
-    fireEvent.change(within(card(title)).getByLabelText("Merge into"), {
+    const panel = await openPanel(PROPOSED.frontmatter.title);
+    fireEvent.change(within(panel).getByLabelText("Merge into"), {
       target: { value: ACCEPTED.frontmatter.id },
     });
-    press("Merge", title);
+    pressIn(panel, "Merge");
     expect(spy.calls).toContainEqual([
       "merge",
       PROPOSED.frontmatter.id,
@@ -514,11 +607,12 @@ describe("keyboard", () => {
   it("moves the selection with j and k", async () => {
     await renderNext();
     fireEvent.keyDown(window, { key: "j" });
-    expect(card(PROPOSED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+    expect(card(PROPOSED.frontmatter.title).hasAttribute("data-selected")).toBe(true);
     fireEvent.keyDown(window, { key: "j" });
-    expect(card(ACCEPTED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+    expect(card(ACCEPTED.frontmatter.title).hasAttribute("data-selected")).toBe(true);
+    expect(card(PROPOSED.frontmatter.title).hasAttribute("data-selected")).toBe(false);
     fireEvent.keyDown(window, { key: "k" });
-    expect(card(PROPOSED.frontmatter.title).querySelector("[aria-current='true']")).not.toBeNull();
+    expect(card(PROPOSED.frontmatter.title).hasAttribute("data-selected")).toBe(true);
   });
 
   it("opens the editor on e", async () => {
@@ -594,7 +688,7 @@ describe("optimistic writes", () => {
       </SourceProvider>,
     );
     await screen.findByText(PROPOSED.frontmatter.title);
-    press("Discard", PROPOSED.frontmatter.title);
+    discard(PROPOSED.frontmatter.title);
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("read-only");
     // Rolled back: the item is in Proposed again, not in the discarded group.
@@ -616,7 +710,18 @@ describe("a read-only source", () => {
     );
     await screen.findByText(PROPOSED.frontmatter.title);
     expect(screen.getByText("read-only source")).toBeDefined();
-    const buttons = within(card(PROPOSED.frontmatter.title)).getAllByRole("button");
+    // The title still opens the panel — reading is not a write — but every control that changes
+    // the ledger is disabled rather than hidden, so the reason it cannot be used stays visible.
+    const buttons = within(card(PROPOSED.frontmatter.title))
+      .getAllByRole("button")
+      .filter((button) => button.textContent !== PROPOSED.frontmatter.title);
+    expect(buttons.length).toBeGreaterThan(0);
     expect(buttons.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+
+    const panel = await openPanel(PROPOSED.frontmatter.title);
+    const writes = within(panel)
+      .getAllByRole("button")
+      .filter((button) => button.getAttribute("aria-label") !== "Close panel");
+    expect(writes.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
   });
 });

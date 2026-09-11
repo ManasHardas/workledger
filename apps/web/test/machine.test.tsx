@@ -98,11 +98,12 @@ describe("Needs you, machine-wide", () => {
     const live = machine();
     renderAt("#/needs", live.source);
     const dashero = FIXTURE_NOTES_ALL.find((note) => note.repo.id === DASHERO.id)!;
-    const card = (await screen.findByText(dashero.text)).closest("li")!;
 
-    fireEvent.click(within(card).getByRole("button", { name: "Resolve" }));
-    fireEvent.change(within(card).getByLabelText("Your decision"), { target: { value: "Merge it first." } });
-    fireEvent.click(within(card).getByRole("button", { name: "Save decision" }));
+    // The row's text opens the panel; the decision is written there (#134, rule 3).
+    fireEvent.click(await screen.findByRole("button", { name: dashero.text }));
+    const panel = await screen.findByRole("dialog");
+    fireEvent.change(within(panel).getByLabelText("Your decision"), { target: { value: "Merge it first." } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Resolve" }));
 
     await waitFor(() => expect(live.writes).toHaveLength(1));
     expect(live.writes[0]).toBe(
@@ -117,10 +118,16 @@ describe("Needs you, machine-wide", () => {
       [DASHERO.id]: [{ email, name: "Grace Hopper", dome_user: null }],
     };
     renderAt("#/needs", machine({}, (id) => ({ listIdentities: () => Promise.resolve(names[id] ?? []) })).source);
-    await waitFor(() => {
-      const shown = screen.getAllByTitle(email).map((node) => node.textContent);
-      expect(shown.sort()).toEqual(["Ada Lovelace", "Grace Hopper"]);
-    });
+
+    // One panel at a time, so each repo's mapping is checked against its own row.
+    const shown: string[] = [];
+    for (const note of FIXTURE_NOTES_ALL) {
+      fireEvent.click(await screen.findByRole("button", { name: note.text }));
+      const panel = await screen.findByRole("dialog");
+      await waitFor(() => expect(within(panel).getByTitle(email)).toBeDefined());
+      shown.push(within(panel).getByTitle(email).textContent ?? "");
+    }
+    expect(shown.sort()).toEqual(["Ada Lovelace", "Grace Hopper"]);
   });
 
   it("re-reads on notes.changed from any repo, and shows the empty state", async () => {
@@ -146,8 +153,11 @@ describe("Jobs, machine-wide", () => {
     expect(within(row).getByRole("link", { name: `${DASHERO.name} — Jobs` }).getAttribute("href")).toBe(
       repoHref(DASHERO.id, "jobs"),
     );
-    // The session link lives under the row's repo, not under whatever repo the shell shows.
-    expect(within(row).getByRole("link", { name: FIXTURE_JOBS_ALL[0]!.session_ulid }).getAttribute("href")).toBe(
+    // The session link lives under the row's repo, not under whatever repo the shell shows — and
+    // it is in the panel now, where the rest of the job's evidence is (#134, rule 3).
+    fireEvent.click(within(row).getByRole("button", { name: FIXTURE_JOBS_ALL[0]!.session_ulid }));
+    const panel = await screen.findByRole("dialog");
+    expect(within(panel).getByRole("link", { name: FIXTURE_JOBS_ALL[0]!.session_ulid }).getAttribute("href")).toBe(
       repoHref(DASHERO.id, "ledger", FIXTURE_JOBS_ALL[0]!.session_ulid),
     );
     expect(screen.queryByRole("button", { name: "Scan now" })).toBeNull();

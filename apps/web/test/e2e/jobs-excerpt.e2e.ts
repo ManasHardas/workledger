@@ -230,7 +230,20 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
     const row = page.getByRole("list", { name: "Jobs, newest first" }).getByRole("listitem").first();
     await expect(row).toContainText("repair");
     await expect(row).toContainText("queued");
-    await expect(row.getByRole("link", { name: fixture.orphan })).toBeVisible();
+    await expect(row.getByRole("button", { name: fixture.orphan })).toBeVisible();
+
+    await test.step("the session link and the timestamps are in the right panel (#134)", async () => {
+      // Rule 3: a job's evidence is never in the list. The row's session id opens it.
+      await row.getByRole("button", { name: fixture.orphan }).click();
+      const panel = page.getByRole("dialog");
+      await expect(panel.getByRole("link", { name: fixture.orphan })).toHaveAttribute(
+        "href",
+        `#/r/${fixture.id}/ledger/${fixture.orphan}`,
+      );
+      await expect(panel.getByText("created")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    });
 
     await test.step("Scan now reports its counts", async () => {
       // The orphan is already `crashed`, so a second sweep finds nothing — which is the number
@@ -239,8 +252,11 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
       await expect(page.getByText(/Scan found 0 orphans and queued 0 repairs\./)).toBeVisible();
     });
 
-    await test.step("Cancel moves the job to cancelled", async () => {
+    await test.step("Cancel is quiet, confirms once, and moves the job to cancelled", async () => {
       await row.getByRole("button", { name: "Cancel", exact: true }).click();
+      // The destructive colour is on the confirming step only (#134) — never on a button sitting
+      // in the list.
+      await row.getByRole("button", { name: "Confirm cancel", exact: true }).click();
       await expect(row).toContainText("cancelled");
       await expect(row.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
     });
