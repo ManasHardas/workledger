@@ -1,13 +1,12 @@
 /**
  * Code Connect mapping for `BacklogItem` — **skeleton**; see `apps/web/CODE_CONNECT.md`.
  *
- * The item, its siblings and the five writes come from the Next view, not from Figma; what the
- * canvas varies is selection, the open editor and the in-flight state.
+ * The item and the five writes come from the Next view, not from Figma; what the canvas varies is
+ * the row's three states — selected, renaming in place, and a write in flight.
  */
 import figma from "../../lib/code-connect.js";
 import { FIXTURE_BACKLOG } from "../../lib/fixtures.js";
 import type { BacklogView } from "../../lib/ledger-source.js";
-import { NO_IDENTITIES } from "../identity/live.js";
 import type { BacklogActions } from "./backlog-actions.js";
 import { BacklogItem } from "./backlog-item.js";
 
@@ -34,14 +33,13 @@ figma.connect(
     example: (props) => (
       <BacklogItem
         item={ITEM}
-        others={FIXTURE_BACKLOG}
         actions={NO_WRITES}
-        identities={NO_IDENTITIES}
         canWrite
         selected={props.selected}
         editing={props.editing}
         busy={props.busy}
         onSelect={() => {}}
+        onOpen={() => {}}
         onEditingChange={() => {}}
       />
     ),

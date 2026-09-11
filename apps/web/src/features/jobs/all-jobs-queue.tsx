@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 
+import { RowList } from "../../components/ui/list-row.js";
 import { SelectField } from "../../components/ui/select-field.js";
 import { useMachine } from "../../lib/source-context.js";
 import { JOB_STATUSES } from "./format.js";
+import { JobPanel } from "./job-panel.js";
 import { JobRow } from "./job-row.js";
 import { useJobList, useNow } from "./use-jobs.js";
 
@@ -10,15 +12,17 @@ import { useJobList, useNow } from "./use-jobs.js";
 const ALL = "";
 
 /**
- * Every repo's recovery queue in one list — `GET /api/jobs/all` (P8), a repo per row.
+ * Every repo's recovery queue in one list — `GET /api/jobs/all` (P8), a row per job.
  *
  * Only the row actions are here. A scan and a backfill are one repo's to run, so they stay on
  * that repo's Jobs, which each row's repo link opens. Cancel and retry go through `forRepo(id)`
- * of the row's repo, so the write carries the `repo` parameter the daemon requires.
+ * of the row's repo, so the write carries the `repo` parameter the daemon requires, and so does
+ * the panel's log read.
  */
 export function AllJobsQueue() {
   const machine = useMachine();
   const [status, setStatus] = useState(ALL);
+  const [openId, setOpenId] = useState<string | null>(null);
   const jobs = useJobList(
     useCallback(() => machine.listAllJobs(), [machine]),
     machine,
@@ -29,12 +33,21 @@ export function AllJobsQueue() {
   const list = useMemo(() => (status === ALL ? all : all.filter((job) => job.status === status)), [all, status]);
   // The clock ticks only while something is actually running, so an idle queue is a static page.
   const now = useNow(all.some((job) => job.status === "running"));
+  const opened = list.find((job) => job.id === openId) ?? null;
+  const openedRepo = opened?.repo.id;
+  const readLog = useCallback(
+    () =>
+      openId === null || openedRepo === undefined
+        ? Promise.resolve("")
+        : machine.forRepo(openedRepo).jobLog(openId),
+    [machine, openId, openedRepo],
+  );
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Repairs, backfills and extractions across every project. Scans and backfills run from a
-        project's own Jobs.
+        project&apos;s own Jobs.
       </p>
 
       <label className="flex w-fit flex-wrap items-center gap-2 text-sm">
@@ -62,24 +75,32 @@ export function AllJobsQueue() {
           {status === ALL ? "Every queue is empty." : `No ${status} jobs in any project.`}
         </p>
       ) : (
-        <ul className="flex flex-col gap-3" aria-label="Jobs, newest first">
+        <RowList aria-label="Jobs, newest first">
           {list.map((job) => (
             <JobRow
               key={`${job.repo.id}-${job.id}`}
               job={job}
-              repoId={job.repo.id}
               repo={job.repo}
               now={now}
               canWrite={canWrite}
+              selected={openId === job.id}
               pending={jobs.pending[job.id] === true}
               error={jobs.errors[job.id]}
+              onOpen={() => setOpenId(job.id)}
               onCancel={() => jobs.act(job.id, () => machine.forRepo(job.repo.id).cancelJob(job.id))}
               onRetry={() => jobs.act(job.id, () => machine.forRepo(job.repo.id).retryJob(job.id))}
-              readLog={() => machine.forRepo(job.repo.id).jobLog(job.id)}
             />
           ))}
-        </ul>
+        </RowList>
       )}
+
+      <JobPanel
+        job={opened}
+        repoId={openedRepo ?? ""}
+        now={now}
+        readLog={readLog}
+        onClose={() => setOpenId(null)}
+      />
     </div>
   );
 }

@@ -260,11 +260,25 @@ test.describe("workledger serve, end to end", () => {
   }) => {
     const errors = watchConsole(page);
     await page.goto(`${serving.url}/#/`);
-    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-    const card = page.getByRole("list", { name: "Projects" }).getByRole("link", { name: "repo" });
-    await expect(card).toBeVisible();
-    await expect(card).toHaveAttribute("href", `#/r/${serving.id}/ledger`);
-    await expect(card.getByText(serving.repo)).toBeVisible();
+    // Home is a status overview now, not a second copy of the nav (#134): its title is Overview
+    // and Projects is one of its groups.
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+    const row = page.getByRole("list", { name: "Projects" }).getByRole("listitem", { name: "repo" });
+    await expect(row).toBeVisible();
+    await expect(row.getByRole("link", { name: "repo", exact: true })).toHaveAttribute(
+      "href",
+      `#/r/${serving.id}/ledger`,
+    );
+    // Rule 4: every count on the row is a link to the view that counts it.
+    await expect(row.getByRole("link", { name: /open backlog$/ })).toHaveAttribute(
+      "href",
+      `#/r/${serving.id}/next`,
+    );
+    await expect(row.getByRole("link", { name: /open notes$/ })).toHaveAttribute(
+      "href",
+      `#/r/${serving.id}/needs`,
+    );
+    await expect(row.getByText(serving.repo)).toBeVisible();
     // Scoped to the middle pane: the left nav carries its own "Add projects" at the bottom
     // (docs/design/direction.md §Shell).
     await expect(page.getByRole("main").getByRole("link", { name: "Add projects" })).toHaveAttribute(
@@ -429,15 +443,47 @@ test.describe("workledger serve, end to end", () => {
     expect(serving.repo.length, "the fixture repo path is long").toBeGreaterThanOrEqual(LONG_PATH);
     await page.setViewportSize({ width: MOBILE_WIDTH, height: 812 });
     await page.goto(`${serving.url}/#/r/${serving.id}/health`);
-    const heading = page.getByRole("heading", { name: serving.repo, exact: true });
-    await expect(heading).toBeVisible();
-    await expect(heading, "the full path is in the title attribute").toHaveAttribute(
-      "title",
-      serving.repo,
-    );
+    // The repo is the page's subject line now, not a card title: the rows are the readings (#134).
+    const subject = page.getByTitle(serving.repo);
+    await expect(subject).toBeVisible();
+    await expect(subject).toHaveText(serving.repo);
     expect(await scrollWidth(page), "Health does not scroll horizontally").toBeLessThanOrEqual(
       MOBILE_WIDTH,
     );
+  });
+
+  /**
+   * The acceptance criterion of #134, measured rather than inferred: each of the five views, in a
+   * real browser, at 375 px and at 1280 px, with `scrollWidth` no wider than the viewport — and a
+   * screenshot of each, dark and light, for the PR.
+   */
+  test("the five views hold 375 px and 1280 px with no sideways scroll", async ({ page }) => {
+    const views = [
+      { name: "home", href: "#/", settled: "Projects" },
+      { name: "next", href: `#/r/${serving.id}/next`, settled: "Next" },
+      { name: "needs", href: `#/r/${serving.id}/needs`, settled: "Needs you" },
+      { name: "jobs", href: `#/r/${serving.id}/jobs`, settled: "Jobs" },
+      { name: "health", href: `#/r/${serving.id}/health`, settled: "Harnesses" },
+    ] as const;
+
+    for (const [width, height] of [[MOBILE_WIDTH, 812], [DESKTOP_WIDTH, 900]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const view of views) {
+        await page.goto(`${serving.url}/${view.href}`);
+        // Settled before measuring: a list still loading is narrower than the one that follows it,
+        // and a screenshot taken over "Loading…" shows nothing worth looking at.
+        await expect(
+          page.getByRole("heading", { name: view.settled, exact: true }).first(),
+        ).toBeVisible();
+        await expect(page.getByRole("main").getByText("Loading…")).toHaveCount(0);
+        await expect
+          .poll(() => scrollWidth(page), {
+            message: `${view.name} does not scroll horizontally at ${String(width)} px`,
+          })
+          .toBeLessThanOrEqual(width);
+        await shot(page, `${view.name}-${String(width)}`);
+      }
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -575,21 +621,17 @@ test.describe("workledger serve, end to end", () => {
     await shot(page, "session-panel-375");
   });
 
-  test("Home holds 375, 768 and 1280 px with no sideways scroll", async ({ page }) => {
-    for (const [width, height, name] of [
-      [MOBILE_WIDTH, 812, "home-375"],
-      [TABLET_WIDTH, 900, "home-768"],
-      [DESKTOP_WIDTH, 900, "home-1280"],
-    ] as const) {
-      await page.setViewportSize({ width, height });
-      await page.goto(`${serving.url}/#/`);
-      await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-      // Shot after the cards are in, not while the first read is still in flight.
-      await expect(page.getByRole("list", { name: "Projects" }).getByRole("link")).toHaveCount(1);
-      expect(await scrollWidth(page), `Home does not scroll horizontally at ${width} px`).toBeLessThanOrEqual(
-        width,
-      );
-      await shot(page, name);
-    }
+  test("Home holds the tablet width between the two the design is judged at", async ({ page }) => {
+    await page.setViewportSize({ width: TABLET_WIDTH, height: 900 });
+    await page.goto(`${serving.url}/#/`);
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+    // Shot after the rows are in, not while the first read is still in flight.
+    await expect(
+      page.getByRole("list", { name: "Projects" }).getByRole("listitem"),
+    ).toHaveCount(1);
+    expect(await scrollWidth(page), "Home does not scroll horizontally at 768 px").toBeLessThanOrEqual(
+      TABLET_WIDTH,
+    );
+    await shot(page, "home-768");
   });
 });

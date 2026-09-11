@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { messageOf } from "../../lib/errors.js";
-import type { AppSource, Repo, Workspace } from "../../lib/ledger-source.js";
-import type { Async } from "../../lib/use-async.js";
+import type { AppSource, NoteAcrossRepos, Repo, Workspace } from "../../lib/ledger-source.js";
+import { useAsync, type Async } from "../../lib/use-async.js";
 
 /** How long a burst of events is allowed to coalesce into one `/api/repos` re-read. */
 export const REPOS_REFRESH_MS = 200;
@@ -118,4 +118,33 @@ export function useLiveWorkspaces(source: AppSource): { result: Async<Workspace[
   }, [source, nonce]);
 
   return { result, reload };
+}
+
+/**
+ * Every open `blocker` and `question` across every repo — `GET /api/notes/all` (P8) — for Home's
+ * "Needs you" group.
+ *
+ * The same read the machine-wide Needs you tab makes, because Home shows the *top* of it and links
+ * to the whole (rule 4: every count is a link to the thing it counts). It is re-read on any
+ * `notes.changed`, whichever repo stamped it: the aggregate is one request either way.
+ *
+ * A daemon from before the aggregate route has no `listAllNotes`; the group then reports nothing
+ * rather than throwing, which is what keeps an older daemon rendering Home.
+ */
+export function useLiveAllNotes(source: AppSource): Async<NoteAcrossRepos[]> {
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    return source.subscribe((event) => {
+      if (event.type === "notes.changed") setNonce((n) => n + 1);
+    });
+  }, [source]);
+
+  return useAsync(
+    // `nonce` is a dependency, not an argument: a bump re-runs the same read.
+    useCallback(() => {
+      if (typeof source.listAllNotes !== "function") return Promise.resolve([]);
+      return source.listAllNotes({ type: ["blocker", "question"], open: true });
+    }, [source, nonce]),
+  );
 }

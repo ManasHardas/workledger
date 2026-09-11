@@ -120,6 +120,16 @@ function renderJobs(source: LedgerSource) {
 
 afterEach(cleanup);
 
+/**
+ * A job row's title is its session id, and it opens the right panel — where the timestamps, the
+ * error and the resumed session's log live (#134, rule 3).
+ */
+async function openJob(row: string | RegExp): Promise<HTMLElement> {
+  const item = await screen.findByRole("listitem", { name: row });
+  fireEvent.click(within(item).getByRole("button", { name: /^01[0-9A-Z]+$/ }));
+  return screen.findByRole("dialog");
+}
+
 describe("jobs format helpers", () => {
   it("offers cancel only before a job finishes and retry only after it failed", () => {
     expect(["queued", "running"].every(canCancel)).toBe(true);
@@ -171,16 +181,25 @@ describe("jobs view", () => {
     renderJobs(source);
 
     const row = await screen.findByRole("listitem", { name: /backfill/ });
+    // The row is state and a number: at most three chips, the session, the attempts and the span
+    // (docs/design/direction.md §Density, rule 2).
     expect(row.textContent).toContain("failed");
     expect(row.textContent).toContain("backfill");
     expect(row.textContent).toContain("3 attempts");
     expect(row.textContent).toContain("01JBQ4Z8W2K7N3RQ9XMDT5V0AE");
-    expect(row.textContent).toContain("2026-09-09 09:00 UTC");
     expect(row.textContent).toContain("9s");
-    expect(row.textContent).toContain("resume exited 1");
+    expect(row.className).toContain("min-h-row");
+    // Rule 3: the timestamps and the error are evidence, so they are never in the list.
+    expect(row.textContent).not.toContain("2026-09-09 09:00 UTC");
+    expect(row.textContent).not.toContain("resume exited 1");
+
+    const panel = await openJob(/backfill/);
+    // `created` and `started` are the same instant to the minute in this fixture, so there are two.
+    expect(within(panel).getAllByText("2026-09-09 09:00 UTC").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("resume exited 1")).toBeDefined();
     // The session is a link into the Ledger, not 26 characters of text.
     expect(
-      within(row).getByRole("link", { name: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE" }).getAttribute("href"),
+      within(panel).getByRole("link", { name: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE" }).getAttribute("href"),
     ).toBe(`#/r/${REPO}/ledger/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
   });
 
@@ -237,7 +256,15 @@ describe("jobs view", () => {
     const failedRow = rows[1]!;
 
     expect(within(queuedRow).getByRole("button", { name: "Retry" })).toHaveProperty("disabled", true);
-    fireEvent.click(within(queuedRow).getByRole("button", { name: "Cancel" }));
+    // Cancel loses work, so it is a quiet control whose second step is the one that confirms it
+    // — and the only place the destructive colour appears outside a status chip (#134).
+    const cancel = within(queuedRow).getByRole("button", { name: "Cancel" });
+    expect(cancel.className).not.toContain("bg-destructive");
+    fireEvent.click(cancel);
+    expect(calls).not.toContain("cancel:01JOB000000000000000000001");
+    const confirm = within(queuedRow).getByRole("button", { name: "Confirm cancel" });
+    expect(confirm.className).toContain("border-destructive");
+    fireEvent.click(confirm);
     await waitFor(() => expect(calls).toContain("cancel:01JOB000000000000000000001"));
     expect(await within(queuedRow).findByText("cancelled")).toBeDefined();
 
@@ -246,25 +273,27 @@ describe("jobs view", () => {
     await waitFor(() => expect(calls).toContain("retry:01JOB000000000000000000002"));
   });
 
-  it("shows a collapsible Log on a job that has one, read only when opened (#97)", async () => {
+  it("shows the Log in the panel of a job that has one, read only when it is opened (#97)", async () => {
     const { source, calls } = stubSource({}, [
       job({ id: "01JOB000000000000000000001", status: "failed", log_path: "/home/.workledger/logs/01JOB000000000000000000001.log" }),
       job({ id: "01JOB000000000000000000002", status: "failed", created_at: "2026-09-09T08:00:00.000Z" }),
     ]);
     renderJobs(source);
 
-    // Scoped to the queue: the left nav's "Folders with sessions" section is a list too.
-    const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole(
-      "listitem",
-    );
-    const withLog = rows[0]!;
-    const withoutLog = rows[1]!;
-    expect(within(withoutLog).queryByText("Log")).toBeNull();
+    await screen.findByRole("list", { name: "Jobs, newest first" });
+    // Nothing is read until a row is opened: a log is a file, not a list column.
     expect(calls.filter((call) => call.startsWith("log:"))).toEqual([]);
 
-    fireEvent.click(within(withLog).getByText("Log"));
-    expect(await within(withLog).findByText(/resumed session output for 01JOB000000000000000000001/)).toBeDefined();
+    const withLog = await openJob(/00000001$/);
+    expect(
+      await within(withLog).findByText(/resumed session output for 01JOB000000000000000000001/),
+    ).toBeDefined();
     expect(calls).toContain("log:01JOB000000000000000000001");
+
+    // The second job has no `log_path`, so its panel has no Log section and reads nothing.
+    const withoutLog = await openJob(/00000002$/);
+    expect(within(withoutLog).queryByText("Log")).toBeNull();
+    expect(calls.filter((call) => call.startsWith("log:"))).toEqual(["log:01JOB000000000000000000001"]);
   });
 
   it("reports a refused write against its own row without dropping the list", async () => {
@@ -276,6 +305,7 @@ describe("jobs view", () => {
     const row = await screen.findByRole("listitem", { name: /repair/ });
 
     fireEvent.click(within(row).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm cancel" }));
     expect((await within(row).findByRole("alert")).textContent).toContain("already done");
     expect(screen.getByRole("list", { name: "Jobs, newest first" })).toBeDefined();
   });
@@ -535,13 +565,18 @@ describe("usage-window waits (#100)", () => {
     renderJobs(source);
 
     const row = await screen.findByRole("listitem", { name: /repair/ });
+    // The wait is the row's third chip; the sentence that explains it is in the panel, in place
+    // of the error line that would otherwise read as a failure.
     expect(row.textContent).toContain("waiting");
-    expect(within(row).getByRole("status").textContent).toBe(
-      `Waiting for your Claude usage window to reset at ${formatLocalTime(reset, Date.now())}`,
-    );
     expect(row.textContent).not.toContain("hit its usage limit");
     // Still a queued job: it can be cancelled, not retried.
     expect(within(row).getByRole("button", { name: "Cancel" }).hasAttribute("disabled")).toBe(false);
     expect(within(row).getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
+
+    const panel = await openJob(/repair/);
+    expect(within(panel).getByRole("status").textContent).toBe(
+      `Waiting for your Claude usage window to reset at ${formatLocalTime(reset, Date.now())}`,
+    );
+    expect(panel.textContent).not.toContain("hit its usage limit");
   });
 });

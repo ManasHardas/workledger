@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { App } from "../src/app.js";
-import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
+import { FIXTURE_NOTES, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import {
   createSource,
   type AppSource,
@@ -109,14 +109,38 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+/**
+ * A note row's title is the note itself, and it opens the right panel — where the session that
+ * raised it and the decision form live (#134, rule 3).
+ */
+async function openNote(text: string): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("button", { name: text }));
+  return screen.findByRole("dialog");
+}
+
 describe("Needs you", () => {
-  it("renders every open note with its session goal and checkpoint", async () => {
+  it("renders every open note as a row, with its type and checkpoint", async () => {
     renderAt(`#/r/${REPO}/needs`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
-    expect(await screen.findByText(BLOCKER)).toBeDefined();
-    expect(await screen.findByText(SESSION.goal!)).toBeDefined();
-    expect(screen.getByText("[cp 1]")).toBeDefined();
-    expect(screen.getByText("blocker")).toBeDefined();
+    const list = await screen.findByRole("list", { name: "Open questions and blockers" });
+    const row = within(list).getByRole("listitem");
+    expect(within(row).getByText(BLOCKER)).toBeDefined();
+    expect(within(row).getByText("blocker")).toBeDefined();
+    expect(within(row).getByText("cp 1")).toBeDefined();
+    // The session that raised it is context, not the note: it waits in the panel.
+    expect(within(row).queryByText(SESSION.goal!)).toBeNull();
+    expect(within(await openNote(BLOCKER)).getByText(SESSION.goal!)).toBeDefined();
+  });
+
+  it("keeps the rows on the list rhythm and off the horizontal scroll at 375 px", async () => {
+    renderAt(`#/r/${REPO}/needs`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+    const list = await screen.findByRole("list", { name: "Open questions and blockers" });
+    const row = within(list).getByRole("listitem");
+    expect(row.className).toContain("min-h-row");
+    expect(row.className).toContain("hover:bg-muted");
+    const title = within(row).getByRole("button", { name: BLOCKER });
+    expect(title.className).toContain("min-w-0");
+    expect(title.className).toContain("truncate");
   });
 
   it("resolves a note with the ref the NoteRef carries and the decision text", async () => {
@@ -131,11 +155,11 @@ describe("Needs you", () => {
     });
     renderAt(`#/r/${REPO}/needs`, source);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Resolve" }));
-    fireEvent.change(screen.getByLabelText("Your decision"), {
+    const panel = await openNote(BLOCKER);
+    fireEvent.change(within(panel).getByLabelText("Your decision"), {
       target: { value: "Treat a rename as a delete plus a create." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save decision" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Resolve" }));
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({
@@ -163,10 +187,11 @@ describe("Needs you", () => {
       }),
     );
 
-    const named = await screen.findByTitle(email);
+    const panel = await openNote(BLOCKER);
+    const named = await within(panel).findByTitle(email);
     expect(named.textContent).toBe("Ada Lovelace");
     // The goal is still its own text; the name is beside it, not spliced into it.
-    expect(screen.getByText(SESSION.goal!)).toBeDefined();
+    expect(within(panel).getByText(SESSION.goal!)).toBeDefined();
   });
 
   it("falls back to the email when the address is unmapped or the file is absent", async () => {
@@ -182,10 +207,11 @@ describe("Needs you", () => {
           listIdentities: async () => identities,
         }),
       );
-      expect((await screen.findByTitle(email)).textContent).toBe(email);
+      const panel = await openNote(BLOCKER);
+      expect((await within(panel).findByTitle(email)).textContent).toBe(email);
       // The ledger's own `name` is not the fallback: it is whatever git was configured with, and
       // that is the value the file exists to override.
-      expect(screen.queryByText(SESSION.frontmatter.author.name)).toBeNull();
+      expect(within(panel).queryByText(SESSION.frontmatter.author.name)).toBeNull();
       cleanup();
     }
   });
@@ -206,19 +232,21 @@ describe("Needs you", () => {
         },
       }),
     );
-    expect((await screen.findByTitle(email)).textContent).toBe(email);
+    const panel = await openNote(BLOCKER);
+    expect((await within(panel).findByTitle(email)).textContent).toBe(email);
 
     identities = [{ email, name: "Ada Lovelace", dome_user: null }];
     for (const handler of [...handlers]) handler({ type: "health.changed" });
-    await waitFor(() => expect(screen.getByTitle(email).textContent).toBe("Ada Lovelace"));
+    await waitFor(() => expect(within(panel).getByTitle(email).textContent).toBe("Ada Lovelace"));
   });
 
   it("disables resolving on a read-only source", async () => {
     renderAt(`#/r/${REPO}/needs`, createSource("fixture"));
 
-    const resolve = await screen.findAllByRole("button", { name: "Resolve" });
-    expect(resolve.length).toBeGreaterThan(0);
-    expect(resolve.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+    const panel = await openNote(FIXTURE_NOTES[0]!.text);
+    const resolve = within(panel).getByRole("button", { name: "Resolve" });
+    expect((resolve as HTMLButtonElement).disabled).toBe(true);
+    expect(within(panel).getByText("This source is read-only.")).toBeDefined();
   });
 });
 
@@ -286,24 +314,45 @@ describe("Health", () => {
     expect((await statusOf("Last hook")).textContent).toBe("warn");
   });
 
-  it("shows the doctor detail: the probe, its complaints, open sessions and the last hook", async () => {
+  /** A reading's own panel: the row is the name and the chip, the probe behind it is evidence. */
+  const openReading = async (row: string) => {
+    fireEvent.click(within(await screen.findByRole("listitem", { name: row })).getByRole("button", { name: row }));
+    return screen.findByRole("dialog");
+  };
+
+  it("shows the doctor detail in the panel: the probe, its complaints and the last hook", async () => {
     renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
 
-    // The real probe fields, not a placeholder summary.
-    const claude = within(await screen.findByRole("listitem", { name: "claude-code" }));
+    // Rule 3: the probe is long detail, so the row carries the reading and the panel the evidence.
+    const row = await screen.findByRole("listitem", { name: "claude-code" });
+    expect(within(row).queryByText(/\/opt\/homebrew\/bin\/claude/)).toBeNull();
+
+    const claude = within(await openReading("claude-code"));
     expect(claude.getByText(/\/opt\/homebrew\/bin\/claude/)).toBeDefined();
     expect(claude.getByText(/2\.4\.1 · contract tested against 2\.4\.x/)).toBeDefined();
     expect(claude.getByText(/12 projects/)).toBeDefined();
     expect(claude.getByText(/last activity 2026-09-09T08:02:00Z/)).toBeDefined();
 
-    expect(screen.getByText("`cursor` is not on PATH")).toBeDefined();
-    expect(screen.getByText("installed 0.9.2, contract tested against 1.2.x")).toBeDefined();
-    expect(screen.getByText("/Users/m/.codex/sessions is not readable")).toBeDefined();
+    expect(within(await openReading("cursor")).getByText("`cursor` is not on PATH")).toBeDefined();
+    const codex = within(await openReading("codex"));
+    expect(codex.getByText("installed 0.9.2, contract tested against 1.2.x")).toBeDefined();
+    expect(codex.getByText("/Users/m/.codex/sessions is not readable")).toBeDefined();
 
-    expect(screen.getByText("repos[0].path is not a directory")).toBeDefined();
-    expect(screen.getByText(/1 open session/)).toBeDefined();
-    expect(screen.getByText("no hook has fired yet")).toBeDefined();
+    expect(
+      within(await openReading("Config")).getByText("repos[0].path is not a directory"),
+    ).toBeDefined();
+    expect(within(await openReading("Index")).getByText(/1 open session/)).toBeDefined();
+    expect(within(await openReading("Last hook")).getByText("no hook has fired yet")).toBeDefined();
     expect(screen.getByText("workledger 0.0.1")).toBeDefined();
+  });
+
+  it("counts a reading's complaints on its row and links nothing else into the list", async () => {
+    renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
+    const codex = await screen.findByRole("listitem", { name: "codex" });
+    expect(within(codex).getByText("2 problems")).toBeDefined();
+    const ok = await screen.findByRole("listitem", { name: "claude-code" });
+    expect(within(ok).queryByText(/problem/)).toBeNull();
+    expect(ok.className).toContain("min-h-row");
   });
 });
 

@@ -316,9 +316,10 @@ test.describe("onboarding wizard", () => {
     await expect(page.getByRole("heading", { name: "Backfilled 3 sessions across 2 repos" })).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("link", { name: "Go to home" }).click();
-    await expect(page.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
-    await expect(page.getByRole("link", { name: "alpha" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "beta" })).toBeVisible();
+    // Home is a status overview now (#134): "Overview" is its title, Projects one of its groups.
+    await expect(page.getByRole("heading", { name: "Overview", level: 2 })).toBeVisible();
+    await expect(page.getByRole("link", { name: "alpha", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "beta", exact: true })).toBeVisible();
     const banner = page.getByRole("status").filter({ hasText: "Backfilled" });
     await expect(banner).toContainText("Backfilled 3 sessions across 2 repos.");
     await banner.getByRole("button", { name: "Dismiss" }).click();
@@ -379,9 +380,11 @@ test.describe("onboarding wizard", () => {
     await page.goto(`${daemon.url}/#/`);
 
     // The order is the operator's rule: git repos are projects, folders with transcripts are not.
-    const headings = page.getByRole("heading", { level: 2 });
-    await expect(headings).toHaveText(["Projects", "Folders with sessions"]);
-    await expect(page.getByRole("list", { name: "Projects" }).getByRole("link")).toHaveCount(2);
+    // Both are groups of the one Overview page now (#134).
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Overview"]);
+    const groups = page.getByRole("main").getByRole("heading", { level: 3 });
+    await expect(groups).toHaveText(["Needs you", "Running", "Projects", "Folders with sessions"]);
+    await expect(page.getByRole("list", { name: "Projects" }).getByRole("listitem")).toHaveCount(2);
 
     const folders = page.getByRole("list", { name: "Folders with sessions" });
     await expect(folders.getByRole("listitem")).toHaveCount(2);
@@ -393,7 +396,7 @@ test.describe("onboarding wizard", () => {
 
     // "Install hooks" is `POST /api/onboarding/init` with the folder and no repo (amendment 12).
     await folders.getByRole("listitem").first().getByRole("button", { name: "Install hooks" }).click();
-    await expect(folders.getByText("hooks installed")).toHaveCount(1);
+    await expect(folders.getByText("hooks", { exact: true })).toHaveCount(1);
     expect(daemon.initBodies).toEqual([{ repos: [], workspaces: [DOME] }]);
     await expect(folders.getByRole("button", { name: "Install hooks" })).toHaveCount(1);
   });
@@ -411,7 +414,10 @@ test.describe("onboarding wizard", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.request.post(`${daemon.url}/api/onboarding/init`, { data: { repos: [ALPHA] } });
     await page.goto(`${daemon.url}/#/`);
-    await page.getByRole("list", { name: "Projects" }).getByRole("link", { name: "alpha" }).click();
+    await page
+      .getByRole("list", { name: "Projects" })
+      .getByRole("link", { name: "alpha", exact: true })
+      .click();
     await expect(page).toHaveURL(/#\/r\/[^/]+\/ledger$/);
     await expect(page.getByRole("heading", { name: "Ledger", level: 2 })).toBeVisible();
     await expect(page.getByRole("tab")).toHaveCount(0);

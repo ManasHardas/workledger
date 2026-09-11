@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button.js";
+import { RowList } from "../../components/ui/list-row.js";
 import { SelectField } from "../../components/ui/select-field.js";
 import { useRepoId, useSource } from "../../lib/source-context.js";
 import { BackfillSheet, explain } from "./backfill-sheet.js";
 import { JOB_STATUSES } from "./format.js";
+import { JobPanel } from "./job-panel.js";
 import { JobRow } from "./job-row.js";
 import { useAction, useJobs, useNow } from "./use-jobs.js";
 
@@ -12,11 +14,12 @@ import { useAction, useJobs, useNow } from "./use-jobs.js";
 const ALL = "";
 
 /**
- * The recovery queue of `docs/contracts/p3/cli.md` §Jobs, live.
+ * The recovery queue of `docs/contracts/p3/cli.md` §Jobs, live, on the shell's list rhythm (#134).
  *
  * The three things this view is for, in the order the operator needs them: what the queue is doing
  * right now, why the failed row failed, and the two ways to put work into it — a scan that finds
- * sessions whose harness died, and a backfill of history from before install.
+ * sessions whose harness died, and a backfill of history from before install. The middle one is a
+ * row's worth of evidence rather than a row, so it is in the right panel (`job-panel.tsx`).
  *
  * Nothing here polls. `serve` sweeps for orphans on its own five-minute tick and every job
  * transition arrives as `job.changed`, so a queue that changed because the CLI ran in another
@@ -26,6 +29,7 @@ export function JobQueue() {
   const source = useSource();
   const repoId = useRepoId();
   const [status, setStatus] = useState(ALL);
+  const [openId, setOpenId] = useState<string | null>(null);
   const jobs = useJobs(status === ALL ? undefined : status);
   const canWrite = source.capabilities.write;
   const reload = jobs.reload;
@@ -44,16 +48,26 @@ export function JobQueue() {
   // The clock ticks only while something is actually running, so an idle queue is a static page
   // rather than a component that re-renders once a second forever.
   const now = useNow(list.some((job) => job.status === "running"));
+  const opened = list.find((job) => job.id === openId) ?? null;
+  const readLog = useCallback(
+    () => (openId === null ? Promise.resolve("") : source.jobLog(openId)),
+    [source, openId],
+  );
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-48 flex-1 text-sm text-muted-foreground">
           Repairs, backfills and extractions. A scan marks sessions whose harness died as{" "}
           <code>crashed</code> and queues a repair for each one.
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={!canWrite || scanState.state === "running"} onClick={() => scan.run()}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canWrite || scanState.state === "running"}
+            onClick={() => scan.run()}
+          >
             {scanState.state === "running" ? "Scanning…" : "Scan now"}
           </Button>
           {canWrite ? <BackfillSheet onQueued={reload} /> : null}
@@ -98,23 +112,31 @@ export function JobQueue() {
           The queue is empty. Run a scan, or backfill history from before install.
         </p>
       ) : (
-        <ul className="flex flex-col gap-3" aria-label="Jobs, newest first">
+        <RowList aria-label="Jobs, newest first">
           {list.map((job) => (
             <JobRow
               key={job.id}
               job={job}
-              repoId={repoId}
               now={now}
               canWrite={canWrite}
+              selected={openId === job.id}
               pending={jobs.pending[job.id] === true}
               error={jobs.errors[job.id]}
+              onOpen={() => setOpenId(job.id)}
               onCancel={() => jobs.act(job.id, () => source.cancelJob(job.id))}
               onRetry={() => jobs.act(job.id, () => source.retryJob(job.id))}
-              readLog={() => source.jobLog(job.id)}
             />
           ))}
-        </ul>
+        </RowList>
       )}
+
+      <JobPanel
+        job={opened}
+        repoId={repoId}
+        now={now}
+        readLog={readLog}
+        onClose={() => setOpenId(null)}
+      />
     </div>
   );
 }

@@ -28,7 +28,7 @@
   --wl-color-surface: #ffffff;
   --wl-color-raised: #ffffff;
   --wl-color-hairline: #e4e5e8;
-  --wl-color-subtle-foreground: #8e8f90;
+  --wl-color-subtle-foreground: #6c6d6f;
   --wl-color-selected: #eef0fc;
   --wl-color-overlay: #0d0e10;
 
@@ -103,7 +103,7 @@
   --wl-color-surface: #141517;
   --wl-color-raised: #1a1b1f;
   --wl-color-hairline: #232427;
-  --wl-color-subtle-foreground: #727376;
+  --wl-color-subtle-foreground: #8a8b8f;
   --wl-color-selected: #1e2036;
   --wl-color-overlay: #000000;
   }

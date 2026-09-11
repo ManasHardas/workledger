@@ -275,13 +275,20 @@ async function walkToMethod(page: Page, fixture: Fixture): Promise<void> {
   await expect(page.getByRole("heading", { name: "How should past sessions be digested?" })).toBeVisible();
 }
 
-/** Home lists both repos, each with `sessions` sessions in the last week. */
+/**
+ * Home lists both repos, each with `sessions` sessions in the last week.
+ *
+ * The count is a link to the Ledger that holds it now (#134, rule 4), and its accessible name is
+ * what says which count it is — a bare "2" names nothing.
+ */
 async function expectHome(page: Page, sessions: number): Promise<void> {
-  await expect(page.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", level: 2 })).toBeVisible();
   for (const { name } of REPOS) {
-    const card = page.getByRole("link", { name, exact: true });
-    await expect(card).toBeVisible();
-    await expect(card.locator("dt", { hasText: "sessions · 7d" }).locator("xpath=following-sibling::dd")).toHaveText(String(sessions));
+    const row = page.getByRole("listitem", { name, exact: true });
+    await expect(row).toBeVisible();
+    await expect(
+      row.getByRole("link", { name: `${name} — ${String(sessions)} sessions in the last 7 days` }),
+    ).toBeVisible();
   }
 }
 
