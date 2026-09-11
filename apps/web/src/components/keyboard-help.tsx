@@ -15,7 +15,9 @@ const SHORTCUTS: readonly { keys: string; what: string }[] = [
   { keys: "e", what: "Edit the selected item" },
   { keys: "a", what: "Accept the selected item" },
   { keys: "d", what: "Mark the selected item done" },
-  { keys: "x", what: "Discard the selected item" },
+  // Two presses, like the button: the first arms the row's Discard, the second runs it (#138).
+  { keys: "x", what: "Arm Discard on the selected item; press again to confirm, Escape to keep" },
+  { keys: "alt + ↑ / ↓", what: "Move the selected item up or down its group" },
   { keys: "/", what: "Focus search" },
   { keys: "?", what: "Show this help" },
 ];

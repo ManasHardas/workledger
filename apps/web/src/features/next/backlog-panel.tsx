@@ -4,7 +4,7 @@ import { actionLabel, actionsFor } from "./backlog-model.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
-import { ConfirmAction } from "../../components/ui/list-row.js";
+import { ConfirmAction } from "../../components/ui/confirm.js";
 import { Panel } from "../../components/ui/panel.js";
 import { SelectField } from "../../components/ui/select-field.js";
 import { TextareaField } from "../../components/ui/textarea-field.js";

@@ -280,8 +280,41 @@ describe("Home", () => {
       main.getByRole("link", { name: /open questions and blockers — Needs you$/ }).getAttribute("href"),
     ).toBe("#/needs");
     expect(
-      main.getByRole("link", { name: /jobs running or queued — Jobs$/ }).getAttribute("href"),
+      main.getByRole("link", { name: /jobs running, queued or failed — Jobs$/ }).getAttribute("href"),
     ).toBe("#/jobs");
+  });
+
+  /**
+   * #138, rule 4: the three groups whose list is already on the page carried a bare number. The
+   * count is a link there too — to the list beneath it, which it moves focus to.
+   */
+  it.each(["Projects", "Folders with sessions"] as const)(
+    "makes the «%s» count a link to the list it counts",
+    async (group) => {
+      renderHome();
+      const list = await screen.findByRole("list", { name: group });
+      const main = within(screen.getByRole("main"));
+      const count = main.getByRole("link", { name: new RegExp(`— ${group}$`) });
+      expect(count.textContent).toBe(String(within(list).getAllByRole("listitem").length));
+      fireEvent.click(count);
+      expect(document.activeElement).toBe(list.parentElement);
+    },
+  );
+
+  /**
+   * #138: "Running 1" used to head a list that also carried the failed rows, so the number and the
+   * rows under it counted different things.
+   */
+  it("counts the failed rows the Running group shows beneath it", async () => {
+    renderHome();
+    const running = await screen.findByRole("list", { name: "Running" });
+    const rows = within(running).getAllByRole("listitem");
+    // The fixture queue is one failed repair and nothing live — the case the count used to miss.
+    expect(rows).toHaveLength(FIXTURE_JOBS_ALL.length);
+    const count = within(screen.getByRole("main")).getByRole("link", {
+      name: /running, queued or failed — Jobs$/,
+    });
+    expect(count.textContent).toBe(String(rows.length));
   });
 
   it("shows what needs the operator and what is running, across projects", async () => {

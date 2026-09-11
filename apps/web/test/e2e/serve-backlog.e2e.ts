@@ -173,6 +173,29 @@ function backlogFiles(repo: string): { id: string; file: string; text: string }[
     });
 }
 
+/** A YAML scalar as a plain string: `backlog propose` quotes a title only when it has to. */
+function unquote(value: string): string {
+  return /^"(.*)"$/.exec(value)?.[1]?.replace(/\\"/g, '"') ?? value;
+}
+
+/**
+ * The titles of one status group in the order the files put them in — `rank` ascending, then most
+ * recently `updated` first, which is `compareItems` in `features/next/backlog-model.ts` and the
+ * order `/api/backlog` returns. This is the claim a reorder has to move: the paint is not the
+ * ledger (CLAUDE.md).
+ */
+function backlogOrder(repo: string, status: string): string[] {
+  return backlogFiles(repo)
+    .filter((file) => field(file.text, "status") === status)
+    .map((file) => ({
+      title: unquote(field(file.text, "title") ?? ""),
+      rank: Number(field(file.text, "rank") ?? "0"),
+      updated: field(file.text, "updated") ?? "",
+    }))
+    .sort((a, b) => (a.rank === b.rank ? b.updated.localeCompare(a.updated) : a.rank - b.rank))
+    .map((row) => row.title);
+}
+
 /** Every session file in the ledger. */
 function sessionFiles(repo: string): string[] {
   return readdirSync(path.join(repo, ".workledger", "sessions")).filter((name) => name.endsWith(".md"));
@@ -406,6 +429,44 @@ test.describe("workledger serve, end to end", () => {
     expect(watcherErrors, "no console errors on Next (watching tab)").toEqual([]);
     await watcher.close();
     await editor.close();
+  });
+
+  /**
+   * #138: drag-and-drop was the only way to rank, so a keyboard operator could not reorder at all.
+   * Nothing here touches the mouse — `j` selects, `Alt+ArrowDown` moves — and the assertion is the
+   * order the *files* define, not the order the list happens to be painting.
+   */
+  test("the backlog reorders from the keyboard alone, and the files say so", async ({ page }) => {
+    const errors = watchConsole(page);
+    await page.goto(`${serving.url}/#/r/${serving.id}/next`);
+
+    const rows = page.getByRole("list", { name: "Proposed" }).getByRole("listitem");
+    await expect(rows.first()).toBeVisible();
+    const before = (await rows.evaluateAll((items) =>
+      items.map((row) => row.getAttribute("aria-label") ?? ""),
+    )) as string[];
+    expect(before.length, "the copied ledger has a proposed group to reorder").toBeGreaterThanOrEqual(2);
+
+    // Proposed is the first group, so one `j` from a cold page selects its first row.
+    await page.keyboard.press("j");
+    await expect(rows.first()).toHaveAttribute("data-selected", "");
+    await page.keyboard.press("Alt+ArrowDown");
+
+    const moved = [before[1], before[0], ...before.slice(2)];
+    await expect(
+      page.getByRole("main").getByRole("status"),
+      "the move is announced, not only painted",
+    ).toHaveText(`${before[0] ?? ""} moved to 2 of ${String(before.length)} in Proposed.`);
+    await expect
+      .poll(() => backlogOrder(serving.repo, "proposed"), { timeout: 15_000 })
+      .toEqual(moved);
+
+    // It survives a reload, which is the whole point of writing `rank` to the files.
+    await page.reload();
+    await expect(
+      page.getByRole("list", { name: "Proposed" }).getByRole("listitem").first(),
+    ).toHaveAttribute("aria-label", moved[0] ?? "");
+    expect(errors, "no console errors while reordering").toEqual([]);
   });
 
   test("Needs you renders without console errors, per repo and machine-wide", async ({ page }) => {

@@ -570,10 +570,38 @@ describe("assign, rank and merge", () => {
     const { spy, queue } = await renderQueue();
     // Alpha lands in Charlie's slot: Bravo, Charlie, Alpha, Delta.
     drag("Alpha", "Charlie");
+    // Every item whose stored `rank` is not already its new index, Delta included: `backlog
+    // propose` stamps `rank: 0` on everything, so a sequence that stopped at the last row that
+    // *moved* would leave the rows below it tied at 0 in front of the ones just written (#138).
     expect(rankCalls(spy.calls)).toEqual([
       ["rank", id(queue, "Bravo"), 0],
       ["rank", id(queue, "Charlie"), 1],
       ["rank", id(queue, "Alpha"), 2],
+      ["rank", id(queue, "Delta"), 3],
+    ]);
+  });
+
+  it("writes no rank for an item that already holds its new index", async () => {
+    const tied = ["Alpha", "Bravo", "Charlie"].map((title, i) =>
+      item(`WL-01JBQ50R6TT4YB8H2ZC3D9KQ${i}Y`, title, "proposed", 0, {
+        // All tied at rank 0, as a freshly proposed backlog is; `updated` newest-first decides.
+        updated: `2026-09-0${String(3 - i)}T00:00:00Z`,
+      }),
+    );
+    const spy = spySource();
+    spy.setItems(tied);
+    render(
+      <SourceProvider source={spy.source}>
+        <NextView />
+      </SourceProvider>,
+    );
+    await screen.findByText("Charlie");
+    fireEvent.dragStart(card("Alpha"));
+    fireEvent.drop(card("Bravo"));
+    // Bravo, Alpha, Charlie — Bravo is already rank 0, so only the two that are wrong are written.
+    expect(rankCalls(spy.calls)).toEqual([
+      ["rank", tied[0]!.frontmatter.id, 1],
+      ["rank", tied[2]!.frontmatter.id, 2],
     ]);
   });
 
@@ -586,6 +614,49 @@ describe("assign, rank and merge", () => {
       ["rank", id(queue, "Bravo"), 2],
       ["rank", id(queue, "Charlie"), 3],
     ]);
+  });
+
+  /**
+   * #138: drag-and-drop was the only way to rank, so a keyboard operator could not reorder at all.
+   * Alt+arrow on the selected row runs the same `reorder` the drop does — the same rank calls,
+   * index by index — and says where the row landed.
+   */
+  it("re-ranks the group with alt+ArrowDown, index by index, and announces the move", async () => {
+    const { spy, queue } = await renderQueue();
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "ArrowDown", altKey: true });
+    // Alpha and Bravo swap: Bravo, Alpha, Charlie, Delta.
+    expect(rankCalls(spy.calls)).toEqual([
+      ["rank", id(queue, "Bravo"), 0],
+      ["rank", id(queue, "Alpha"), 1],
+      ["rank", id(queue, "Charlie"), 2],
+      ["rank", id(queue, "Delta"), 3],
+    ]);
+    expect(screen.getByRole("status").textContent).toBe("Alpha moved to 2 of 4 in Proposed.");
+  });
+
+  it("re-ranks the group with alt+ArrowUp and leaves the ends alone", async () => {
+    const { spy, queue } = await renderQueue();
+    fireEvent.keyDown(window, { key: "j" });
+    // Alpha is already first: there is nowhere above it to go, so nothing is written.
+    fireEvent.keyDown(window, { key: "ArrowUp", altKey: true });
+    expect(rankCalls(spy.calls)).toEqual([]);
+
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "ArrowUp", altKey: true });
+    expect(rankCalls(spy.calls)).toEqual([
+      ["rank", id(queue, "Bravo"), 0],
+      ["rank", id(queue, "Alpha"), 1],
+      ["rank", id(queue, "Charlie"), 2],
+      ["rank", id(queue, "Delta"), 3],
+    ]);
+    expect(screen.getByRole("status").textContent).toBe("Bravo moved to 1 of 4 in Proposed.");
+  });
+
+  it("announces where a dropped row landed, too", async () => {
+    await renderQueue();
+    drag("Alpha", "Charlie");
+    expect(screen.getByRole("status").textContent).toBe("Alpha moved to 3 of 4 in Proposed.");
   });
 
   it("merges an item into another one", async () => {
@@ -625,12 +696,61 @@ describe("keyboard", () => {
   it.each([
     ["a", "accept"],
     ["d", "done"],
-    ["x", "discard"],
   ] as const)("«%s» calls source.%s on the selected item", async (key, method) => {
     const spy = await renderNext();
     fireEvent.keyDown(window, { key: "j" });
     fireEvent.keyDown(window, { key });
     expect(spy.calls).toContainEqual([method, PROPOSED.frontmatter.id]);
+  });
+
+  /**
+   * #138: the buttons became two-step in #134 while `x` still discarded in one keystroke, which
+   * made the keyboard the one unsafe path. The shortcut arms *the row's own Discard control* —
+   * one latch, not a second implementation — so the first press writes nothing at all.
+   */
+  it("«x» arms the row's Discard and writes nothing until the second press", async () => {
+    const spy = await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    fireEvent.keyDown(window, { key: "j" });
+
+    fireEvent.keyDown(window, { key: "x" });
+    expect(spy.calls.some(([name]) => name === "discard")).toBe(false);
+    // It is the button on the row that armed, not a parallel piece of state.
+    expect(within(card(title)).getByRole("button", { name: "Confirm discard" })).toBeDefined();
+    // …and assistive technology is told, rather than only the pixels changing.
+    expect(within(card(title)).getByRole("status").textContent).toContain("Discard armed");
+
+    fireEvent.keyDown(window, { key: "x" });
+    expect(spy.calls).toContainEqual(["discard", PROPOSED.frontmatter.id]);
+  });
+
+  it("«Escape» disarms the shortcut and writes nothing", async () => {
+    const spy = await renderNext();
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "x" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        within(card(PROPOSED.frontmatter.title)).queryByRole("button", { name: "Confirm discard" }),
+      ).toBeNull(),
+    );
+    expect(spy.calls.some(([name]) => name === "discard")).toBe(false);
+  });
+
+  /** Escape used to drop focus on `<body>`, restarting the tab order at the top of the page. */
+  it("«Escape» returns focus to the control that was armed", async () => {
+    await renderNext();
+    const title = PROPOSED.frontmatter.title;
+    press("Discard", title);
+    const confirm = within(card(title)).getByRole("button", { name: "Confirm discard" });
+    await waitFor(() => expect(document.activeElement).toBe(confirm));
+
+    fireEvent.keyDown(confirm, { key: "Escape" });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(card(title)).getByRole("button", { name: "Discard" }),
+      ),
+    );
   });
 
   it("leaves a keystroke inside a field alone", async () => {

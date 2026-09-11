@@ -74,6 +74,16 @@ export function actionsFor(status: BacklogStatus): BacklogAction[] {
   return offered.filter((action) => legal.includes(TARGET[action](status)));
 }
 
+/**
+ * The key a row's confirming control is armed under (#138).
+ *
+ * The row's button and the view's shortcut both name the control this way, which is what makes
+ * `x` arm the button rather than run a second two-step of its own.
+ */
+export function armKeyFor(action: BacklogAction, id: string): string {
+  return `${action}:${id}`;
+}
+
 export function canRun(action: BacklogAction, status: BacklogStatus): boolean {
   return actionsFor(status).includes(action);
 }
@@ -126,4 +136,39 @@ export function reorder(group: BacklogView[], draggedId: string, targetId: strin
   const at = rest.findIndex((item) => item.frontmatter.id === targetId) + (from < to ? 1 : 0);
   rest.splice(at, 0, sorted[from]!);
   return rest;
+}
+
+/**
+ * The `rank` writes that turn a group into `ordered`, low index first.
+ *
+ * The whole sequence, not only the rows that moved: `rankItem` stores exactly the number it is
+ * given and re-spaces nothing, and `backlog propose` stamps `rank: 0` on everything it creates, so
+ * a real backlog is a pile of ties broken by `updated`. Writing 0 and 1 to the two rows that
+ * swapped would leave every other row tied at 0 *in front of both* — the list would repaint one
+ * way and reload the other. An item already holding its new index is the one thing skipped.
+ */
+export function rankWrites(ordered: BacklogView[]): { item: BacklogView; rank: number }[] {
+  return ordered
+    .map((item, rank) => ({ item, rank }))
+    .filter(({ item, rank }) => item.frontmatter.rank !== rank);
+}
+
+/**
+ * The keyboard's equivalent of a drag: `group` with `id` moved one slot in `step`, plus where it
+ * landed, for the announcement. `null` when the item is already at that end of its group.
+ */
+export function moveWithin(
+  group: BacklogView[],
+  id: string,
+  step: -1 | 1,
+): { ordered: BacklogView[]; at: number; total: number } | null {
+  const sorted = [...group].sort(compareItems);
+  const from = sorted.findIndex((item) => item.frontmatter.id === id);
+  const to = from + step;
+  if (from < 0 || to < 0 || to >= sorted.length) return null;
+  return {
+    ordered: reorder(sorted, id, sorted[to]!.frontmatter.id),
+    at: to,
+    total: sorted.length,
+  };
 }

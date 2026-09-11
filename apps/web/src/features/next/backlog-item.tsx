@@ -1,11 +1,13 @@
 import { useEffect, useState, type ComponentProps } from "react";
 
-import { actionLabel, actionsFor, isAgentProposed } from "./backlog-model.js";
+import { actionLabel, actionsFor, armKeyFor, isAgentProposed } from "./backlog-model.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
-import { ConfirmAction, ListRow, RowActions, RowTitle } from "../../components/ui/list-row.js";
+import { ConfirmAction } from "../../components/ui/confirm.js";
+import { ListRow, RowActions, RowTitle } from "../../components/ui/list-row.js";
 
+import type { Arm } from "../../components/ui/confirm.js";
 import type { BacklogActions } from "./backlog-actions.js";
 import type { BacklogView } from "../../lib/ledger-source.js";
 
@@ -25,6 +27,11 @@ export interface BacklogItemProps extends Omit<ComponentProps<"li">, "onSelect" 
   /** Opens the item's right panel — where its detail, provenance and the rest of the writes live. */
   onOpen: () => void;
   onEditingChange: (editing: boolean) => void;
+  /**
+   * The view's arm latch, so `x` and this row's Discard button are the same two-step (#138).
+   * Without one the button keeps its own, which is the pointer-only two-step of #134 unchanged.
+   */
+  arm?: Arm;
 }
 
 /**
@@ -52,6 +59,7 @@ export function BacklogItem({
   onSelect,
   onOpen,
   onEditingChange,
+  arm,
   ...row
 }: BacklogItemProps) {
   const { frontmatter: fm } = item;
@@ -80,6 +88,10 @@ export function BacklogItem({
       selected={selected}
       aria-label={fm.title}
       onClick={onSelect}
+      // Tabbing onto the row selects it, so alt+arrow re-ranks *the focused row* rather than
+      // whichever one `j`/`k` last landed on (#138). `focusin` bubbles, so one handler covers
+      // the title, the chips and every control on the row.
+      onFocus={onSelect}
       {...row}
     >
       {/*
@@ -149,6 +161,8 @@ export function BacklogItem({
                 label="Discard"
                 confirmLabel="Confirm discard"
                 disabled={disabled}
+                arm={arm}
+                armKey={armKeyFor("discard", fm.id)}
                 onConfirm={() => actions.run(item, "discard")}
               />
             ) : null}
