@@ -30,19 +30,30 @@ afterEach(() => {
   Reflect.deleteProperty(window, "matchMedia");
 });
 
-/** A middle pane with something to open the panel from, and something else to click behind it. */
+/**
+ * A middle pane with two rows that open the panel — the second one *replaces* the first's contents
+ * rather than closing it — and something else to click behind it.
+ */
 function Harness() {
-  const [open, setOpen] = useState(false);
+  const [row, setRow] = useState<string | null>(null);
   return (
     <PanelHost>
       {() => (
         <>
           <Inset />
-          <button type="button" onClick={() => setOpen(true)}>
+          <button type="button" onClick={() => setRow("Wired the switcher")}>
             Open evidence
           </button>
+          <button type="button" onClick={() => setRow("Second row")}>
+            Open the second row
+          </button>
           <button type="button">Something else</button>
-          <Panel open={open} onOpenChange={setOpen} title="Wired the switcher" description="[cp 3]">
+          <Panel
+            open={row !== null}
+            onOpenChange={(next) => setRow(next ? row : null)}
+            title={row ?? ""}
+            description="[cp 3]"
+          >
             <p>a1b2c3d</p>
           </Panel>
         </>
@@ -96,6 +107,25 @@ describe("the floating right panel", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(opener));
     expect(screen.getByTestId("inset").textContent).toBe("flush");
+  });
+
+  it("returns focus to the row that opened it last when a second row replaced its contents", async () => {
+    render(<Harness />);
+    const first = screen.getByRole("button", { name: "Open evidence" });
+    first.focus();
+    fireEvent.click(first);
+    await screen.findByRole("dialog", { name: "Wired the switcher" });
+
+    // Non-modal, so the middle pane is still live: a second row replaces the panel's contents.
+    const second = screen.getByRole("button", { name: "Open the second row" });
+    second.focus();
+    fireEvent.click(second);
+    await screen.findByRole("dialog", { name: "Second row" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The row just clicked, not the one that opened it first — a jump backwards reads as a bug.
+    await waitFor(() => expect(document.activeElement).toBe(second));
   });
 
   it("closes on Escape and returns focus, in both forms", async () => {

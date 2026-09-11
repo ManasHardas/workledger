@@ -225,9 +225,9 @@ describe("app shell", () => {
       expect(within(folders).getByText(workspace.name)).toBeDefined();
     }
     // The hook state travels with each folder, worded apart from Home's own badges.
-    expect(within(folders).getAllByText(/hooks are (installed|missing)/).length).toBe(
-      FIXTURE_WORKSPACES.length,
-    );
+    expect(
+      within(folders).getAllByRole("link", { name: /hooks are (installed|missing)$/ }).length,
+    ).toBe(FIXTURE_WORKSPACES.length);
   });
 
   it("collapses the nav into a sheet below 900 px and keeps every link in it", async () => {
@@ -244,6 +244,36 @@ describe("app shell", () => {
         .getAllByRole("link")
         .map((link) => link.getAttribute("href")),
     ).toEqual(VIEW_IDS.map((view) => repoHref(FIRST.id, view)));
+  });
+
+  it("closes the nav sheet on a tap on any of the five views, and offers a visible way out", async () => {
+    matchAll([NAV_SHEET_QUERY]);
+    renderAt(repoHref(FIRST.id, "ledger"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open navigation" }));
+    const nav = await screen.findByRole("navigation", { name: "Views" });
+
+    // A modal sheet whose only exits are Escape and a strip of overlay is a trap, so it carries
+    // its own control (#132 review).
+    expect(screen.getByRole("button", { name: "Close navigation" })).toBeDefined();
+
+    // Picking a view navigates *and* closes: the route effect watches the whole route, and each
+    // link is a `SheetClose` besides.
+    fireEvent.click(within(nav).getByRole("link", { name: /^Jobs/ }));
+    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "jobs")));
+    await waitFor(() => expect(screen.queryByRole("navigation", { name: "Views" })).toBeNull());
+    // Nothing is left `aria-hidden` behind a sheet that is gone.
+    expect(document.querySelectorAll("[aria-hidden='true'][data-aria-hidden]").length).toBe(0);
+  });
+
+  it("links each folder in the nav to the group that details it, count and all (rule 4)", async () => {
+    renderAt("#/");
+    const folders = await screen.findByRole("list", { name: "Folders" });
+    for (const workspace of FIXTURE_WORKSPACES) {
+      const link = within(folders).getByRole("link", {
+        name: new RegExp(`^${workspace.name} — ${workspace.sessions} sessions`),
+      });
+      expect(link.getAttribute("href")).toBe("#/");
+    }
   });
 
   it("links the brand to Home", async () => {

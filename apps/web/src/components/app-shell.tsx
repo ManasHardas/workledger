@@ -19,7 +19,7 @@ import { KeyboardHelp } from "./keyboard-help.js";
 import { ALL_PROJECTS, ProjectSwitcher } from "./project-switcher.js";
 import { Button } from "./ui/button.js";
 import { PanelHost } from "./ui/panel.js";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
 
 /**
  * The app shell, in the Linear shape `docs/design/direction.md` §Shell asks for: a 240 px left nav
@@ -100,6 +100,17 @@ export function navFor(route: Route, repos: Repo[] = []): NavItem[] {
   ];
 }
 
+/**
+ * A route as one comparable string. `useRoute()` parses a fresh object out of the hash on every
+ * render, so a `useEffect` that wants "the route changed" has to depend on this, not on the object.
+ */
+function routeKey(route: Route): string {
+  if (route.kind === "repo") return `repo/${route.repo}/${route.view}/${route.rest.join("/")}`;
+  if (route.kind === "machine") return `machine/${route.view}`;
+  if (route.kind === "legacy") return `legacy/${route.view}/${route.rest.join("/")}`;
+  return route.kind;
+}
+
 /** The sticky header's title: what the middle pane is *about*, not which view of it is showing. */
 function paneTitle(route: Route, repo: Repo | undefined, repoId: string): string {
   if (route.kind === "onboarding") return "Add projects";
@@ -119,9 +130,13 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   const current = repos.find((repo) => repo.id === repoId);
   const nav = navFor(route, repos);
 
-  // The sheet is a route-scoped thing: leaving the route it was opened from must not leave it open
-  // over the new one.
-  useEffect(() => setMenuOpen(false), [route.kind, repoId]);
+  // The sheet is a route-scoped thing: leaving the route it was opened from must never leave it
+  // open over the new one. `route` itself is a fresh object on every render, so the dependency is
+  // a key derived from it — watching only `kind` and the repo id let a tap on one of the five
+  // views navigate with the modal sheet still up, the document still `aria-hidden`, and focus
+  // still inside it (#132 review).
+  const where = routeKey(route);
+  useEffect(() => setMenuOpen(false), [where]);
 
   function switchTo(id: string) {
     if (id === ALL_PROJECTS) {
@@ -132,8 +147,15 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
     window.location.hash = repoHref(id, view);
   }
 
-  const sidebar = (
-    <Sidebar nav={nav} repos={repos} repoId={repoId} onSwitch={switchTo} workspaces={workspaces} />
+  const sidebar = (inSheet: boolean) => (
+    <Sidebar
+      nav={nav}
+      repos={repos}
+      repoId={repoId}
+      onSwitch={switchTo}
+      workspaces={workspaces}
+      inSheet={inSheet}
+    />
   );
 
   return (
@@ -142,7 +164,7 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
         <div className="min-h-screen bg-background text-foreground">
           {asSheet ? null : (
             <div className="fixed inset-y-0 left-0 z-30 w-nav border-r border-hairline bg-background">
-              {sidebar}
+              {sidebar(false)}
             </div>
           )}
           <div
@@ -168,7 +190,7 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
                     <SheetHeader className="sr-only">
                       <SheetTitle>Navigation</SheetTitle>
                     </SheetHeader>
-                    {sidebar}
+                    {sidebar(true)}
                   </SheetContent>
                 </Sheet>
               ) : null}
@@ -193,37 +215,58 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   );
 }
 
-/** The nav's contents — the same tree whether it is the fixed column or the sheet behind it. */
+/**
+ * The nav's contents — the same tree whether it is the fixed column or the sheet behind it.
+ *
+ * `inSheet` is the one difference, and it is about not trapping anybody: inside the sheet every
+ * link also closes it, and the sheet carries a visible close control. The route effect in
+ * {@link AppShell} closes it too; both exist because a modal sheet whose only exits are Escape and
+ * a 57 px strip of overlay is a trap the moment either one misses (#132 review).
+ */
 function Sidebar({
   nav,
   repos,
   repoId,
   onSwitch,
   workspaces,
+  inSheet,
 }: {
   nav: NavItem[];
   repos: Repo[];
   repoId: string;
   onSwitch: (id: string) => void;
   workspaces: Async<Workspace[]>;
+  inSheet: boolean;
 }) {
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto px-2 py-3">
       <div className="flex flex-col gap-1">
-        <a
-          href={HOME_HREF}
-          aria-label="workledger — Home"
-          className="rounded-md px-2 py-1 text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          workledger
-        </a>
+        <div className="flex items-center gap-1">
+          <Dismissing inSheet={inSheet}>
+            <a
+              href={HOME_HREF}
+              aria-label="workledger — Home"
+              className="min-w-0 flex-1 truncate rounded-md px-2 py-1 text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              workledger
+            </a>
+          </Dismissing>
+          {inSheet ? (
+            <SheetClose
+              aria-label="Close navigation"
+              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <CloseIcon />
+            </SheetClose>
+          ) : null}
+        </div>
         <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
       </div>
 
       <nav aria-label="Views" className="flex flex-col gap-px">
         {nav.map((item) => (
+          <Dismissing key={item.href} inSheet={inSheet}>
           <a
-            key={item.href}
             href={item.href}
             aria-current={item.current ? "page" : undefined}
             className={cn(
@@ -247,20 +290,31 @@ function Sidebar({
               <span className="shrink-0 text-xs tabular-nums text-subtle-foreground">{item.count}</span>
             )}
           </a>
+          </Dismissing>
         ))}
       </nav>
 
-      <FoldersSection workspaces={workspaces} />
+      <FoldersSection workspaces={workspaces} inSheet={inSheet} />
 
-      <a
-        href={ONBOARDING_HREF}
-        className="mt-auto flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <PlusIcon />
-        Add projects
-      </a>
+      <Dismissing inSheet={inSheet}>
+        <a
+          href={ONBOARDING_HREF}
+          className="mt-auto flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <PlusIcon />
+          Add projects
+        </a>
+      </Dismissing>
     </div>
   );
+}
+
+/**
+ * A link that also closes the nav sheet when it is inside one. `SheetClose` is Radix's dialog
+ * close, so it must not be rendered outside the sheet — hence the flag rather than a hook.
+ */
+function Dismissing({ inSheet, children }: { inSheet: boolean; children: React.ReactElement }) {
+  return inSheet ? <SheetClose asChild>{children}</SheetClose> : children;
 }
 
 /**
@@ -268,10 +322,15 @@ function Sidebar({
  * their hook state. Absent when the daemon reports none, and absent while the first read is in
  * flight: a nav section that appears a second after the page does is worse than one that waits.
  *
+ * Each row is a link to Home's own "Folders with sessions" group, which is the card that details
+ * the folder — rule 4, every count is a link to the thing it counts. A folder is not a repo and
+ * has no ledger of its own, so Home's group is the thing; the accessible name carries the count so
+ * the link says what it leads to.
+ *
  * Its list is labelled `Folders`, not `Folders with sessions`: Home's own group owns that name,
  * and two lists sharing one accessible name is an ambiguity for anyone navigating by landmark.
  */
-function FoldersSection({ workspaces }: { workspaces: Async<Workspace[]> }) {
+function FoldersSection({ workspaces, inSheet }: { workspaces: Async<Workspace[]>; inSheet: boolean }) {
   if (workspaces.state !== "ready" || workspaces.value.length === 0) return null;
   return (
     <div className="flex flex-col gap-1">
@@ -280,28 +339,30 @@ function FoldersSection({ workspaces }: { workspaces: Async<Workspace[]> }) {
       </p>
       <ul aria-label="Folders" className="flex flex-col gap-px">
         {workspaces.value.map((workspace) => (
-          <li
-            key={workspace.path}
-            className="flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground"
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "h-2 w-2 shrink-0 rounded-full",
-                workspace.hooksInstalled ? "bg-success" : "bg-warning",
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            {/*
-              The dot is the visual; this is the same fact for a screen reader. Worded apart from
-              Home's own "hooks installed" / "no hooks" badges so the two are never one query.
-            */}
-            <span className="sr-only">
-              {workspace.hooksInstalled ? "hooks are installed" : "hooks are missing"}
-            </span>
-            <span className="shrink-0 text-xs tabular-nums text-subtle-foreground">
-              {workspace.sessions}
-            </span>
+          <li key={workspace.path}>
+            <Dismissing inSheet={inSheet}>
+              <a
+                href={HOME_HREF}
+                aria-label={`${workspace.name} — ${workspace.sessions} sessions, ${
+                  workspace.hooksInstalled ? "hooks are installed" : "hooks are missing"
+                }`}
+                className="flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-2 w-2 shrink-0 rounded-full",
+                    workspace.hooksInstalled ? "bg-success" : "bg-warning",
+                  )}
+                />
+                <span aria-hidden="true" className="min-w-0 flex-1 truncate">
+                  {workspace.name}
+                </span>
+                <span aria-hidden="true" className="shrink-0 text-xs tabular-nums text-subtle-foreground">
+                  {workspace.sessions}
+                </span>
+              </a>
+            </Dismissing>
           </li>
         ))}
       </ul>
@@ -329,6 +390,14 @@ function MenuIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
     </svg>
   );
 }

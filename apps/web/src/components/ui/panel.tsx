@@ -100,13 +100,31 @@ export function Panel({ open, onOpenChange, title, description, children, classN
    * row that was is not knowable to this component. So the opener is remembered on the render that
    * flips `open` to true, before Radix's mount effect moves focus into the content, and restored in
    * `onCloseAutoFocus` (which Radix fires for both the modal and the non-modal form).
+   *
+   * On desktop the panel is non-modal and a second row *replaces* its contents without ever
+   * closing it, so the opener has to keep up: while the panel is open, any focus landing outside
+   * it is the new opener. Without that, closing after a second click sent focus back to the first
+   * row — a jump backwards (#132 review).
    */
+  const contentRef = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(open);
   if (open && !wasOpen.current) {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
   wasOpen.current = open;
+
+  useEffect(() => {
+    if (!open) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (contentRef.current?.contains(target) === true) return;
+      opener.current = target;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, [open]);
 
   // A ref, not a local: `setDrag` re-renders between `touchmove`s, and a local would be back to
   // null by the second one.
@@ -136,6 +154,7 @@ export function Panel({ open, onOpenChange, title, description, children, classN
           />
         ) : null}
         <DialogPrimitive.Content
+          ref={contentRef}
           data-variant={sheet ? "sheet" : "panel"}
           // Radix wires `aria-describedby` to the Description when there is one; without one it
           // warns unless the absence is stated, which is what this spread says.

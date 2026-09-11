@@ -490,8 +490,27 @@ test.describe("workledger serve, end to end", () => {
     await page.getByRole("button", { name: "Open navigation" }).click();
     await expect(page.getByRole("navigation", { name: "Views" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Project: repo" })).toBeVisible();
+    // A modal sheet needs a control a thumb can find; the overlay strip is 57 px at 375 px.
+    await expect(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("navigation", { name: "Views" })).toHaveCount(0);
+
+    // Picking a view navigates *and* closes the sheet, at both narrow widths: a sheet left up over
+    // the new route leaves the document `aria-hidden` and focus inside it (#132 review).
+    for (const width of [TABLET_WIDTH, MOBILE_WIDTH]) {
+      await page.setViewportSize({ width, height: 812 });
+      await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
+      await page.getByRole("button", { name: "Open navigation" }).click();
+      await page
+        .getByRole("navigation", { name: "Views" })
+        .getByRole("link", { name: /^Jobs/ })
+        .click();
+      await expect(page).toHaveURL(`${serving.url}/#/r/${serving.id}/jobs`);
+      await expect(page.getByRole("navigation", { name: "Views" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+      // Nothing behind it is still hidden from assistive technology.
+      expect(await page.locator("[data-aria-hidden]").count()).toBe(0);
+    }
   });
 
   test("the right pane is a floating inset panel on desktop and a bottom sheet at 375 px", async ({
@@ -539,6 +558,11 @@ test.describe("workledger serve, end to end", () => {
 
     // At 375 px the same control is a modal bottom sheet, and nothing scrolls sideways.
     await page.setViewportSize({ width: MOBILE_WIDTH, height: 812 });
+    // The session itself fits first — the meta line carries absolute paths (rule 5). Polled: the
+    // resize relayouts a frame after `setViewportSize` returns.
+    await expect
+      .poll(() => scrollWidth(page), { message: "the session fits 375 px before the panel" })
+      .toBeLessThanOrEqual(MOBILE_WIDTH);
     await page.getByRole("main").locator("li button[aria-haspopup='dialog']").first().click();
     const sheet = page.getByRole("dialog");
     await expect(sheet).toHaveAttribute("data-variant", "sheet");
