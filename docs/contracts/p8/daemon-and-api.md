@@ -158,6 +158,23 @@ rows, resumes in `startDir`, and files into each context repo. Session views sho
 and "about". Supersedes the cwd clauses of amendment 8 and the cross-repo write rule of #111
 where they conflict; the write rule stays for roots other than the fallback.
 
+**The span the live Stop hook infers over (#130, 2026-09-10).** Discovery, history, the backfill
+and the repair job infer over the **whole transcript** — they describe a session that is over, and
+that is what it was about. The **live Stop hook** infers over the **span since the session's last
+checkpoint** alone: what `sessions.scan_counts` has accumulated since that checkpoint, plus the
+bytes after `sessions.scan_offset`, which is how far the scan has actually read. A checkpoint
+clears the counts — it is what recorded that work — and nothing else does; it never advances the
+cursor past what was read (`scan_offset := min(scan_offset, size)`), because the allow path does
+not scan and the bytes between the last block and the checkpoint are unread, so stepping over them
+would drop the work they carry. The give-up rule leaves cursor and counts alone: it records
+nothing, so its block's work is still owed and the next block still asks for it. The block asks
+about the work since the last checkpoint, so only evidence from that work attributes: a repo with no qualifying evidence in the span is **not** listed, however much
+of the transcript before the span was about it, and a repo whose whole span contribution is reads —
+no write and no path-tool input or `cd` — never blocks a Stop. Where the span qualifies nothing, the
+fallback is the repos **the previous checkpoint used** (the row's recorded `context_repos`, limited
+to enabled repos whose row has a checkpoint on record); failing that, the repo containing the start
+directory; failing that — a workspace-started session with neither — the Stop is allowed.
+
 Wire (#116): `SessionView` gains `startedIn: string | null` and `about: string[]` (the
 frontmatter's `started_in` and `about`, optional fields added to the P1 session schema);
 `RepoCandidate` gains `about: { content: number; fallback: number }` — how many of its sessions

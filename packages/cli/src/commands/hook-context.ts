@@ -4,13 +4,26 @@
  *
  * Where a session was started says nothing about where its checkpoints belong; its content
  * does. When a Stop crosses a threshold, the transcript's tool inputs since the last scan are
- * tallied per enabled repo (`scan_offset`, `scan_counts`), the accumulated tallies are ranked
- * into the session's context repos (`rankContext`, the same rule discovery and the backfill
- * apply), and the block asks for one `workledger checkpoint --session <ulid> --repo <root>` per
- * context repo — each against a session row and ledger file opened in that repo. A repo-started
- * session whose content qualifies nothing falls back to its own repo, and a session about its
- * own repo alone gets the P1 block, byte for byte; a workspace-started session that qualifies
- * nothing is allowed. Repos the transcript never touched are never written to.
+ * tallied per enabled repo (`scan_offset`, `scan_counts`), the tallies are ranked into the
+ * session's context repos (`rankContext`, the same rule discovery and the backfill apply), and
+ * the block asks for one `workledger checkpoint --session <ulid> --repo <root>` per context repo
+ * — each against a session row and ledger file opened in that repo. A session about its own repo
+ * alone gets the P1 block, byte for byte. Repos the span never touched are never written to.
+ *
+ * **The span, not the file (#130).** A block asks about the work since the last checkpoint, so
+ * that is what it infers over: the counts `scan_counts` has accumulated since that checkpoint,
+ * plus the bytes after `scan_offset`, which is how far the scan has actually read. A checkpoint
+ * clears the counts — it is what recorded that work — and is the only thing that does; the
+ * cursor is not cleared with them and may only ever move back (`resetAfterCheckpoint`), because
+ * the allow path does not scan and the bytes between the last block and the checkpoint are
+ * unread: advancing over them would drop the work they carry. A give-up leaves both alone: it
+ * records nothing, so its block's work is still owed. A repo with no evidence in the span is not
+ * listed, however much of the transcript before it was about that repo — the noise #130 reports
+ * is a span that changed one repo being asked to check in three. Discovery, history and the
+ * backfill infer over the whole transcript, which is what they are about
+ * ({@link inferContext}); only the live Stop hook narrows to the span. Where the span qualifies
+ * nothing, the fallback is the repos the previous checkpoint used, and failing that the repo
+ * containing the start directory — a workspace-started session with neither is allowed.
  *
  * Reached only by a lazy import from `hook.ts`, on the block ladder, so the Stop allow path
  * pays nothing for the scanner (the timing budget of hooks-claude-code.md).
@@ -58,7 +71,7 @@ function candidatesFor(ctx: Context, session: SessionRow): string[] {
 }
 
 /**
- * The context repos the accumulated tallies imply (amendment 10): {@link rankContext} over the
+ * The context repos a set of tallies implies (amendment 10): {@link rankContext} over the
  * candidates, with the session's own repo as the start repo — a workspace-started session has
  * none — so the fallback and the tiebreak land there and nowhere else.
  */
@@ -68,22 +81,60 @@ export function contextOf(ctx: Context, session: SessionRow, counts: Record<stri
 }
 
 /**
- * Scan the bytes since the last scan, fold them into the row, and infer the context repos.
+ * The repos the previous checkpoint of this harness session used — the fallback for a span that
+ * qualifies nothing (#130). The row's recorded `context_repos` is the inference the last block
+ * asked on; a root of it counts here only while it is still enabled and its per-repo row has a
+ * checkpoint on record, which is what makes this "the repos the previous checkpoint used" rather
+ * than "the repos the last block guessed". Marked `fallback`, like the start repo's.
+ */
+function previousContext(ctx: Context, session: SessionRow, counts: Record<string, TouchTally>): ContextRepo[] {
+  const previous = readContext(session);
+  if (previous === undefined) return [];
+  const repos: ContextRepo[] = [];
+  for (const { root } of previous) {
+    if (!isEnabled(root)) continue;
+    const row = ctx.db.getSessionByHarnessId(ctx.io.adapter.harness, ctx.input.harnessSessionId, root);
+    if (row === undefined || ctx.db.countCheckpoints(row.ulid) === 0) continue;
+    repos.push({ root, ...(counts[root] ?? emptyTally()), fallback: true });
+  }
+  return repos;
+}
+
+/**
+ * The context repos of one span (#130): what the span's own tallies qualify, else the repos the
+ * previous checkpoint used, else {@link contextOf}'s own fallback — the repo containing the start
+ * directory, or nothing at all for a workspace-started session that has neither.
  *
- * The scanner is `scanTranscript` from `scan_offset` to the file's current size; the tallies
- * are added to the row's `scan_counts`, so each Stop reads only what arrived since the last
- * one. Relative paths in the new bytes resolve against the session's start directory. The
- * inference is recorded as `context_repos` on the row and as `about` in the repo row's
+ * {@link rankContext} returns either roots the content qualified, or the single start-repo
+ * fallback, or nothing, so a non-empty first entry that is not a fallback is the qualified list.
+ */
+export function spanContext(ctx: Context, session: SessionRow, counts: Record<string, TouchTally>, roots: readonly string[]): ContextRepo[] {
+  const ranked = contextOf(ctx, session, counts, roots);
+  if (ranked.length > 0 && ranked[0]?.fallback !== true) return ranked;
+  const previous = previousContext(ctx, session, counts);
+  return previous.length > 0 ? previous : ranked;
+}
+
+/**
+ * Scan the bytes of the span not yet read, fold them into the row, and infer the context repos.
+ *
+ * The scanner is `scanTranscript` from `scan_offset` to the file's current size; the tallies are
+ * added to the row's `scan_counts`, so each Stop reads only what arrived since the last one and
+ * every byte is read exactly once, whether or not a checkpoint landed in between. The counts
+ * themselves reach back no further than the last checkpoint, which cleared them (#130). Relative
+ * paths in the new bytes resolve against the session's start directory. The inference is
+ * {@link spanContext}, recorded as `context_repos` on the row and as `about` in the repo row's
  * frontmatter; a transcript that cannot be read leaves the counts as they were.
  */
 export async function scanContext(ctx: Context, session: SessionRow, transcript: string | undefined): Promise<ContextRepo[]> {
   const roots = candidatesFor(ctx, session);
   const counts = readCounts(session);
+  const start = session.scan_offset;
   if (transcript !== undefined && roots.length > 0) {
     try {
       const size = statSync(transcript).size;
-      if (size > session.scan_offset) {
-        const result = await scanTranscript(transcript, roots, { homeDir: ctx.io.homeDir, cwd: session.start_dir ?? ctx.root, start: session.scan_offset });
+      if (size > start) {
+        const result = await scanTranscript(transcript, roots, { homeDir: ctx.io.homeDir, cwd: session.start_dir ?? ctx.root, start });
         for (const [root, tally] of result.roots) {
           const entry = counts[root] ?? emptyTally();
           counts[root] = {
@@ -98,7 +149,7 @@ export async function scanContext(ctx: Context, session: SessionRow, transcript:
       ctx.io.stderr(`workledger: hook Stop: transcript scan skipped (${describe(error)})`);
     }
   }
-  const context = contextOf(ctx, session, counts, roots);
+  const context = spanContext(ctx, session, counts, roots);
   ctx.db.updateSession(session.ulid, { context_repos: JSON.stringify(context) });
   if (session.workspace === 0) {
     await patchFrontmatter(ctx.root, session.ulid, (data) => {

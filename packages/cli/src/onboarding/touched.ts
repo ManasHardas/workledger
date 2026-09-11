@@ -12,8 +12,14 @@
  * counts into a context repo is {@link meetsRule}: one write, or at least {@link MIN_REFERENCES}
  * references of which at least one is a path input (#110). Bash command text alone — a `grep`
  * that names the root twenty times — never qualifies: the orchestrator's own session in
- * `~/Projects` was attributed to a card repo that way. {@link inferContext} is the one
- * inference discovery, history, the backfill, the repair job and the Stop hook all apply.
+ * `~/Projects` was attributed to a card repo that way.
+ *
+ * **Whole transcript versus span (#130).** {@link rankContext} is the rule everyone applies; what
+ * differs is how much of the transcript is scored. Discovery, history, the backfill and the repair
+ * job score the **whole** file through {@link inferContext} — they describe a finished session, and
+ * that is what it was about. The **live Stop hook** scores only the **span since the last
+ * checkpoint** (`commands/hook-context.ts`), because that is what its block asks for; a repo the
+ * span carries no evidence for is not listed, whatever the bytes before it said.
  *
  * Two constraints shape the reading:
  *
@@ -198,8 +204,9 @@ export interface ContextInference {
  * The transcript is scored against every candidate through the index cache
  * ({@link touchedRoots}), the repo containing `startDir` is found among the candidates by
  * resolved path ({@link startRepoOf}), and {@link rankContext} turns the two into the context
- * repos. Discovery, history, the backfill and the repair job call exactly this; the Stop hook
- * scans incrementally and calls {@link rankContext} on what it has accumulated.
+ * repos. Discovery, history, the backfill and the repair job call exactly this — the whole
+ * transcript, which is what they are about; the live Stop hook does not: it scans the span since
+ * the session's last checkpoint and calls {@link rankContext} on what that span accumulated (#130).
  */
 export async function inferContext(
   transcriptPath: string,
