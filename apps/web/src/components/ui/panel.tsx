@@ -17,12 +17,14 @@ import { usePanelIsSheet } from "../../lib/media.js";
  * The right pane, and the one place the app is allowed to put evidence
  * (`docs/design/direction.md` §Shell, rule 3; P8 amendment 13).
  *
- * It is a **floating panel**, never a full-height drawer: 380 px wide, inset 12 px from the top,
- * right and bottom, radius 10, the app's single shadow, its own scroll and its own header with a
- * close control. On desktop it is non-modal — the middle pane keeps its scroll and its clicks, so
- * opening a second item *replaces* the panel instead of closing and reopening it. Below 768 px
- * the same component is a modal bottom sheet at 85 vh with a drag handle, closed by Escape, by
- * the close control, or by a swipe down.
+ * From 1280 px it **docks** as the first module of the shell's right column (X's "Today's News"
+ * slot, see {@link PanelSlot}): 350 px, radius 16, a hairline border, its own scroll and its own
+ * header with a round close control. Between 768 and 1279 px there is no right column, so it
+ * **floats** at the right edge instead — inset 12 px, the app's single shadow — never a
+ * full-height drawer. Either way it is non-modal — the middle pane keeps its scroll and its
+ * clicks, so opening a second item *replaces* the panel instead of closing and reopening it.
+ * Below 768 px the same component is a modal bottom sheet at 85 vh with a drag handle, closed by
+ * Escape, by the close control, or by a swipe down.
  *
  * Focus moves into the panel when it opens and back to whatever opened it when it closes, in both
  * forms: that is Radix's dialog underneath, with the focus trap turned off in the non-modal form
@@ -37,6 +39,9 @@ interface PanelHostValue {
   open: number;
   acquire: () => void;
   release: () => void;
+  /** The right column's dock, while the shell has one on screen; an open panel renders into it. */
+  slot: HTMLElement | null;
+  setSlot: (node: HTMLElement | null) => void;
 }
 
 const PanelHostContext = createContext<PanelHostValue | null>(null);
@@ -47,15 +52,28 @@ const PanelHostContext = createContext<PanelHostValue | null>(null);
  */
 export function PanelHost({ children }: { children: (open: boolean) => ReactNode }) {
   const [open, setOpen] = useState(0);
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   const value = useMemo<PanelHostValue>(
     () => ({
       open,
       acquire: () => setOpen((n) => n + 1),
       release: () => setOpen((n) => Math.max(0, n - 1)),
+      slot,
+      setSlot,
     }),
-    [open],
+    [open, slot],
   );
   return <PanelHostContext.Provider value={value}>{children(open > 0)}</PanelHostContext.Provider>;
+}
+
+/**
+ * Where a desktop panel docks: the top of the shell's right column, the slot X gives its first
+ * module. While one is mounted, an open panel renders in the column's flow as a module instead of
+ * floating over the page; `empty:hidden` keeps the column's gap from opening above nothing.
+ */
+export function PanelSlot() {
+  const setSlot = useContext(PanelHostContext)?.setSlot;
+  return <div ref={setSlot} className="empty:hidden" />;
 }
 
 /** True while any {@link Panel} is open. The shell reads it to inset the middle pane. */
@@ -78,6 +96,9 @@ export function Panel({ open, onOpenChange, title, description, children, classN
   const sheet = usePanelIsSheet();
   const host = useContext(PanelHostContext);
   const [drag, setDrag] = useState(0);
+  const slot = host?.slot ?? null;
+  // Docked: the shell's right column is on screen, so the panel is one of its modules.
+  const docked = !sheet && slot !== null;
 
   // The middle pane's inset is the host's business, not this component's; releasing on unmount as
   // well as on close is what keeps it from sticking when a route changes while the panel is open.
@@ -145,17 +166,18 @@ export function Panel({ open, onOpenChange, title, description, children, classN
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={sheet}>
-      <DialogPrimitive.Portal>
+      <DialogPrimitive.Portal container={docked ? slot : undefined}>
         {/* No scrim on desktop: a non-modal panel that dimmed the page would be lying about it. */}
         {sheet ? (
           <DialogPrimitive.Overlay
             data-panel-overlay=""
-            className="fixed inset-0 z-40 bg-overlay/60"
+            className="fixed inset-0 z-40 bg-overlay/40"
           />
         ) : null}
         <DialogPrimitive.Content
           ref={contentRef}
           data-variant={sheet ? "sheet" : "panel"}
+          data-docked={docked ? "" : undefined}
           // Radix wires `aria-describedby` to the Description when there is one; without one it
           // warns unless the absence is stated, which is what this spread says.
           {...(description === undefined ? { "aria-describedby": undefined } : {})}
@@ -171,10 +193,14 @@ export function Panel({ open, onOpenChange, title, description, children, classN
             if (target !== null && target.isConnected) target.focus();
           }}
           className={cn(
-            "fixed z-50 flex flex-col overflow-hidden border border-hairline bg-raised text-foreground shadow-panel focus-visible:outline-none",
+            "flex flex-col overflow-hidden border border-hairline bg-raised text-foreground focus-visible:outline-none",
             sheet
-              ? "inset-x-0 bottom-0 h-[85vh] rounded-t-lg border-b-0"
-              : "bottom-inset right-inset top-inset w-panel rounded-lg",
+              ? "fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-lg border-b-0 shadow-panel"
+              : docked
+                ? // A module in the right column's flow: no shadow, as tall as the viewport allows
+                  // under the column's own 12 px of padding, scrolling inside itself past that.
+                  "max-h-[calc(100vh_-_2_*_var(--wl-spacing-inset))] w-full rounded-lg"
+                : "fixed bottom-inset right-inset top-inset z-50 w-panel rounded-lg shadow-panel",
             className,
           )}
         >
@@ -188,9 +214,9 @@ export function Panel({ open, onOpenChange, title, description, children, classN
               <span aria-hidden="true" className="h-1 w-10 rounded-full bg-input" />
             </div>
           ) : null}
-          <div className="flex shrink-0 items-start gap-2 border-b border-hairline px-4 py-3">
+          <div className="flex shrink-0 items-start gap-3 px-4 pb-2 pt-3">
             <div className="min-w-0 flex-1">
-              <DialogPrimitive.Title className="line-clamp-2 text-sm font-medium leading-body">
+              <DialogPrimitive.Title className="line-clamp-3 text-lg font-extrabold leading-body">
                 {title}
               </DialogPrimitive.Title>
               {description === undefined ? null : (
@@ -201,12 +227,12 @@ export function Panel({ open, onOpenChange, title, description, children, classN
             </div>
             <DialogPrimitive.Close
               aria-label="Close panel"
-              className="-mr-1 shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="-mr-2 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <CloseIcon />
             </DialogPrimitive.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2">{children}</div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
@@ -216,7 +242,7 @@ export function Panel({ open, onOpenChange, title, description, children, classN
 /** Inlined so the bundle asks the network for nothing (design spec §14: no external assets). */
 function CloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
     </svg>
   );

@@ -2,10 +2,11 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/cn.js";
 
+/** X's module: a 16 px radius and a hairline, on the page's own black rather than a raised grey. */
 export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("rounded-lg border border-border bg-card text-card-foreground", className)}
+      className={cn("rounded-lg border border-hairline bg-card text-card-foreground", className)}
       {...props}
     />
   );
@@ -16,7 +17,7 @@ export function CardHeader({ className, ...props }: ComponentProps<"div">) {
 }
 
 export function CardTitle({ className, ...props }: ComponentProps<"h3">) {
-  return <h3 className={cn("text-base font-semibold leading-tight", className)} {...props} />;
+  return <h3 className={cn("text-base font-bold leading-body", className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }: ComponentProps<"p">) {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { cn } from "../lib/cn.js";
 import type { Repo, Workspace } from "../lib/ledger-source.js";
-import { useNavIsSheet } from "../lib/media.js";
+import { useHasAside, useNavIsSheet } from "../lib/media.js";
 import {
   HOME_HREF,
   ONBOARDING_HREF,
@@ -17,19 +17,22 @@ import type { Async } from "../lib/use-async.js";
 import { useLiveWorkspaces } from "../features/home/live.js";
 import { KeyboardHelp } from "./keyboard-help.js";
 import { ALL_PROJECTS, ProjectSwitcher } from "./project-switcher.js";
-import { Button } from "./ui/button.js";
-import { PanelHost } from "./ui/panel.js";
+import { Button, buttonVariants } from "./ui/button.js";
+import { PanelHost, PanelSlot } from "./ui/panel.js";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
 
 /**
- * The app shell, in the Linear shape `docs/design/direction.md` §Shell asks for: a 240 px left nav
- * with the project switcher, the per-project views with their counts and the folders that have
- * sessions; a middle pane under a sticky header with a hairline beneath it; and a right pane that
- * is a floating panel (`components/ui/panel.tsx`), never a full-height drawer.
+ * The app shell, in the X shape `docs/design/direction.md` §Shell asks for: one centred group of
+ * a 275 px left nav (the views as pills, the one big "Add projects" pill, the project switcher at
+ * the foot where X keeps its account switcher), a 600 px middle column with a hairline down either
+ * side under a translucent sticky header, and — from 1280 px — a 350 px right column whose first
+ * module is the evidence panel (`components/ui/panel.tsx`) and whose second is the folders with
+ * sessions.
  *
  * Below 900 px the nav is a sheet behind a hamburger — the whole nav, swapped rather than restyled,
  * so there is never a second copy of every link hiding under `display: none` for a screen reader or
- * a `getByRole` query to find.
+ * a `getByRole` query to find. The folders follow the same rule: in the right column when there is
+ * one, in the nav when there is not, never both.
  *
  * Links are real `#/…` anchors, so the browser's back button and a card's `openDeepLink` both work
  * without JavaScript in the middle.
@@ -39,7 +42,7 @@ export interface NavItem {
   href: string;
   label: string;
   current: boolean;
-  /** The right-aligned count, when the view has one. Rendered with tabular numerals. */
+  /** The count after the label, when the view has one. Rendered with tabular numerals. */
   count?: number;
   icon: ViewIconName;
 }
@@ -124,6 +127,8 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   const source = useMachine();
   const { result: workspaces } = useLiveWorkspaces(source);
   const asSheet = useNavIsSheet();
+  // A real viewport is never both, but a stubbed `matchMedia` can say so; the sheet wins.
+  const hasAside = useHasAside() && !asSheet;
   const [menuOpen, setMenuOpen] = useState(false);
 
   const repoId = route.kind === "repo" ? route.repo : ALL_PROJECTS;
@@ -155,6 +160,7 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
       onSwitch={switchTo}
       workspaces={workspaces}
       inSheet={inSheet}
+      showFolders={!hasAside}
     />
   );
 
@@ -162,51 +168,65 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
     <PanelHost>
       {(panelOpen) => (
         <div className="min-h-screen bg-background text-foreground">
-          {asSheet ? null : (
-            <div className="fixed inset-y-0 left-0 z-30 w-nav border-r border-hairline bg-background">
-              {sidebar(false)}
-            </div>
-          )}
           <div
             className={cn(
               // No transition on the padding: the pane's width is measured the moment the panel
               // opens (a screenshot, a layout read), and an animated reflow makes that a race.
-              "flex min-h-screen flex-col",
-              asSheet ? "" : "pl-nav",
-              // The panel is non-modal on desktop, so the middle pane makes room for it rather
-              // than being covered by it: 380 px of panel plus its 12 px inset on either side.
-              panelOpen && !asSheet ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]" : "",
+              "flex min-h-screen justify-center",
+              hasAside ? "gap-8" : "",
+              // Between 900 and 1279 px there is no right column, so the panel floats at the right
+              // edge, non-modal; the centred group makes room for it rather than being covered by
+              // it: 350 px of panel plus its 12 px inset on either side.
+              panelOpen && !asSheet && !hasAside
+                ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]"
+                : "",
             )}
           >
-            <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-background/95 px-4 backdrop-blur">
-              {asSheet ? (
-                <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-                  <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8 shrink-0" aria-label="Open navigation">
-                      <MenuIcon />
-                    </Button>
-                  </SheetTrigger>
-                  <SheetContent side="left" aria-describedby={undefined} className="w-nav max-w-[85vw] p-0">
-                    <SheetHeader className="sr-only">
-                      <SheetTitle>Navigation</SheetTitle>
-                    </SheetHeader>
-                    {sidebar(true)}
-                  </SheetContent>
-                </Sheet>
-              ) : null}
-              <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight">
-                {paneTitle(route, current, repoId)}
-              </h1>
-              {/*
-                The status chips of direction.md §Shell. The primary action stays with the view
-                that owns it — Home's "Add projects", a session's "Repair" — so the header does not
-                grow a second copy of a control the middle pane already has.
-              */}
-              {current === undefined ? null : <HealthChip health={current.health} />}
-            </header>
-            <main id="main" className="min-w-0 flex-1 px-4 py-6 sm:px-6">
-              {children}
-            </main>
+            {asSheet ? null : (
+              <div className="w-nav shrink-0">
+                <div className="sticky top-0 h-screen">{sidebar(false)}</div>
+              </div>
+            )}
+            <div className="flex min-w-0 max-w-reading flex-1 flex-col border-hairline sm:border-x">
+              <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-background/65 px-4 backdrop-blur-md">
+                {asSheet ? (
+                  <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+                    <SheetTrigger asChild>
+                      <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8 shrink-0" aria-label="Open navigation">
+                        <MenuIcon />
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent side="left" aria-describedby={undefined} className="w-nav max-w-[85vw] p-0">
+                      <SheetHeader className="sr-only">
+                        <SheetTitle>Navigation</SheetTitle>
+                      </SheetHeader>
+                      {sidebar(true)}
+                    </SheetContent>
+                  </Sheet>
+                ) : null}
+                <h1 className="min-w-0 flex-1 truncate text-xl font-extrabold leading-title">
+                  {paneTitle(route, current, repoId)}
+                </h1>
+                {/*
+                  The status chips of direction.md §Shell. The primary action stays with the view
+                  that owns it — Home's "Add projects", a session's "Repair" — so the header does not
+                  grow a second copy of a control the middle pane already has.
+                */}
+                {current === undefined ? null : <HealthChip health={current.health} />}
+              </header>
+              <main id="main" className="min-w-0 flex-1 px-4 py-4">
+                {children}
+              </main>
+            </div>
+            {hasAside ? (
+              <aside aria-label="Details" className="w-panel shrink-0">
+                <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-inset">
+                  <PanelSlot />
+                  <FoldersSection workspaces={workspaces} inSheet={false} variant="module" />
+                  <p className="px-4 text-xs text-subtle-foreground">Press ? for keyboard shortcuts.</p>
+                </div>
+              </aside>
+            ) : null}
           </div>
           <KeyboardHelp />
         </div>
@@ -230,6 +250,7 @@ function Sidebar({
   onSwitch,
   workspaces,
   inSheet,
+  showFolders,
 }: {
   nav: NavItem[];
   repos: Repo[];
@@ -237,83 +258,69 @@ function Sidebar({
   onSwitch: (id: string) => void;
   workspaces: Async<Workspace[]>;
   inSheet: boolean;
+  /** False while the right column is on screen: the folders live there instead. */
+  showFolders: boolean;
 }) {
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto px-2 py-3">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-1">
-          <Dismissing inSheet={inSheet}>
-            <a
-              href={HOME_HREF}
-              aria-label="workledger — Home"
-              className="min-w-0 flex-1 truncate rounded-md px-2 py-1 text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              workledger
-            </a>
-          </Dismissing>
-          {inSheet ? (
-            <SheetClose
-              aria-label="Close navigation"
-              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <CloseIcon />
-            </SheetClose>
-          ) : null}
-        </div>
-        <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
+    <div className="flex h-full flex-col overflow-y-auto px-2 pb-3 pt-1">
+      <div className="flex items-center justify-between">
+        <Dismissing inSheet={inSheet}>
+          <a
+            href={HOME_HREF}
+            aria-label="workledger — Home"
+            className="flex h-row-nav w-row-nav items-center justify-center rounded-full transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <BrandMark />
+          </a>
+        </Dismissing>
+        {inSheet ? (
+          <SheetClose
+            aria-label="Close navigation"
+            className="mr-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CloseIcon />
+          </SheetClose>
+        ) : null}
       </div>
 
-      <nav aria-label="Views" className="flex flex-col gap-px">
+      {/* Pills as wide as their label, as X draws them; full width in the sheet, for the thumb. */}
+      <nav aria-label="Views" className={cn("flex flex-col gap-1", inSheet ? "items-stretch" : "items-start")}>
         {nav.map((item) => (
           <Dismissing key={item.href} inSheet={inSheet}>
-          <a
-            href={item.href}
-            aria-current={item.current ? "page" : undefined}
-            className={cn(
-              "group relative flex h-row-nav items-center gap-2 rounded-md pl-2 pr-2 text-sm",
-              "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              item.current
-                ? "bg-selected font-medium text-accent-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {/* The left accent bar a selected row carries (direction.md §Density). */}
-            {item.current ? (
-              <span
-                aria-hidden="true"
-                className="absolute inset-y-1 left-0 w-px rounded-full bg-primary"
-              />
-            ) : null}
-            <ViewIcon name={item.icon} />
-            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            {item.count === undefined ? null : (
-              // The selected row is one colour: its count inherits the row's accent rather than
-              // sitting on the selected surface in tertiary grey, which is below 4.5:1 there.
-              <span
-                className={cn(
-                  "shrink-0 text-xs tabular-nums",
-                  item.current ? "" : "text-subtle-foreground",
-                )}
-              >
-                {item.count}
-              </span>
-            )}
-          </a>
+            <a
+              href={item.href}
+              aria-current={item.current ? "page" : undefined}
+              className={cn(
+                "flex h-row-nav max-w-full items-center gap-5 rounded-full pl-3 pr-6 text-xl leading-title text-foreground transition-colors",
+                "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                // The current view is the bold one, with a heavier icon: X marks it by weight, not
+                // by a filled row.
+                item.current ? "font-bold" : "",
+              )}
+            >
+              <ViewIcon name={item.icon} current={item.current} />
+              <span className="min-w-0 truncate">{item.label}</span>
+              {item.count === undefined ? null : (
+                <span className="shrink-0 text-sm font-normal tabular-nums text-muted-foreground">
+                  {item.count}
+                </span>
+              )}
+            </a>
           </Dismissing>
         ))}
       </nav>
 
-      <FoldersSection workspaces={workspaces} inSheet={inSheet} />
-
       <Dismissing inSheet={inSheet}>
-        <a
-          href={ONBOARDING_HREF}
-          className="mt-auto flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <PlusIcon />
+        <a href={ONBOARDING_HREF} className={cn(buttonVariants({ size: "lg" }), "mt-4 w-[90%]")}>
           Add projects
         </a>
       </Dismissing>
+
+      {showFolders ? <FoldersSection workspaces={workspaces} inSheet={inSheet} variant="nav" /> : null}
+
+      <div className="mt-auto pt-4">
+        <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
+      </div>
     </div>
   );
 }
@@ -327,26 +334,37 @@ function Dismissing({ inSheet, children }: { inSheet: boolean; children: React.R
 }
 
 /**
- * "Folders with sessions" in the nav (direction.md §Shell) — the workspaces of amendment 12 with
- * their hook state. Absent when the daemon reports none, and absent while the first read is in
- * flight: a nav section that appears a second after the page does is worse than one that waits.
+ * "Folders with sessions" (direction.md §Shell) — the workspaces of amendment 12 with their hook
+ * state. A module in the right column when the shell has one (X's "Who to follow"), a short list
+ * in the nav when it has not. Absent when the daemon reports none, and absent while the first read
+ * is in flight: a section that appears a second after the page does is worse than one that waits.
  *
  * Each row is a link to Home's own "Folders with sessions" group, which is the card that details
  * the folder — rule 4, every count is a link to the thing it counts. A folder is not a repo and
  * has no ledger of its own, so Home's group is the thing; the accessible name carries the count so
  * the link says what it leads to.
  *
- * Its list is labelled `Folders`, not `Folders with sessions`: Home's own group owns that name,
- * and two lists sharing one accessible name is an ambiguity for anyone navigating by landmark.
+ * Its list is labelled `Folders`, not `Folders with sessions`, and its title is not a heading:
+ * Home's own group owns that name, and two lists or headings sharing one accessible name is an
+ * ambiguity for anyone navigating by landmark.
  */
-function FoldersSection({ workspaces, inSheet }: { workspaces: Async<Workspace[]>; inSheet: boolean }) {
+function FoldersSection({
+  workspaces,
+  inSheet,
+  variant,
+}: {
+  workspaces: Async<Workspace[]>;
+  inSheet: boolean;
+  variant: "nav" | "module";
+}) {
   if (workspaces.state !== "ready" || workspaces.value.length === 0) return null;
+  const module = variant === "module";
   return (
-    <div className="flex flex-col gap-1">
-      <p className="px-2 text-xs font-medium uppercase tracking-wide text-subtle-foreground">
+    <div className={module ? "rounded-lg border border-hairline pt-3" : "flex flex-col gap-1 pt-6"}>
+      <p className={module ? "px-4 pb-2 text-xl font-extrabold leading-title" : "px-3 pb-1 text-sm font-bold"}>
         Folders with sessions
       </p>
-      <ul aria-label="Folders" className="flex flex-col gap-px">
+      <ul aria-label="Folders" className={module ? "pb-2" : "flex flex-col gap-px"}>
         {workspaces.value.map((workspace) => (
           <li key={workspace.path}>
             <Dismissing inSheet={inSheet}>
@@ -355,7 +373,10 @@ function FoldersSection({ workspaces, inSheet }: { workspaces: Async<Workspace[]
                 aria-label={`${workspace.name} — ${workspace.sessions} sessions, ${
                   workspace.hooksInstalled ? "hooks are installed" : "hooks are missing"
                 }`}
-                className="flex h-row-nav items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(
+                  "flex items-center gap-3 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  module ? "px-4 py-3 focus-visible:ring-inset" : "h-10 rounded-full px-3",
+                )}
               >
                 <span
                   aria-hidden="true"
@@ -364,8 +385,13 @@ function FoldersSection({ workspaces, inSheet }: { workspaces: Async<Workspace[]
                     workspace.hooksInstalled ? "bg-success" : "bg-warning",
                   )}
                 />
-                <span aria-hidden="true" className="min-w-0 flex-1 truncate">
-                  {workspace.name}
+                <span aria-hidden="true" className="min-w-0 flex-1">
+                  <span className={cn("block truncate", module ? "font-bold" : "")}>{workspace.name}</span>
+                  {module ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {workspace.hooksInstalled ? "Hooks installed" : "Hooks missing"}
+                    </span>
+                  ) : null}
                 </span>
                 <span aria-hidden="true" className="shrink-0 text-xs tabular-nums text-subtle-foreground">
                   {workspace.sessions}
@@ -394,10 +420,27 @@ function HealthChip({ health }: { health: Repo["health"] }) {
   );
 }
 
+/**
+ * The mark from `public/icon.svg`, drawn in the foreground colour so it reads as X's monochrome
+ * logo does in both themes. Decorative: the link around it carries the name.
+ */
+function BrandMark() {
+  return (
+    <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
+      <rect width="64" height="64" rx="14" className="fill-foreground" />
+      <g className="stroke-background" strokeWidth="5" strokeLinecap="round">
+        <path d="M20 22h24" />
+        <path d="M20 32h24" />
+        <path d="M20 42h14" />
+      </g>
+    </svg>
+  );
+}
+
 /** Inlined so the bundle asks the network for nothing (design spec §14: no external assets). */
 function MenuIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
     </svg>
   );
@@ -405,22 +448,14 @@ function MenuIcon() {
 
 function CloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
     </svg>
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" className="shrink-0">
-      <path d="M8 3.5v9M3.5 8h9" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** The 16 px icon each nav row carries. Decorative: the label beside it is the name. */
-function ViewIcon({ name }: { name: ViewIconName }) {
+/** The 26 px icon each nav pill carries. Decorative: the label beside it is the name. */
+function ViewIcon({ name, current }: { name: ViewIconName; current: boolean }) {
   const paths: Record<ViewIconName, React.ReactNode> = {
     home: <path d="M2.5 7L8 2.5 13.5 7v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V7z" />,
     ledger: <path d="M3 3h10v10H3zM5.5 6h5M5.5 8.5h5M5.5 11h3" />,
@@ -432,11 +467,11 @@ function ViewIcon({ name }: { name: ViewIconName }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      width="16"
-      height="16"
+      width="26"
+      height="26"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.25"
+      strokeWidth={current ? 1.75 : 1.2}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

@@ -1,4 +1,3 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import type { ParsedSession } from "../../lib/ledger-source.js";
 import { ExcerptViewer } from "./excerpt-viewer.js";
 import { cpMarker, formatCount, formatInstant } from "./format.js";
@@ -21,12 +20,11 @@ export const TRANSCRIPT_NOTICE =
 export function ProvenancePanel({ session }: { session: ParsedSession }) {
   const { checkpoints, id } = session.frontmatter;
 
+  // Flat on the timeline column like the body sections above it (`session-detail.tsx` §Section).
   return (
-    <Card className="border-dashed">
-      <CardHeader>
-        <CardTitle>Provenance</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    <section className="-mx-4 border-t border-hairline px-4 py-4">
+      <h3 className="mb-3 text-lg font-extrabold leading-title">Provenance</h3>
+      <div className="flex flex-col gap-3">
         {checkpoints.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No checkpoints recorded for this session yet.
@@ -59,8 +57,8 @@ export function ProvenancePanel({ session }: { session: ParsedSession }) {
           </ul>
         )}
         <p className="text-xs text-muted-foreground">{TRANSCRIPT_NOTICE}</p>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 

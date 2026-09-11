@@ -25,7 +25,7 @@ const sheetVariants = cva(
 );
 
 export function SheetOverlay({ className, ...props }: ComponentProps<typeof SheetPrimitive.Overlay>) {
-  return <SheetPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-overlay/60", className)} {...props} />;
+  return <SheetPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-overlay/40", className)} {...props} />;
 }
 
 export type SheetContentProps = ComponentProps<typeof SheetPrimitive.Content> &
@@ -47,7 +47,7 @@ export function SheetHeader({ className, ...props }: ComponentProps<"div">) {
 }
 
 export function SheetTitle({ className, ...props }: ComponentProps<typeof SheetPrimitive.Title>) {
-  return <SheetPrimitive.Title className={cn("text-lg font-semibold leading-tight", className)} {...props} />;
+  return <SheetPrimitive.Title className={cn("text-xl font-extrabold leading-title", className)} {...props} />;
 }
 
 export function SheetDescription({ className, ...props }: ComponentProps<typeof SheetPrimitive.Description>) {

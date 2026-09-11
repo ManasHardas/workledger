@@ -4,7 +4,7 @@ import { JobQueue } from "../features/jobs/job-queue.js";
 export function JobsView() {
   return (
     <section aria-labelledby="jobs-heading" className="flex flex-col gap-4">
-      <h2 id="jobs-heading" className="text-xl font-semibold">
+      <h2 id="jobs-heading" className="text-xl font-extrabold">
         Jobs
       </h2>
       <JobQueue />

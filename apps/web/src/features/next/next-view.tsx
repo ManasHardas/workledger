@@ -199,7 +199,7 @@ export function NextView() {
   return (
     <section aria-labelledby="next-heading" className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="next-heading" className="text-xl font-semibold leading-title">
+        <h2 id="next-heading" className="text-xl font-extrabold leading-title">
           Next
         </h2>
         {canWrite ? null : <Badge variant="outline">read-only source</Badge>}

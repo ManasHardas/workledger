@@ -26,7 +26,7 @@ export function OnboardingWizard() {
   return (
     <section aria-labelledby="onboarding-heading" className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="onboarding-heading" className="text-xl font-semibold">
+        <h2 id="onboarding-heading" className="text-xl font-extrabold">
           Add projects
         </h2>
         <a

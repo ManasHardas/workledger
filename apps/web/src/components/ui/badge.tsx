@@ -8,7 +8,9 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
+        // The blue tint X gives an active tab, not a solid blue block: the blue stays readable as
+        // text on it in both themes, where text on the solid blue would not be.
+        default: "border-transparent bg-accent text-accent-foreground",
         secondary: "border-transparent bg-secondary text-secondary-foreground",
         outline: "border-border text-muted-foreground",
         accent: "border-transparent bg-accent text-accent-foreground",

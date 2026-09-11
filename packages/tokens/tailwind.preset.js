@@ -33,6 +33,7 @@ export default {
         "subtle-foreground": "var(--wl-color-subtle-foreground)",
         "selected": "var(--wl-color-selected)",
         "overlay": "var(--wl-color-overlay)",
+        "glow": "var(--wl-color-glow)",
       },
       spacing: {
         "0": "var(--wl-spacing-0)",

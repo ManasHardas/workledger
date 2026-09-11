@@ -87,9 +87,13 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
   }, [sessions, repo]);
 
   return (
-    <ul className="flex flex-col gap-3" aria-label="Sessions, open first then newest first">
+    // A timeline: the posts run to both edges of the column, separated by hairlines.
+    <ul
+      className="-mx-4 flex flex-col divide-y divide-hairline border-y border-hairline"
+      aria-label="Sessions, open first then newest first"
+    >
       {sessions.map((session, index) => (
-        <li key={session.frontmatter.id} className="flex flex-col gap-2">
+        <li key={session.frontmatter.id} className="flex flex-col">
           <SessionCard
             session={session}
             active={index === cursor}
@@ -104,7 +108,9 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
             either element promises. It appears only where there is something to repair.
           */}
           {source.capabilities.write && needsRepair(session) ? (
-            <RepairSheet session={session.frontmatter.id} label="Repair session…" />
+            <div className="px-4 pb-3">
+              <RepairSheet session={session.frontmatter.id} label="Repair session…" />
+            </div>
           ) : null}
         </li>
       ))}
