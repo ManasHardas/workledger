@@ -18,8 +18,8 @@ import { formatRelative } from "./format.js";
  * that changes anything: installing the workledger hooks into the folder, which is
  * `POST /api/onboarding/init` with `workspaces: [path]` and no repo.
  *
- * The nav lists these folders by name; this row is what the nav's link leads to, so it carries
- * what the nav cannot — the path, the recency, and the action.
+ * This row is the only place the app lists a folder, so it carries everything known about it —
+ * the path, the recency, and the action.
  */
 export function WorkspaceCard({
   workspace,

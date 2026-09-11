@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { cn } from "../lib/cn.js";
-import type { Repo, Workspace } from "../lib/ledger-source.js";
+import type { Repo } from "../lib/ledger-source.js";
 import { useHasAside, useNavIsSheet } from "../lib/media.js";
 import {
   HOME_HREF,
@@ -12,9 +12,6 @@ import {
   type Route,
   type ViewId,
 } from "../lib/router.js";
-import { useMachine } from "../lib/source-context.js";
-import type { Async } from "../lib/use-async.js";
-import { useLiveWorkspaces } from "../features/home/live.js";
 import { KeyboardHelp } from "./keyboard-help.js";
 import { ALL_PROJECTS, ProjectSwitcher } from "./project-switcher.js";
 import { Button, buttonVariants } from "./ui/button.js";
@@ -22,17 +19,17 @@ import { PanelHost, PanelSlot } from "./ui/panel.js";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
 
 /**
- * The app shell, in the X shape `docs/design/direction.md` §Shell asks for: one centred group of
- * a 275 px left nav (the views as pills, the one big "Add projects" pill, the project switcher at
- * the foot where X keeps its account switcher), a 600 px middle column with a hairline down either
- * side under a translucent sticky header, and — from 1280 px — a 350 px right column whose first
- * module is the evidence panel (`components/ui/panel.tsx`) and whose second is the folders with
- * sessions.
+ * The app shell (`docs/design/direction.md` §Shell): one centred group of a 275 px left nav (the
+ * project switcher at the top, the views as pills, the one big "Add projects" pill), a 600 px
+ * middle column with a hairline down either side under a translucent sticky header, and — from
+ * 1280 px — a 350 px right column whose module is the evidence panel (`components/ui/panel.tsx`).
  *
  * Below 900 px the nav is a sheet behind a hamburger — the whole nav, swapped rather than restyled,
  * so there is never a second copy of every link hiding under `display: none` for a screen reader or
- * a `getByRole` query to find. The folders follow the same rule: in the right column when there is
- * one, in the nav when there is not, never both.
+ * a `getByRole` query to find.
+ *
+ * Folders with sessions are Home's alone: the operator had the shell's copy of them removed
+ * (2026-09-11), so the nav carries no folder list at any width.
  *
  * Links are real `#/…` anchors, so the browser's back button and a card's `openDeepLink` both work
  * without JavaScript in the middle.
@@ -124,8 +121,6 @@ function paneTitle(route: Route, repo: Repo | undefined, repoId: string): string
 
 export function AppShell({ repos, children }: { repos: Repo[]; children: React.ReactNode }) {
   const route = useRoute();
-  const source = useMachine();
-  const { result: workspaces } = useLiveWorkspaces(source);
   const asSheet = useNavIsSheet();
   // A real viewport is never both, but a stubbed `matchMedia` can say so; the sheet wins.
   const hasAside = useHasAside() && !asSheet;
@@ -153,15 +148,7 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   }
 
   const sidebar = (inSheet: boolean) => (
-    <Sidebar
-      nav={nav}
-      repos={repos}
-      repoId={repoId}
-      onSwitch={switchTo}
-      workspaces={workspaces}
-      inSheet={inSheet}
-      showFolders={!hasAside}
-    />
+    <Sidebar nav={nav} repos={repos} repoId={repoId} onSwitch={switchTo} inSheet={inSheet} />
   );
 
   return (
@@ -222,7 +209,6 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
               <aside aria-label="Details" className="w-panel shrink-0">
                 <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-inset">
                   <PanelSlot />
-                  <FoldersSection workspaces={workspaces} inSheet={false} variant="module" />
                   <p className="px-4 text-xs text-subtle-foreground">Press ? for keyboard shortcuts.</p>
                 </div>
               </aside>
@@ -248,18 +234,13 @@ function Sidebar({
   repos,
   repoId,
   onSwitch,
-  workspaces,
   inSheet,
-  showFolders,
 }: {
   nav: NavItem[];
   repos: Repo[];
   repoId: string;
   onSwitch: (id: string) => void;
-  workspaces: Async<Workspace[]>;
   inSheet: boolean;
-  /** False while the right column is on screen: the folders live there instead. */
-  showFolders: boolean;
 }) {
   return (
     <div className="flex h-full flex-col overflow-y-auto px-2 pb-3 pt-1">
@@ -283,7 +264,12 @@ function Sidebar({
         ) : null}
       </div>
 
-      {/* Pills as wide as their label, as X draws them; full width in the sheet, for the thumb. */}
+      {/* The project comes first: every view below it is a view of the project named here. */}
+      <div className="pb-2">
+        <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
+      </div>
+
+      {/* Pills as wide as their label; full width in the sheet, for the thumb. */}
       <nav aria-label="Views" className={cn("flex flex-col gap-1", inSheet ? "items-stretch" : "items-start")}>
         {nav.map((item) => (
           <Dismissing key={item.href} inSheet={inSheet}>
@@ -293,8 +279,7 @@ function Sidebar({
               className={cn(
                 "flex h-row-nav max-w-full items-center gap-5 rounded-full pl-3 pr-6 text-xl leading-title text-foreground transition-colors",
                 "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                // The current view is the bold one, with a heavier icon: X marks it by weight, not
-                // by a filled row.
+                // The current view is marked by weight and a heavier icon, not by a filled row.
                 item.current ? "font-bold" : "",
               )}
             >
@@ -315,12 +300,6 @@ function Sidebar({
           Add projects
         </a>
       </Dismissing>
-
-      {showFolders ? <FoldersSection workspaces={workspaces} inSheet={inSheet} variant="nav" /> : null}
-
-      <div className="mt-auto pt-4">
-        <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
-      </div>
     </div>
   );
 }
@@ -331,78 +310,6 @@ function Sidebar({
  */
 function Dismissing({ inSheet, children }: { inSheet: boolean; children: React.ReactElement }) {
   return inSheet ? <SheetClose asChild>{children}</SheetClose> : children;
-}
-
-/**
- * "Folders with sessions" (direction.md §Shell) — the workspaces of amendment 12 with their hook
- * state. A module in the right column when the shell has one (X's "Who to follow"), a short list
- * in the nav when it has not. Absent when the daemon reports none, and absent while the first read
- * is in flight: a section that appears a second after the page does is worse than one that waits.
- *
- * Each row is a link to Home's own "Folders with sessions" group, which is the card that details
- * the folder — rule 4, every count is a link to the thing it counts. A folder is not a repo and
- * has no ledger of its own, so Home's group is the thing; the accessible name carries the count so
- * the link says what it leads to.
- *
- * Its list is labelled `Folders`, not `Folders with sessions`, and its title is not a heading:
- * Home's own group owns that name, and two lists or headings sharing one accessible name is an
- * ambiguity for anyone navigating by landmark.
- */
-function FoldersSection({
-  workspaces,
-  inSheet,
-  variant,
-}: {
-  workspaces: Async<Workspace[]>;
-  inSheet: boolean;
-  variant: "nav" | "module";
-}) {
-  if (workspaces.state !== "ready" || workspaces.value.length === 0) return null;
-  const module = variant === "module";
-  return (
-    <div className={module ? "rounded-lg border border-hairline pt-3" : "flex flex-col gap-1 pt-6"}>
-      <p className={module ? "px-4 pb-2 text-xl font-extrabold leading-title" : "px-3 pb-1 text-sm font-bold"}>
-        Folders with sessions
-      </p>
-      <ul aria-label="Folders" className={module ? "pb-2" : "flex flex-col gap-px"}>
-        {workspaces.value.map((workspace) => (
-          <li key={workspace.path}>
-            <Dismissing inSheet={inSheet}>
-              <a
-                href={HOME_HREF}
-                aria-label={`${workspace.name} — ${workspace.sessions} sessions, ${
-                  workspace.hooksInstalled ? "hooks are installed" : "hooks are missing"
-                }`}
-                className={cn(
-                  "flex items-center gap-3 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  module ? "px-4 py-3 focus-visible:ring-inset" : "h-10 rounded-full px-3",
-                )}
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-2 w-2 shrink-0 rounded-full",
-                    workspace.hooksInstalled ? "bg-success" : "bg-warning",
-                  )}
-                />
-                <span aria-hidden="true" className="min-w-0 flex-1">
-                  <span className={cn("block truncate", module ? "font-bold" : "")}>{workspace.name}</span>
-                  {module ? (
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {workspace.hooksInstalled ? "Hooks installed" : "Hooks missing"}
-                    </span>
-                  ) : null}
-                </span>
-                <span aria-hidden="true" className="shrink-0 text-xs tabular-nums text-subtle-foreground">
-                  {workspace.sessions}
-                </span>
-              </a>
-            </Dismissing>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
 }
 
 /** The repo's own health, as a chip in the sticky header — status colour, never a row fill. */
@@ -421,8 +328,8 @@ function HealthChip({ health }: { health: Repo["health"] }) {
 }
 
 /**
- * The mark from `public/icon.svg`, drawn in the foreground colour so it reads as X's monochrome
- * logo does in both themes. Decorative: the link around it carries the name.
+ * The mark from `public/icon.svg`, drawn in the foreground colour so it reads in both themes.
+ * Decorative: the link around it carries the name.
  */
 function BrandMark() {
   return (

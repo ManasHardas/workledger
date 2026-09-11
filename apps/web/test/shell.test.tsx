@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { detailUlidFromHash } from "../src/features/ledger/detail-route.js";
-import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
+import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { NAV_SHEET_QUERY } from "../src/lib/media.js";
 import { createSource, type AppSource, type Repo } from "../src/lib/ledger-source.js";
 import { VIEW_IDS, legacyTarget, parseRoute, repoHref } from "../src/lib/router.js";
@@ -220,16 +220,19 @@ describe("app shell", () => {
     ).toContain("tabular-nums");
   });
 
-  it("lists the folders with sessions in the nav, under their own name", async () => {
+  it("leaves the folders with sessions to Home: the shell lists none of its own", async () => {
     renderAt("#/");
-    const folders = await screen.findByRole("list", { name: "Folders" });
-    for (const workspace of FIXTURE_WORKSPACES) {
-      expect(within(folders).getByText(workspace.name)).toBeDefined();
-    }
-    // The hook state travels with each folder, worded apart from Home's own badges.
-    expect(
-      within(folders).getAllByRole("link", { name: /hooks are (installed|missing)$/ }).length,
-    ).toBe(FIXTURE_WORKSPACES.length);
+    // Home's own group is there, so the fixture does have folders to list...
+    await screen.findByRole("list", { name: "Folders with sessions" });
+    // ...and the shell's copy of them, which the operator had removed (2026-09-11), is not.
+    expect(screen.queryByRole("list", { name: "Folders" })).toBeNull();
+  });
+
+  it("puts the project switcher at the top of the nav, above the views", async () => {
+    renderAt(repoHref(FIRST.id, "ledger"));
+    const switcher = await screen.findByRole("button", { name: `Project: ${FIRST.name}` });
+    const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
+    expect(switcher.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("collapses the nav into a sheet below 900 px and keeps every link in it", async () => {
@@ -265,17 +268,6 @@ describe("app shell", () => {
     await waitFor(() => expect(screen.queryByRole("navigation", { name: "Views" })).toBeNull());
     // Nothing is left `aria-hidden` behind a sheet that is gone.
     expect(document.querySelectorAll("[aria-hidden='true'][data-aria-hidden]").length).toBe(0);
-  });
-
-  it("links each folder in the nav to the group that details it, count and all (rule 4)", async () => {
-    renderAt("#/");
-    const folders = await screen.findByRole("list", { name: "Folders" });
-    for (const workspace of FIXTURE_WORKSPACES) {
-      const link = within(folders).getByRole("link", {
-        name: new RegExp(`^${workspace.name} — ${workspace.sessions} sessions`),
-      });
-      expect(link.getAttribute("href")).toBe("#/");
-    }
   });
 
   it("links the brand to Home", async () => {

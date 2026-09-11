@@ -33,16 +33,16 @@ function isLive(job: Job): boolean {
 /**
  * Home — a status overview, not a second copy of the nav (#134).
  *
- * The nav already carries the project switcher, the five views of the current project, the folders
- * with sessions and the way to add more. So Home answers the three questions the nav cannot:
+ * The nav already carries the project switcher, the five views of the current project and the way
+ * to add more. So Home answers the three questions the nav cannot:
  *
  * 1. **Needs you** — the open blockers and questions, across every project.
  * 2. **Running** — what the recovery queue is doing right now, and what it failed at.
  * 3. **Projects** — one status row per project: its health, what is waiting in each view, and when
  *    it last showed a sign of life; newest first, so "what changed recently" is the top of it.
  *
- * Then **Folders with sessions**, which is where the nav's folder rows lead: a folder is not a
- * repo and has no ledger, so the nav can only name it and this group is what details it.
+ * Then **Folders with sessions**: a folder is not a repo and has no ledger, so this group is the
+ * one place in the app that lists it.
  *
  * Every count is a link to the thing it counts (rule 4), and every group shows the first
  * {@link PREVIEW} rows with the count beside its heading leading to the whole list.
@@ -195,7 +195,7 @@ function ProjectsGroup({ repos, now }: { repos: Async<Repo[]>; now: number }) {
 }
 
 /**
- * The folders the nav's own folder rows lead to. Absent entirely when the daemon reports none — a
+ * The folders with sessions. Absent entirely when the daemon reports none — a
  * machine whose sessions all start inside repos should see the groups above and nothing else, not
  * an empty heading explaining a concept it has no instance of. Loading and failure still render:
  * a group that silently disappears because the read failed would be a lie.
