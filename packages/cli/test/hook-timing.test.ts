@@ -44,8 +44,8 @@ const END_BUDGET_MS = process.env["CI"] ? 300 : 200;
  * An absolute millisecond ceiling cannot say that. It says "this machine was fast enough", and a
  * loaded GitHub runner is not — #135: three CI runs went red on `271.4 < 200` while the allow
  * path itself had not moved (p50 76.9 ms, p95 291 ms, max 522 ms — a tail spike, not a
- * regression). So the assertion is the ratio `allow p95 / bare-node-start p95`, and two things
- * make it hold under load where the absolute number does not:
+ * regression). So the assertion is the ratio `allow p95 / bare-node-start p95`, sampled two ways
+ * that blunt a stall:
  *
  * - **The two are interleaved in one loop** — one `node -e 0`, one hook, alternating — so a
  *   slow window inflates the numerator and the denominator together. The old code sampled the
@@ -54,25 +54,64 @@ const END_BUDGET_MS = process.env["CI"] ? 300 : 200;
  * - **Three rounds, and the median ratio decides.** One round that catches a scheduler stall is
  *   outvoted rather than fatal.
  *
- * Measured (3 rounds × 40 interleaved pairs, median round):
+ * ## Two arms, and what each one actually protects
+ *
+ * **They are not the same assertion at two strictnesses.** Read this before changing either.
+ *
+ * Neither sampling trick makes the ratio noise-free under load, and the reason is arithmetic:
+ * load inflates the *denominator* too, so a fixed-millisecond regression divides away. Measured
+ * on a 10-core host (Node 26, 3 rounds × 40 pairs) with a 50 ms busy-wait in `allow()`:
+ *
+ * | build   | machine             | median ratio    |
+ * | ------- | ------------------- | --------------- |
+ * | clean   | idle                | 1.96–2.09       |
+ * | clean   | 16 CPU-busy loops   | 1.90–2.25       |
+ * | clean   | during `pnpm build` | 2.01–2.19       |
+ * | +50 ms  | idle                | **4.23–4.33**   |
+ * | +50 ms  | 16 CPU-busy loops   | **3.09–3.16**   |
+ *
+ * A 50 ms regression is a 2× signal on an idle machine and only a 1.4× signal under load. And
+ * the noise floor under load is worse than the median suggests: *individual* clean rounds were
+ * seen at **6.4, 5.93 and 5.57** (the 6.4 round: baseline 41 ms, allow 262 ms — interleaving
+ * did not absorb that stall), with one clean median landing at 4.22. Under load, noise exceeds
+ * signal. Any CI ceiling tight enough to catch 50 ms is loose enough to be flaked by a stall,
+ * which is exactly the bug #135 is about. So:
+ *
+ * - **`ALLOW_RATIO_MAX_LOCAL = 3` — the developer gate, and the only arm that catches a small
+ *   regression.** It runs on a machine you control, where clean is ≤ 2.25 and +50 ms is
+ *   4.23–4.33: ~35% headroom above clean, and it fails a 50 ms regression on an idle machine.
+ *   This is where a real slowdown is meant to be caught, before it reaches CI.
+ * - **`ALLOW_RATIO_MAX_CI = 10` — a gross-regression tripwire only.** A shared runner cannot
+ *   resolve 50 ms, so CI does not pretend to. What it still catches is the class of change that
+ *   makes the hook multiples more expensive: a top-level `@workledger/core` or `better-sqlite3`
+ *   import, a synchronous transcript read, a lock. The #135 red run itself (291 / 19.6 = 14.8)
+ *   would still fail this arm, and so would a healthy runner that had lost a lazy boundary. A
+ *   healthy runner measures 3.4–4.2 (this PR's own CI run: 3.70, rounds 3.43–3.72), so 10 sits
+ *   ~2.4× above clean — above the 5.57–6.4 stall rounds seen locally.
+ *
+ * **Do not tighten the CI arm toward the local one without re-measuring.** The 5 that first sat
+ * here was picked from healthy-runner medians alone; it passed every one of the +50 ms rows
+ * above while being under the clean stall rounds — it would have flaked *and* missed. The
+ * small-regression job belongs to the local arm and to the three `dist/main.js` assertions at
+ * the bottom of this file, which catch a lost lazy boundary directly and without timing.
+ *
+ * Reference points, in the same 3 × 40 median-round shape:
  *
  * | where                                    | baseline p95 | allow p95 | ratio     |
  * | ---------------------------------------- | ------------ | --------- | --------- |
  * | laptop, idle                             | 24–42 ms     | 49–83 ms  | 1.96–2.09 |
- * | laptop, 16 parallel CPU-busy loops       | 40–44 ms     | 78–90 ms  | 1.96–2.09 |
- * | GitHub runner, healthy (3 green CI runs) | 21–24 ms     | 79–96 ms  | 3.7–4.2   |
+ * | laptop, 16 parallel CPU-busy loops       | 40–44 ms     | 78–90 ms  | 1.90–2.25 |
+ * | GitHub runner, healthy                   | 21–26 ms     | 79–96 ms  | 3.4–4.2   |
  * | GitHub runner, the #135 red run          | 19.6 ms      | 291 ms    | 14.8      |
- * | laptop, allow path slowed by 50 ms       | 41 ms        | 130 ms    | 3.16      |
+ * | laptop idle, allow path slowed by 50 ms  | 41 ms        | 176 ms    | 4.24–4.33 |
+ * | laptop, allow path slowed by 400 ms      | 39.5 ms      | 489 ms    | 12.38     |
  *
- * The ratio barely moves across a 2× swing in absolute time — the load row is the same 1.96 as
- * the idle row — which is the property the absolute ceiling did not have. The runner sits
- * higher than the laptop because its IO is slower relative to its CPU, so the ceiling keeps the
- * CI/local split this file already used: **5 in CI** clears a healthy runner (4.2) by ~20% and
- * still fails a 50 ms regression there (~5.9, since the runner's baseline is ~22 ms), and
- * **3 locally** clears an idle or loaded laptop (2.09) by ~45% and fails the same 50 ms
- * regression at 3.16. Both directions were run, not reasoned about — see the PR for #135.
+ * The last row is the shape the CI arm exists for, and it fails it (12.38 > 10) the way the
+ * #135 red run's 14.8 would.
  */
-const ALLOW_RATIO_MAX = process.env["CI"] ? 5 : 3;
+const ALLOW_RATIO_MAX_LOCAL = 3;
+const ALLOW_RATIO_MAX_CI = 10;
+const ALLOW_RATIO_MAX = process.env["CI"] ? ALLOW_RATIO_MAX_CI : ALLOW_RATIO_MAX_LOCAL;
 
 /** Rounds, and interleaved `node -e 0`/hook pairs per round. The median round's ratio decides. */
 const ALLOW_ROUNDS = 3;
@@ -82,7 +121,8 @@ const ALLOW_RUNS_PER_ROUND = 40;
  * A loose sanity bound, not a budget: an allow path that takes two seconds is broken in a way no
  * ratio should be asked to describe (a lock, a network call, a full transcript read). It is
  * deliberately far above anything load can produce — the worst allow p95 ever seen on a runner
- * is 291 ms.
+ * is 291 ms — which is what lets it stand next to the deliberately loose CI ratio arm: a change
+ * that inflated the baseline as much as the hook would slip past 10x but not past this.
  */
 const ALLOW_SANITY_MS = 2_000;
 
