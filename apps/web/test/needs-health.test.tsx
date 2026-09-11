@@ -346,6 +346,19 @@ describe("Health", () => {
     expect(screen.getByText("workledger 0.0.1")).toBeDefined();
   });
 
+  /** #138, rule 4: both Health groups head their list with a count, and the count is a link. */
+  it.each(["Harnesses", "Index and config"] as const)(
+    "makes the «%s» count a link to the readings it counts",
+    async (group) => {
+      renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
+      const list = await screen.findByRole("list", { name: group });
+      const count = screen.getByRole("link", { name: new RegExp(`— ${group}$`) });
+      expect(count.textContent).toBe(String(within(list).getAllByRole("listitem").length));
+      fireEvent.click(count);
+      expect(document.activeElement).toBe(list.parentElement);
+    },
+  );
+
   it("counts a reading's complaints on its row and links nothing else into the list", async () => {
     renderAt(`#/r/${REPO}/health`, stubSource({ health: async () => HEALTH }));
     const codex = await screen.findByRole("listitem", { name: "codex" });
@@ -363,7 +376,7 @@ describe("keyboard help", () => {
 
     fireEvent.keyDown(window, { key: "?" });
     const overlay = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
-    for (const keys of ["j / k", "e", "a", "d", "x", "/", "?"]) {
+    for (const keys of ["j / k", "e", "a", "d", "x", "alt + \u2191 / \u2193", "/", "?"]) {
       expect(within(overlay).getByText(keys)).toBeDefined();
     }
 

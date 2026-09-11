@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "../../lib/cn.js";
-import { Button } from "./button.js";
 
 /**
  * The list row of `docs/design/direction.md` §Density, in one place so Next, Needs you, Jobs,
@@ -98,91 +97,14 @@ export function RowActions({ className, ...props }: ComponentProps<"div">) {
 }
 
 /**
- * A destructive action as the direction wants it (#134): a quiet control in the list, and the
- * destructive colour only on the step that actually confirms it.
+ * A section of a view: a heading, the count of what is in it, and the list itself.
  *
- * Two clicks, never a `window.confirm`: the first arms the row and the second runs it. Arming
- * changes the button's accessible name to the confirming sentence, so the announcement and the
- * paint say the same thing. Escape, a click on `Keep`, and moving focus out of the pair all
- * disarm it, so an armed row cannot be left behind for the next person to hit by accident.
+ * Rule 4 — every count is a link to the thing it counts — holds whether or not the list lives on
+ * another route. `countHref` sends it there; without one the count links to *this* section's list,
+ * scrolls it into view and moves focus onto it, which is what a count with its list right beneath
+ * it can honestly lead to. The href is neutralised rather than followed because the app is
+ * hash-routed (`lib/router.ts`): letting `#<id>` reach the address bar would read as a route.
  */
-export function ConfirmAction({
-  label,
-  confirmLabel,
-  cancelLabel = "Keep",
-  onConfirm,
-  disabled,
-  size = "xs",
-}: {
-  label: string;
-  confirmLabel: string;
-  cancelLabel?: string;
-  onConfirm: () => void;
-  disabled?: boolean;
-  size?: "xs" | "sm";
-}) {
-  const [armed, setArmed] = useState(false);
-  const wrap = useRef<HTMLDivElement>(null);
-  const confirm = useRef<HTMLButtonElement>(null);
-
-  // Focus lands on the confirming control, so Enter twice is the whole gesture from the keyboard.
-  useEffect(() => {
-    if (armed) confirm.current?.focus();
-  }, [armed]);
-
-  useEffect(() => {
-    if (disabled === true) setArmed(false);
-  }, [disabled]);
-
-  if (!armed) {
-    return (
-      <Button
-        type="button"
-        variant="quiet"
-        size={size}
-        disabled={disabled}
-        onClick={() => setArmed(true)}
-      >
-        {label}
-      </Button>
-    );
-  }
-
-  return (
-    <div
-      ref={wrap}
-      className="flex shrink-0 items-center gap-1"
-      onBlur={(event) => {
-        if (!wrap.current?.contains(event.relatedTarget as Node | null)) setArmed(false);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          setArmed(false);
-        }
-      }}
-    >
-      <Button
-        ref={confirm}
-        type="button"
-        variant="danger"
-        size={size}
-        disabled={disabled}
-        onClick={() => {
-          setArmed(false);
-          onConfirm();
-        }}
-      >
-        {confirmLabel}
-      </Button>
-      <Button type="button" variant="quiet" size={size} onClick={() => setArmed(false)}>
-        {cancelLabel}
-      </Button>
-    </div>
-  );
-}
-
-/** A section of a view: a heading, an optional count that links to what it counts, and a list. */
 export function RowSection({
   title,
   id,
@@ -194,33 +116,50 @@ export function RowSection({
 }: {
   title: string;
   id: string;
-  /** Rendered beside the heading. Always a link when there is somewhere to send it (rule 4). */
+  /** Rendered beside the heading. Always a link when there is a count at all (rule 4). */
   count?: number;
   countHref?: string;
   countLabel?: string;
   action?: ReactNode;
   children: ReactNode;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  const listId = `${id}-list`;
+  const linkClass =
+    "rounded-sm text-xs tabular-nums text-subtle-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
   return (
     <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         <h3 id={id} className="text-sm font-medium leading-body text-foreground">
           {title}
         </h3>
-        {count === undefined ? null : countHref === undefined ? (
-          <span className="text-xs tabular-nums text-subtle-foreground">{count}</span>
-        ) : (
+        {count === undefined ? null : (
           <a
-            href={countHref}
+            href={countHref ?? `#${listId}`}
             aria-label={countLabel ?? `${String(count)} — ${title}`}
-            className="rounded-sm text-xs tabular-nums text-subtle-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={linkClass}
+            onClick={
+              countHref === undefined
+                ? (event) => {
+                    event.preventDefault();
+                    // Optional call: jsdom has no layout, so it has no `scrollIntoView` either.
+                    list.current?.scrollIntoView?.({ block: "nearest" });
+                    list.current?.focus();
+                  }
+                : undefined
+            }
           >
             {count}
           </a>
         )}
         {action === undefined ? null : <div className="ml-auto shrink-0">{action}</div>}
       </div>
-      {children}
+      {/* `tabIndex={-1}`: the count's target has to be focusable to be a destination at all, but
+          it is never a tab stop of its own. */}
+      <div ref={list} id={listId} tabIndex={-1} className="flex min-w-0 flex-col gap-2 outline-none">
+        {children}
+      </div>
     </section>
   );
 }

@@ -134,14 +134,17 @@ function NeedsYouGroup({ notes }: { notes: Async<NoteAcrossRepos[]> }) {
 function RunningGroup({ jobs, now }: { jobs: JobAcrossRepos[]; now: number }) {
   const live = jobs.filter(isLive);
   const failed = jobs.filter((job) => job.status === "failed");
-  const shown = [...live, ...failed].slice(0, PREVIEW);
+  const rows = [...live, ...failed];
+  const shown = rows.slice(0, PREVIEW);
   return (
     <RowSection
       id="home-running"
       title="Running"
-      count={live.length}
+      // The failed rows are under this heading, so they are in the number above it (#138): a
+      // count that leaves out rows the reader can see is a count of something else.
+      count={rows.length}
       countHref={machineHref("jobs")}
-      countLabel={`${String(live.length)} jobs running or queued — Jobs`}
+      countLabel={`${String(rows.length)} jobs running, queued or failed — Jobs`}
     >
       {shown.length === 0 ? (
         <RowEmpty>Nothing is running.</RowEmpty>

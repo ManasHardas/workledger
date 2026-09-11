@@ -1,6 +1,7 @@
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
-import { ConfirmAction, ListRow, RowActions, RowMeta, RowTitle } from "../../components/ui/list-row.js";
+import { ConfirmAction } from "../../components/ui/confirm.js";
+import { ListRow, RowActions, RowMeta, RowTitle } from "../../components/ui/list-row.js";
 import { repoHref } from "../../lib/router.js";
 import { canCancel, canRetry, elapsed, shortId, statusVariant, waitingUntil } from "./format.js";
 

@@ -95,7 +95,7 @@ export function HealthReport() {
               </RowList>
             </RowSection>
 
-            <RowSection id="health-ledger" title="Index and config">
+            <RowSection id="health-ledger" title="Index and config" count={machine.length}>
               <RowList aria-label="Index and config">
                 {machine.map((row) => (
                   <HealthRow
