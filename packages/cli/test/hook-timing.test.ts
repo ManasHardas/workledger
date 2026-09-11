@@ -7,7 +7,9 @@
  * experiences. `hook.test.ts` drives the state machine in-process; this file never does.
  *
  * Node startup dominates — ~40 ms of the 100 ms allow budget on the reference machine — so the
- * budget is really a budget on *what the bundle evaluates before the command runs*. The last two
+ * budget is really a budget on *what the bundle evaluates before the command runs*. That is why
+ * the allow path is asserted as a **ratio to a bare Node start measured in the same interleaved
+ * loop** rather than as an absolute millisecond ceiling (`ALLOW_RATIO_MAX`, #135). The last two
  * tests assert that directly against `dist/main.js`, because a p95 that drifts from 70 ms to
  * 95 ms on a faster CI runner would still pass while having lost the property that keeps it
  * there: `@workledger/core` (~30 ms of zod plus `yaml`) and `better-sqlite3` (a native addon)
@@ -29,28 +31,89 @@ const BUNDLE = path.join(REPO_ROOT, "packages", "cli", "dist", "main.js");
 /**
  * The allow-path budget. CI runners are shared and noisier than a laptop, so the contract's
  * 100 ms is asserted locally and a 150 ms ceiling in CI, with the measurement always reported
- * (the third budget comment on #12).
+ * (the third budget comment on #12). These are *reported*, not asserted, on the allow path —
+ * see `ALLOW_RATIO_MAX`.
  */
 const ALLOW_BUDGET_MS = process.env["CI"] ? 150 : 100;
 const START_BUDGET_MS = process.env["CI"] ? 450 : 300;
 const END_BUDGET_MS = process.env["CI"] ? 300 : 200;
 
 /**
- * The hook's own cost above a bare Node start, measured in the same run. Machine load moves
- * both numbers together, so this is the assertion that survives a busy laptop or a shared CI
- * runner; the absolute budget is still reported so a slow run is visible.
+ * What the allow path is actually promised to be: **cheap relative to starting Node at all**.
+ *
+ * An absolute millisecond ceiling cannot say that. It says "this machine was fast enough", and a
+ * loaded GitHub runner is not — #135: three CI runs went red on `271.4 < 200` while the allow
+ * path itself had not moved (p50 76.9 ms, p95 291 ms, max 522 ms — a tail spike, not a
+ * regression). So the assertion is the ratio `allow p95 / bare-node-start p95`, and two things
+ * make it hold under load where the absolute number does not:
+ *
+ * - **The two are interleaved in one loop** — one `node -e 0`, one hook, alternating — so a
+ *   slow window inflates the numerator and the denominator together. The old code sampled the
+ *   baseline in a second loop *after* the hook loop, which is why a spike during the hook loop
+ *   showed up as pure overhead.
+ * - **Three rounds, and the median ratio decides.** One round that catches a scheduler stall is
+ *   outvoted rather than fatal.
+ *
+ * Measured (3 rounds × 40 interleaved pairs, median round):
+ *
+ * | where                                    | baseline p95 | allow p95 | ratio     |
+ * | ---------------------------------------- | ------------ | --------- | --------- |
+ * | laptop, idle                             | 24–42 ms     | 49–83 ms  | 1.96–2.09 |
+ * | laptop, 16 parallel CPU-busy loops       | 40–44 ms     | 78–90 ms  | 1.96–2.09 |
+ * | GitHub runner, healthy (3 green CI runs) | 21–24 ms     | 79–96 ms  | 3.7–4.2   |
+ * | GitHub runner, the #135 red run          | 19.6 ms      | 291 ms    | 14.8      |
+ * | laptop, allow path slowed by 50 ms       | 41 ms        | 130 ms    | 3.16      |
+ *
+ * The ratio barely moves across a 2× swing in absolute time — the load row is the same 1.96 as
+ * the idle row — which is the property the absolute ceiling did not have. The runner sits
+ * higher than the laptop because its IO is slower relative to its CPU, so the ceiling keeps the
+ * CI/local split this file already used: **5 in CI** clears a healthy runner (4.2) by ~20% and
+ * still fails a 50 ms regression there (~5.9, since the runner's baseline is ~22 ms), and
+ * **3 locally** clears an idle or loaded laptop (2.09) by ~45% and fails the same 50 ms
+ * regression at 3.16. Both directions were run, not reasoned about — see the PR for #135.
  */
-const ALLOW_OVERHEAD_MS = process.env["CI"] ? 200 : 60;
+const ALLOW_RATIO_MAX = process.env["CI"] ? 5 : 3;
 
-/** p95 of a bare `node -e 0`, sampled the same number of times as the hook. */
-function nodeBaseline(runs: number): number {
-  const samples: number[] = [];
+/** Rounds, and interleaved `node -e 0`/hook pairs per round. The median round's ratio decides. */
+const ALLOW_ROUNDS = 3;
+const ALLOW_RUNS_PER_ROUND = 40;
+
+/**
+ * A loose sanity bound, not a budget: an allow path that takes two seconds is broken in a way no
+ * ratio should be asked to describe (a lock, a network call, a full transcript read). It is
+ * deliberately far above anything load can produce — the worst allow p95 ever seen on a runner
+ * is 291 ms.
+ */
+const ALLOW_SANITY_MS = 2_000;
+
+/** One interleaved round: alternating `node -e 0` and Stop-allow samples, p95 of each. */
+interface Round {
+  baselineP95: number;
+  allowP50: number;
+  allowP95: number;
+  allowMax: number;
+  ratio: number;
+}
+
+function allowRound(runs: number): Round {
+  const baseline: number[] = [];
+  const allow: number[] = [];
   for (let i = 0; i < runs; i += 1) {
-    const t0 = performance.now();
+    // Interleaved on purpose: both samples see the same machine.
+    const t0 = process.hrtime.bigint();
     execFileSync(process.execPath, ["-e", "0"], { stdio: "ignore" });
-    samples.push(performance.now() - t0);
+    baseline.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    allow.push(runHook("Stop", { stop_hook_active: false }));
   }
-  return stats(samples).p95;
+  const base = stats(baseline);
+  const hook = stats(allow);
+  return {
+    baselineP95: base.p95,
+    allowP50: hook.p50,
+    allowP95: hook.p95,
+    allowMax: hook.max,
+    ratio: Number((hook.p95 / base.p95).toFixed(2)),
+  };
 }
 
 /** A temp repo whose thresholds are far out of reach, so every Stop takes the allow path. */
@@ -121,25 +184,34 @@ function stats(samples: number[]): { p50: number; p95: number; max: number } {
 
 describe("hook timing budget", () => {
   it(
-    "Stop allow p95 is inside the budget over 100 runs",
+    `Stop allow p95 stays under ${ALLOW_RATIO_MAX}x a bare Node start over ${ALLOW_ROUNDS} rounds of ${ALLOW_RUNS_PER_ROUND}`,
     () => {
-      const samples: number[] = [];
-      for (let i = 0; i < 100; i += 1) {
-        samples.push(runHook("Stop", { stop_hook_active: false }));
-      }
-      const { p50, p95, max } = stats(samples);
-      const baseline = nodeBaseline(100);
+      const rounds: Round[] = [];
+      for (let i = 0; i < ALLOW_ROUNDS; i += 1) rounds.push(allowRound(ALLOW_RUNS_PER_ROUND));
+      // The median *round*, chosen by ratio: one stalled round is outvoted, and the numbers
+      // reported are the ones the assertion used rather than an average of unlike things.
+      const median = [...rounds].sort((a, b) => a.ratio - b.ratio)[Math.floor(ALLOW_ROUNDS / 2)] as Round;
+
       // Reported unconditionally: the PR quotes this line, and a run that passes at 148 ms in CI
       // is information a reviewer needs even though it is green.
-      console.log(
-        `hook Stop allow: p50 ${p50} ms, p95 ${p95} ms, max ${max} ms (budget ${ALLOW_BUDGET_MS} ms); node baseline p95 ${baseline} ms; overhead ${Number((p95 - baseline).toFixed(1))} ms`,
-      );
-      expect(p95 - baseline).toBeLessThan(ALLOW_OVERHEAD_MS);
-      if (p95 >= ALLOW_BUDGET_MS) {
-        console.warn(`hook Stop allow p95 ${p95} ms is over the ${ALLOW_BUDGET_MS} ms budget on this machine (load?)`);
+      const detail = rounds
+        .map((r) => `baseline p95 ${r.baselineP95} ms / allow p95 ${r.allowP95} ms = ${r.ratio}x`)
+        .join("; ");
+      const summary =
+        `hook Stop allow: baseline p95 ${median.baselineP95} ms, allow p50 ${median.allowP50} ms, ` +
+        `p95 ${median.allowP95} ms, max ${median.allowMax} ms; ratio ${median.ratio}x ` +
+        `(ceiling ${ALLOW_RATIO_MAX}x; reported budget ${ALLOW_BUDGET_MS} ms) — rounds: ${detail}`;
+      console.log(summary);
+
+      expect(median.ratio, summary).toBeLessThan(ALLOW_RATIO_MAX);
+      expect(median.allowP95, summary).toBeLessThan(ALLOW_SANITY_MS);
+      if (median.allowP95 >= ALLOW_BUDGET_MS) {
+        console.warn(
+          `hook Stop allow p95 ${median.allowP95} ms is over the ${ALLOW_BUDGET_MS} ms budget on this machine (load?); ratio ${median.ratio}x is inside ${ALLOW_RATIO_MAX}x`,
+        );
       }
     },
-    120_000,
+    180_000,
   );
 
   it(
