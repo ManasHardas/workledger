@@ -333,8 +333,9 @@ describe("session detail — gists, drawer, notes split, memory", () => {
     expect(within(drawer).getByText("[cp 1]")).toBeDefined();
     expect(within(drawer).getByText("2026-09-08 09:41 UTC")).toBeDefined();
 
-    // Escape closes it too, but the button is the only exit a thumb can see at 375 px.
-    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    // Escape closes it too, but the panel header's control is the only exit a thumb can see at
+    // 375 px, where the panel is a bottom sheet.
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close panel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 

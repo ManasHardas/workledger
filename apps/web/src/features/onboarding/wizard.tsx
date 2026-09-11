@@ -87,7 +87,9 @@ function Stepper({ current }: { current: Step }) {
             "flex items-center gap-1.5",
             index < at && "text-muted-foreground",
             index === at && "font-semibold text-foreground",
-            index > at && "text-muted-foreground/70",
+            // Not a dimmer muted-foreground: an alpha on it drops below 4.5:1 on the pane, and the
+            // numbered circle beside it already says which steps are still to come.
+            index > at && "text-muted-foreground",
           )}
         >
           <span

@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { detailUlidFromHash } from "../src/features/ledger/detail-route.js";
-import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
+import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
+import { NAV_SHEET_QUERY } from "../src/lib/media.js";
 import { createSource, type AppSource, type Repo } from "../src/lib/ledger-source.js";
 import { VIEW_IDS, legacyTarget, parseRoute, repoHref } from "../src/lib/router.js";
 
@@ -23,11 +24,31 @@ function withRepos(repos: Repo[]): AppSource {
   return Object.assign(Object.create(base) as AppSource, { listRepos: () => Promise.resolve(repos) });
 }
 
+/**
+ * jsdom has no `matchMedia`, so the shell reads every breakpoint as "no match" — the desktop form.
+ * A test that wants the narrow form says which queries match; `afterEach` puts it back.
+ */
+function matchAll(queries: string[]): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: queries.includes(query),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  });
+}
+
 beforeEach(() => {
   window.location.hash = "";
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(window, "matchMedia");
+});
 
 describe("router", () => {
   it("parses Home, the wizard, the machine-wide tabs and the repo routes", () => {
@@ -136,29 +157,93 @@ describe("app shell", () => {
 
   it("names the current repo in the switcher and switches to the same view of another", async () => {
     renderAt(repoHref(FIRST.id, "next"));
-    const select = (await screen.findByRole("combobox", { name: "Project" })) as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe(FIRST.id));
-    expect(select.selectedOptions[0]?.textContent).toBe(FIRST.name);
+    // The switcher is a button opening a filterable list, not a `<select>`: the direction asks for
+    // a filter and a native select has none (docs/design/direction.md §Shell).
+    await waitFor(() => expect(screen.getByRole("button", { name: `Project: ${FIRST.name}` })).toBeDefined());
 
-    fireEvent.change(select, { target: { value: SECOND.id } });
+    fireEvent.click(screen.getByRole("button", { name: `Project: ${FIRST.name}` }));
+    fireEvent.click(await screen.findByRole("button", { name: SECOND.name }));
     expect(window.location.hash).toBe(repoHref(SECOND.id, "next"));
 
-    fireEvent.change(select, { target: { value: "" } });
+    // The hash change is what renames the switcher, and jsdom delivers `hashchange` a tick later.
+    fireEvent.click(await screen.findByRole("button", { name: `Project: ${SECOND.name}` }));
+    fireEvent.click(await screen.findByRole("button", { name: "All projects" }));
     expect(window.location.hash).toBe("#/");
+  });
+
+  it("filters the switcher's list and leaves the rest of the nav alone", async () => {
+    renderAt("#/");
+    fireEvent.click(await screen.findByRole("button", { name: "Project: All projects" }));
+    await screen.findByRole("button", { name: FIRST.name });
+    expect(screen.getByRole("button", { name: SECOND.name })).toBeDefined();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter projects" }), {
+      target: { value: SECOND.name },
+    });
+    expect(screen.queryByRole("button", { name: FIRST.name })).toBeNull();
+    expect(screen.getByRole("button", { name: SECOND.name })).toBeDefined();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter projects" }), {
+      target: { value: "no-such-project" },
+    });
+    expect(await screen.findByText("No project matches.")).toBeDefined();
   });
 
   it("switches from Home into a repo's Ledger, and shows an unlisted id as is", async () => {
     renderAt("#/");
-    const select = (await screen.findByRole("combobox", { name: "Project" })) as HTMLSelectElement;
-    expect(select.value).toBe("");
-    await screen.findByRole("option", { name: FIRST.name });
-    fireEvent.change(select, { target: { value: FIRST.id } });
+    fireEvent.click(await screen.findByRole("button", { name: "Project: All projects" }));
+    fireEvent.click(await screen.findByRole("button", { name: FIRST.name }));
     expect(window.location.hash).toBe(repoHref(FIRST.id, "ledger"));
     cleanup();
 
     renderAt(repoHref("unknown00000", "ledger"));
-    const again = (await screen.findByRole("combobox", { name: "Project" })) as HTMLSelectElement;
-    expect(again.value).toBe("unknown00000");
+    expect(await screen.findByRole("button", { name: "Project: unknown00000" })).toBeDefined();
+  });
+
+  it("puts the per-view counts of the repo row beside the nav rows, in tabular numerals", async () => {
+    renderAt(repoHref(FIRST.id, "ledger"));
+    const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
+    await waitFor(() => {
+      const ledger = within(nav).getByRole("link", { name: /^Ledger/ });
+      expect(ledger.textContent).toContain(String(FIRST.sessions7d));
+    });
+    const nextRow = within(nav).getByRole("link", { name: /^Next/ });
+    expect(nextRow.textContent).toContain(String(FIRST.openBacklog));
+    const needs = within(nav).getByRole("link", { name: /^Needs you/ });
+    expect(needs.textContent).toContain(String(FIRST.openNotes));
+    // Health has no count on the repo row, and an invented one would be worse than none.
+    expect(within(nav).getByRole("link", { name: "Health" }).textContent).toBe("Health");
+    expect(
+      within(nav).getByText(String(FIRST.openBacklog)).className,
+    ).toContain("tabular-nums");
+  });
+
+  it("lists the folders with sessions in the nav, under their own name", async () => {
+    renderAt("#/");
+    const folders = await screen.findByRole("list", { name: "Folders" });
+    for (const workspace of FIXTURE_WORKSPACES) {
+      expect(within(folders).getByText(workspace.name)).toBeDefined();
+    }
+    // The hook state travels with each folder, worded apart from Home's own badges.
+    expect(within(folders).getAllByText(/hooks are (installed|missing)/).length).toBe(
+      FIXTURE_WORKSPACES.length,
+    );
+  });
+
+  it("collapses the nav into a sheet below 900 px and keeps every link in it", async () => {
+    matchAll([NAV_SHEET_QUERY]);
+    renderAt(repoHref(FIRST.id, "ledger"));
+    // Swapped, not hidden: there is exactly one nav in the tree, and it is behind the hamburger.
+    expect(screen.queryByRole("navigation", { name: "Views" })).toBeNull();
+    const hamburger = await screen.findByRole("button", { name: "Open navigation" });
+
+    fireEvent.click(hamburger);
+    const nav = await screen.findByRole("navigation", { name: "Views" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(VIEW_IDS.map((view) => repoHref(FIRST.id, view)));
   });
 
   it("links the brand to Home", async () => {

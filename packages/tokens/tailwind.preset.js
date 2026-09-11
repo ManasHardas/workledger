@@ -27,6 +27,12 @@ export default {
         "warning-foreground": "var(--wl-color-warning-foreground)",
         "success": "var(--wl-color-success)",
         "success-foreground": "var(--wl-color-success-foreground)",
+        "surface": "var(--wl-color-surface)",
+        "raised": "var(--wl-color-raised)",
+        "hairline": "var(--wl-color-hairline)",
+        "subtle-foreground": "var(--wl-color-subtle-foreground)",
+        "selected": "var(--wl-color-selected)",
+        "overlay": "var(--wl-color-overlay)",
       },
       spacing: {
         "0": "var(--wl-spacing-0)",
@@ -41,6 +47,12 @@ export default {
         "12": "var(--wl-spacing-12)",
         "16": "var(--wl-spacing-16)",
         "px": "var(--wl-spacing-px)",
+        "inset": "var(--wl-spacing-inset)",
+        "row-nav": "var(--wl-spacing-row-nav)",
+        "row": "var(--wl-spacing-row)",
+        "nav": "var(--wl-spacing-nav)",
+        "panel": "var(--wl-spacing-panel)",
+        "reading": "var(--wl-spacing-reading)",
       },
       borderRadius: {
         "none": "var(--wl-radius-none)",
@@ -50,6 +62,9 @@ export default {
         "xl": "var(--wl-radius-xl)",
         "full": "var(--wl-radius-full)",
       },
+      boxShadow: {
+        "panel": "var(--wl-shadow-panel)",
+      },
       fontSize: {
         "xs": "var(--wl-font-size-xs)",
         "sm": "var(--wl-font-size-sm)",
@@ -57,6 +72,11 @@ export default {
         "lg": "var(--wl-font-size-lg)",
         "xl": "var(--wl-font-size-xl)",
         "2xl": "var(--wl-font-size-2xl)",
+      },
+      lineHeight: {
+        "tight": "var(--wl-leading-tight)",
+        "body": "var(--wl-leading-body)",
+        "title": "var(--wl-leading-title)",
       },
       fontFamily: {
         "sans": "var(--wl-font-family-sans)",

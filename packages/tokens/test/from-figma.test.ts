@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+/** Only the corner of `tokens.json` this suite reads back. */
+interface Tokens {
+  color: { light: Record<string, { $value: string }> };
+}
+
 const PKG = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURE = path.join(PKG, "test", "fixtures", "figma-variables-local.json");
 
@@ -93,7 +98,10 @@ describe("from-figma", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("~ color.light.primary");
-    expect(result.stdout).toContain("#2f6b4f → #ff0000");
+    // Read out of the committed tokens rather than pinned: the palette is designed in code
+    // (docs/design/direction.md) and moves; what must hold is that the diff names the old value.
+    const wasPrimary = (JSON.parse(original("tokens.json")) as Tokens).color.light.primary.$value;
+    expect(result.stdout).toContain(`${wasPrimary} → #ff0000`);
     expect(result.stdout).toContain("1rem → 1.25rem");
 
     const before = original("tokens.json");

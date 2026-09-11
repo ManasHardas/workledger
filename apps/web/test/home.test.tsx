@@ -253,7 +253,10 @@ describe("Home", () => {
   it("links to the wizard and to the machine-wide tabs", async () => {
     renderHome();
     await screen.findByRole("list", { name: "Projects" });
-    expect(screen.getByRole("link", { name: "Add projects" }).getAttribute("href")).toBe("#/onboarding");
+    // Scoped to the middle pane: the left nav carries its own "Add projects" at the bottom
+    // (docs/design/direction.md §Shell), so the unscoped name is two links now.
+    const main = within(screen.getByRole("main"));
+    expect(main.getByRole("link", { name: "Add projects" }).getAttribute("href")).toBe("#/onboarding");
     const across = screen.getByRole("navigation", { name: "Across projects" });
     expect(within(across).getByRole("link", { name: "Needs you" }).getAttribute("href")).toBe("#/needs");
     expect(within(across).getByRole("link", { name: "Jobs" }).getAttribute("href")).toBe("#/jobs");
@@ -270,7 +273,7 @@ describe("Home", () => {
     renderHome(empty);
     expect(await screen.findByText(/No projects are tracked yet/)).toBeDefined();
     expect(screen.queryByRole("list", { name: "Projects" })).toBeNull();
-    const links = screen.getAllByRole("link", { name: "Add projects" });
+    const links = within(screen.getByRole("main")).getAllByRole("link", { name: "Add projects" });
     expect(links.length).toBe(2);
     expect(links.every((link) => link.getAttribute("href") === "#/onboarding")).toBe(true);
   });
