@@ -12,12 +12,12 @@
  * nothing to show and everything to set up (plans/feature-p8-onboarding-home.md §Scope 3).
  */
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import net from "node:net";
 import process from "node:process";
 
 import { EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
-import { resolveHome } from "../index/db.js";
+import { REBUILD_COMMAND, resolveHome } from "../index/db.js";
 import { openBrowser, processIo } from "./serve.js";
 import { DEFAULT_PORT, isPidAlive, readServeState, removeServeState, serveLogPath } from "../serve-state.js";
 import type { ServeIo } from "./serve.js";
@@ -134,6 +134,47 @@ export function spawnDetachedServer(request: SpawnRequest): void {
   }
 }
 
+/** Current size of `serve.log` in bytes, or 0 when there is no log yet. */
+function logSize(home: string): number {
+  try {
+    return statSync(serveLogPath(home)).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The line the daemon died on, when it died on a divergent index.
+ *
+ * Only the bytes `serve.log` grew by since the spawn are read — the file is appended to by every
+ * daemon this home has ever started, and a stale schema complaint from last week must not be
+ * reported as this one's cause. The match is {@link REBUILD_COMMAND}, which every
+ * `SchemaDivergenceError` message quotes (daemon-and-api.md amendment 14).
+ *
+ * @returns the daemon's own line, already prefixed `workledger serve:`, or `undefined`
+ */
+function schemaFailure(home: string, from: number): string | undefined {
+  let text: string;
+  try {
+    const fd = openSync(serveLogPath(home), "r");
+    try {
+      const size = fstatSync(fd).size;
+      if (size <= from) return undefined;
+      const buffer = Buffer.alloc(size - from);
+      readSync(fd, buffer, 0, buffer.length, from);
+      text = buffer.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.includes(REBUILD_COMMAND));
+}
+
 /** Wait until `/api/health` answers, or `timeoutMs` elapses. @returns whether it answered. */
 async function waitForHealth(url: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -177,6 +218,7 @@ export async function openCommand(options: OpenOptions = {}, io: OpenIo = proces
   const port = options.port ?? (await pickPort());
   const url = `http://${LOOPBACK}:${port}`;
   const env: Record<string, string | undefined> = { ...io.env, WORKLEDGER_HOME: home };
+  const logBefore = logSize(home);
   try {
     (io.spawnServer ?? spawnDetachedServer)({ port, home, env });
   } catch (error) {
@@ -185,6 +227,14 @@ export async function openCommand(options: OpenOptions = {}, io: OpenIo = proces
   }
 
   if (!(await waitForHealth(url, io.startTimeoutMs ?? START_TIMEOUT_MS))) {
+    // A daemon that exited on the index's schema has already said exactly what is wrong and how
+    // to fix it; repeating "the server did not answer" over the top of that is what cost an
+    // operator an afternoon on 2026-09-10.
+    const fatal = schemaFailure(home, logBefore);
+    if (fatal !== undefined) {
+      io.stderr(fatal);
+      return EXIT_USAGE;
+    }
     io.stderr(`workledger open: the server did not answer at ${url}; see ${serveLogPath(home)}`);
     return EXIT_USAGE;
   }

@@ -613,6 +613,15 @@ export async function serveCommand(
     try {
       roots = await enabledRepos(io);
     } catch (error) {
+      // A schema the index has run and this build does not know is its own failure, not a
+      // generic read error: the message names the migration and the way out, and `open` greps
+      // `serve.log` for it so a daemon that dies here never reports only "did not answer"
+      // (daemon-and-api.md amendment 14).
+      const { SchemaDivergenceError } = await import("../index/db.js");
+      if (error instanceof SchemaDivergenceError) {
+        io.stderr(`workledger serve: ${error.message}`);
+        return EXIT_USAGE;
+      }
       io.stderr(`workledger serve: could not read the index: ${error instanceof Error ? error.message : String(error)}`);
       return EXIT_USAGE;
     }

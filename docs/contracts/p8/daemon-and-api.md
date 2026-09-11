@@ -235,3 +235,43 @@ made to the remote host by the daemon itself.
 
 UI shape follows `docs/design/direction.md`: left nav, middle pane, and a floating right panel
 that is a bottom sheet under 768 px. The panel is non-modal on desktop and modal on mobile.
+
+## Amendment 14 (2026-09-10) — index migration history and `workledger index rebuild` (#108)
+
+The index records what it has run. `schema_migrations (version INTEGER PRIMARY KEY, name TEXT,
+sha256 TEXT, applied_at TEXT)` holds one row per applied migration — the file's name and the
+sha256 of its SQL. The table is bookkeeping, not a numbered migration: `migrate()` creates it with
+`CREATE TABLE IF NOT EXISTS` before it compares anything, and an index from before this amendment
+is backfilled from `schema_version` on first open, so every current index upgrades without a
+rebuild and without re-running a migration.
+
+Before any migration is applied, the recorded history is compared with the bundled files. Three
+findings are a divergence, each a `SchemaDivergenceError` whose message names the migration and
+ends with ``run `workledger index rebuild` to rebuild it from the ledgers``:
+
+- a version recorded under a different filename than this build ships at that number;
+- a version whose recorded sha256 no longer matches the bundled file;
+- a recorded migration — or a `schema_version` — past the newest migration this build ships.
+
+Versions the bundled set has not reached yet are not a divergence; that is an index mid-upgrade.
+An index from before the history table has nothing to compare, so the collision itself is the
+evidence: a migration that fails with `already exists` or `duplicate column name` is re-thrown as
+the same `SchemaDivergenceError`, naming the migration that could not be applied.
+
+`workledger serve` exits 1 on a divergence and prints `workledger serve: <message>` rather than
+its generic "could not read the index". `workledger open` reads the bytes `serve.log` grew by
+since it spawned the daemon and, when a line there quotes `workledger index rebuild`, prints that
+line instead of "the server did not answer at <url>".
+
+```
+workledger index rebuild
+   reads the registered repos and workspaces out of the current index without migrating it,
+   moves index.sqlite (and its -wal/-shm) aside as index.sqlite.<YYYYMMDD>T<HHMMSS>Z.bak,
+   opens a fresh index at this build's schema, re-registers those repos and workspaces, and
+   rebuilds sessions and checkpoints from each enabled repo's .workledger/sessions;
+   prints the backup path, the counts, and that job history is not recoverable; exit 0
+```
+
+The ledger is the source of truth and the index is a cache, so recovery is never a hand-edited
+`schema_version`. The repair queue is index-only state with no ledger behind it: `index rebuild`
+drops it and says so.
