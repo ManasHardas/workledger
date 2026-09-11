@@ -16,7 +16,20 @@ body {
   color: var(--wl-color-foreground);
   font-family: var(--wl-font-family-sans);
   font-size: var(--wl-font-size-base);
+  line-height: var(--wl-leading-body);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Monospace is confined to identifiers — paths, commits, ids — and never carries prose
+ * (docs/design/direction.md, rule 1). Every count and duration is set in tabular numerals so a
+ * column of them lines up.
+ */
+code,
+pre,
+kbd,
+samp {
+  font-feature-settings: "tnum" 1;
 }
 
 code,

@@ -10,7 +10,7 @@ export const SheetClose = SheetPrimitive.Close;
 export const SheetPortal = SheetPrimitive.Portal;
 
 const sheetVariants = cva(
-  "fixed z-50 flex flex-col gap-4 border-border bg-popover p-4 text-popover-foreground shadow-lg",
+  "fixed z-50 flex flex-col gap-4 border-hairline bg-popover p-4 text-popover-foreground shadow-panel",
   {
     variants: {
       side: {
@@ -25,7 +25,7 @@ const sheetVariants = cva(
 );
 
 export function SheetOverlay({ className, ...props }: ComponentProps<typeof SheetPrimitive.Overlay>) {
-  return <SheetPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-foreground/40", className)} {...props} />;
+  return <SheetPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-overlay/60", className)} {...props} />;
 }
 
 export type SheetContentProps = ComponentProps<typeof SheetPrimitive.Content> &
@@ -47,7 +47,7 @@ export function SheetHeader({ className, ...props }: ComponentProps<"div">) {
 }
 
 export function SheetTitle({ className, ...props }: ComponentProps<typeof SheetPrimitive.Title>) {
-  return <SheetPrimitive.Title className={cn("text-lg font-semibold", className)} {...props} />;
+  return <SheetPrimitive.Title className={cn("text-lg font-semibold leading-tight", className)} {...props} />;
 }
 
 export function SheetDescription({ className, ...props }: ComponentProps<typeof SheetPrimitive.Description>) {

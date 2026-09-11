@@ -229,7 +229,10 @@ describe("jobs view", () => {
     ]);
     renderJobs(source);
 
-    const rows = await screen.findAllByRole("listitem");
+    // Scoped to the queue: the left nav's "Folders with sessions" section is a list too.
+    const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole(
+      "listitem",
+    );
     const queuedRow = rows[0]!;
     const failedRow = rows[1]!;
 
@@ -250,7 +253,10 @@ describe("jobs view", () => {
     ]);
     renderJobs(source);
 
-    const rows = await screen.findAllByRole("listitem");
+    // Scoped to the queue: the left nav's "Folders with sessions" section is a list too.
+    const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole(
+      "listitem",
+    );
     const withLog = rows[0]!;
     const withoutLog = rows[1]!;
     expect(within(withoutLog).queryByText("Log")).toBeNull();
@@ -493,7 +499,10 @@ describe("repair and the extraction consent", () => {
     window.location.hash = `#/r/${REPO}/ledger`;
     render(<App source={source} />);
     // Amendment 11: one list, no scope tabs — the crashed session is listed straight away.
-    const rows = await screen.findAllByRole("listitem");
+    // Scoped to the session list: the left nav's "Folders with sessions" section is a list too.
+    const rows = within(await screen.findByRole("list", { name: /Sessions, open first/ })).getAllByRole(
+      "listitem",
+    );
     expect(within(rows[0]!).getByRole("button", { name: "Repair session…" })).toBeDefined();
     expect(within(rows[1]!).queryByRole("button", { name: "Repair session…" })).toBeNull();
     window.location.hash = "";

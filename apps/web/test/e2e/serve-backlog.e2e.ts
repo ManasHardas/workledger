@@ -63,6 +63,11 @@ function git(cwd: string, ...args: string[]): void {
 
 /** The narrowest viewport the UI must fit without a horizontal scrollbar (#88, #89). */
 const MOBILE_WIDTH = 375;
+/** The three widths the shell is judged at (docs/design/direction.md §Shell). */
+const TABLET_WIDTH = 768;
+const DESKTOP_WIDTH = 1280;
+/** Where the PR's screenshots are written, when the operator asks for them. */
+const SHOTS = process.env["WORKLEDGER_SHOTS_DIR"];
 /** The path length the Health view is held to at that width (#89). */
 const LONG_PATH = 90;
 
@@ -260,12 +265,19 @@ test.describe("workledger serve, end to end", () => {
     await expect(card).toBeVisible();
     await expect(card).toHaveAttribute("href", `#/r/${serving.id}/ledger`);
     await expect(card.getByText(serving.repo)).toBeVisible();
-    await expect(page.getByRole("link", { name: "Add projects" })).toHaveAttribute("href", "#/onboarding");
+    // Scoped to the middle pane: the left nav carries its own "Add projects" at the bottom
+    // (docs/design/direction.md §Shell).
+    await expect(page.getByRole("main").getByRole("link", { name: "Add projects" })).toHaveAttribute(
+      "href",
+      "#/onboarding",
+    );
 
     // The P2 route is redirected to the first (here: only) repo without a history entry.
     await page.goto(`${serving.url}/#/ledger`);
     await expect(page).toHaveURL(`${serving.url}/#/r/${serving.id}/ledger`);
-    await expect(page.getByRole("combobox", { name: "Project" })).toHaveValue(serving.id);
+    // The switcher is the nav's filterable button now, not a `<select>`; its accessible name is
+    // the project it currently holds.
+    await expect(page.getByRole("button", { name: "Project: repo" })).toBeVisible();
     expect(errors, "no console errors on Home").toEqual([]);
   });
 
@@ -426,5 +438,158 @@ test.describe("workledger serve, end to end", () => {
     expect(await scrollWidth(page), "Health does not scroll horizontally").toBeLessThanOrEqual(
       MOBILE_WIDTH,
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // The shell (#128): left nav, middle pane, floating right panel
+  // -------------------------------------------------------------------------
+
+  /** A screenshot for the PR, in both themes, when `WORKLEDGER_SHOTS_DIR` is set. */
+  async function shot(page: Page, name: string): Promise<void> {
+    if (SHOTS === undefined) return;
+    mkdirSync(SHOTS, { recursive: true });
+    for (const scheme of ["dark", "light"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      // The theme swap repaints through `transition-colors`, so a shot taken on the same tick
+      // catches half the page in the theme it just left.
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: path.join(SHOTS, `${name}-${scheme}.png`) });
+    }
+    await page.emulateMedia({ colorScheme: null });
+  }
+
+  /** The route of the first session that got as far as a goal — the one with Done items to open. */
+  async function openFirstSession(page: Page): Promise<void> {
+    await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
+    await page
+      .getByRole("list", { name: "Sessions, open first then newest first" })
+      .getByRole("link")
+      .first()
+      .click();
+    await expect(page.getByRole("heading", { name: "Session", exact: true })).toBeVisible();
+  }
+
+  test("the left nav is a fixed column at 1280 px and a sheet below 900 px", async ({ page }) => {
+    await page.setViewportSize({ width: DESKTOP_WIDTH, height: 900 });
+    await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
+
+    const nav = page.getByRole("navigation", { name: "Views" });
+    await expect(nav).toBeVisible();
+    // 240 px, per direction.md §Shell.
+    expect((await nav.boundingBox())?.width).toBeLessThanOrEqual(240);
+    await expect(page.getByRole("button", { name: "Open navigation" })).toHaveCount(0);
+    // The switcher, the counts and the folders all live in it.
+    await expect(page.getByRole("button", { name: "Project: repo" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /^Ledger/ })).toBeVisible();
+    await shot(page, "session-1280");
+
+    // Below 900 px the nav is swapped for a sheet, not merely hidden: there is one nav, and it is
+    // behind the hamburger.
+    await page.setViewportSize({ width: TABLET_WIDTH, height: 900 });
+    await expect(page.getByRole("navigation", { name: "Views" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await expect(page.getByRole("navigation", { name: "Views" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Project: repo" })).toBeVisible();
+    // A modal sheet needs a control a thumb can find; the overlay strip is 57 px at 375 px.
+    await expect(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("navigation", { name: "Views" })).toHaveCount(0);
+
+    // Picking a view navigates *and* closes the sheet, at both narrow widths: a sheet left up over
+    // the new route leaves the document `aria-hidden` and focus inside it (#132 review).
+    for (const width of [TABLET_WIDTH, MOBILE_WIDTH]) {
+      await page.setViewportSize({ width, height: 812 });
+      await page.goto(`${serving.url}/#/r/${serving.id}/ledger`);
+      await page.getByRole("button", { name: "Open navigation" }).click();
+      await page
+        .getByRole("navigation", { name: "Views" })
+        .getByRole("link", { name: /^Jobs/ })
+        .click();
+      await expect(page).toHaveURL(`${serving.url}/#/r/${serving.id}/jobs`);
+      await expect(page.getByRole("navigation", { name: "Views" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+      // Nothing behind it is still hidden from assistive technology.
+      expect(await page.locator("[data-aria-hidden]").count()).toBe(0);
+    }
+  });
+
+  test("the right pane is a floating inset panel on desktop and a bottom sheet at 375 px", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: DESKTOP_WIDTH, height: 900 });
+    await openFirstSession(page);
+
+    // A Done gist, not the switcher or Repair: those open dialogs too, and neither is a list row.
+    const done = page.getByRole("main").locator("li button[aria-haspopup='dialog']");
+    await done.first().click();
+    const panel = page.getByRole("dialog");
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("data-variant", "panel");
+
+    // Floating and inset: 380 px wide, 12 px off the top, the right and the bottom — never a
+    // full-height drawer.
+    const box = (await panel.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(Math.round(box.width)).toBe(380);
+    expect(Math.round(box.y)).toBe(12);
+    expect(Math.round(viewport.width - (box.x + box.width))).toBe(12);
+    expect(Math.round(viewport.height - (box.y + box.height))).toBe(12);
+    // Its own header, with a close control.
+    await expect(panel.getByRole("button", { name: "Close panel" })).toBeVisible();
+    // Non-modal: the middle pane behind it is still reachable, so the ledger link still navigates.
+    await expect(page.getByRole("link", { name: "← All sessions" })).toBeVisible();
+    await shot(page, "session-panel-1280");
+    // The middle pane made room for it rather than being covered: its right edge stops short of
+    // the panel's left edge.
+    const paneRight = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      return main === null ? 0 : main.getBoundingClientRect().right;
+    });
+    expect(paneRight).toBeLessThanOrEqual(box.x);
+
+    // Escape closes it and focus goes back to the item that opened it.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    // Polled: Radix restores focus as the content unmounts, which is a frame after the dialog is
+    // gone from the tree.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-haspopup")))
+      .toBe("dialog");
+
+    // At 375 px the same control is a modal bottom sheet, and nothing scrolls sideways.
+    await page.setViewportSize({ width: MOBILE_WIDTH, height: 812 });
+    // The session itself fits first — the meta line carries absolute paths (rule 5). Polled: the
+    // resize relayouts a frame after `setViewportSize` returns.
+    await expect
+      .poll(() => scrollWidth(page), { message: "the session fits 375 px before the panel" })
+      .toBeLessThanOrEqual(MOBILE_WIDTH);
+    await page.getByRole("main").locator("li button[aria-haspopup='dialog']").first().click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet).toHaveAttribute("data-variant", "sheet");
+    const sheetBox = (await sheet.boundingBox())!;
+    expect(Math.round(sheetBox.width)).toBe(MOBILE_WIDTH);
+    expect(sheetBox.height).toBeLessThanOrEqual(812 * 0.86);
+    expect(await scrollWidth(page), "the session does not scroll horizontally").toBeLessThanOrEqual(
+      MOBILE_WIDTH,
+    );
+    await shot(page, "session-panel-375");
+  });
+
+  test("Home holds 375, 768 and 1280 px with no sideways scroll", async ({ page }) => {
+    for (const [width, height, name] of [
+      [MOBILE_WIDTH, 812, "home-375"],
+      [TABLET_WIDTH, 900, "home-768"],
+      [DESKTOP_WIDTH, 900, "home-1280"],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto(`${serving.url}/#/`);
+      await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+      // Shot after the cards are in, not while the first read is still in flight.
+      await expect(page.getByRole("list", { name: "Projects" }).getByRole("link")).toHaveCount(1);
+      expect(await scrollWidth(page), `Home does not scroll horizontally at ${width} px`).toBeLessThanOrEqual(
+        width,
+      );
+      await shot(page, name);
+    }
   });
 });
