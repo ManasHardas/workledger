@@ -4,7 +4,7 @@ import { HealthReport } from "../features/health/health-report.js";
 export function HealthView() {
   return (
     <section aria-labelledby="health-heading" className="flex flex-col gap-4">
-      <h2 id="health-heading" className="text-xl font-semibold">
+      <h2 id="health-heading" className="text-xl font-extrabold">
         Health
       </h2>
       <HealthReport />

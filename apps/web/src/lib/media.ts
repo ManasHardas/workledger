@@ -11,6 +11,11 @@ import { useCallback, useSyncExternalStore } from "react";
  */
 export const NAV_SHEET_QUERY = "(max-width: 899px)";
 export const PANEL_SHEET_QUERY = "(max-width: 767px)";
+/**
+ * 1280 px and up: room for the whole X shape — 275 px nav, 600 px column, 350 px right column —
+ * so the right column exists and the panel docks in it rather than floating over the page.
+ */
+export const ASIDE_QUERY = "(min-width: 1280px)";
 
 /**
  * Whether `query` matches, re-read on every change.
@@ -41,4 +46,9 @@ export function useNavIsSheet(): boolean {
 /** Below 768 px: the right panel becomes a modal bottom sheet. */
 export function usePanelIsSheet(): boolean {
   return useMediaQuery(PANEL_SHEET_QUERY);
+}
+
+/** 1280 px and up: the shell has a right column for the panel and the folders to live in. */
+export function useHasAside(): boolean {
+  return useMediaQuery(ASIDE_QUERY);
 }

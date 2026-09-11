@@ -4,7 +4,6 @@ import { AsyncPanel } from "../../components/async-panel.js";
 import { RepairSheet } from "../jobs/repair-sheet.js";
 import { useRepoId, useSource } from "../../lib/source-context.js";
 import { Badge } from "../../components/ui/badge.js";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.js";
 import { Panel } from "../../components/ui/panel.js";
 import { commitHref, editorHref, fileHref } from "../../lib/ledger-source.js";
 import type {
@@ -49,7 +48,7 @@ export function SessionDetail({ ulid }: { ulid: string }) {
         >
           ← All sessions
         </a>
-        <h2 id="ledger-heading" className="text-xl font-semibold">
+        <h2 id="ledger-heading" className="text-xl font-extrabold">
           Session
         </h2>
       </div>
@@ -80,8 +79,8 @@ function SessionBody({ session }: { session: ParsedSession }) {
   const opened = openDone === null ? null : (session.done[openDone] ?? null);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col">
+      <div className="flex flex-wrap items-center gap-2 pb-4">
         <Badge variant={frontmatter.status === "open" ? "default" : "outline"}>
           {frontmatter.status}
         </Badge>
@@ -138,7 +137,9 @@ function SessionBody({ session }: { session: ParsedSession }) {
                   type="button"
                   onClick={() => setOpenDone(index)}
                   aria-haspopup="dialog"
-                  className="w-full rounded-md text-left hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  // Bled 8 px past the text on either side so the hover reads as a row, as X's
+                  // timeline does, while the text stays aligned with every other section's.
+                  className="-mx-2 -my-1 block w-[calc(100%_+_1rem)] rounded-md px-2 py-1 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {line.text}
                 </button>
@@ -281,7 +282,7 @@ function DoneDrawer({
       }
     >
       {line === null ? null : (
-        <dl className="flex flex-col gap-3 text-sm">
+        <dl className="flex flex-col gap-4 text-sm">
           <Field label="Detail">
             {line.detail ? (
               <span>{line.detail}</span>
@@ -421,7 +422,7 @@ function verifiedVariant(verified: Verified): "accent" | "destructive" | "outlin
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dt className="text-sm font-bold text-foreground">{label}</dt>
       <dd className="min-w-0">{children}</dd>
     </div>
   );
@@ -467,14 +468,16 @@ function ForAgents({ notes }: { notes: NoteLine[] }) {
   );
 }
 
+/**
+ * One body section, flat on the timeline column rather than boxed: a hairline bled to both edges
+ * of the column above it, as X separates posts, and an extrabold heading.
+ */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+    <section className="-mx-4 border-t border-hairline px-4 py-4">
+      <h3 className="mb-3 text-lg font-extrabold leading-title">{title}</h3>
+      {children}
+    </section>
   );
 }
 
@@ -484,8 +487,8 @@ function Lines({ children }: { children: React.ReactNode }) {
 
 function Line({ cp, children }: { cp: number; children: React.ReactNode }) {
   return (
-    <li className="flex gap-2 text-sm">
-      <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground">
+    <li className="flex gap-3 text-sm leading-body">
+      <span className="shrink-0 font-mono text-xs leading-body text-subtle-foreground">
         {cpMarker(cp)}
       </span>
       <span className="min-w-0 flex-1">{children}</span>

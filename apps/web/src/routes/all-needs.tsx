@@ -4,7 +4,7 @@ import { AllNeedsPanel } from "../features/needs/all-needs-panel.js";
 export function AllNeedsView() {
   return (
     <section aria-labelledby="needs-you-heading" className="flex flex-col gap-4">
-      <h2 id="needs-you-heading" className="text-xl font-semibold">
+      <h2 id="needs-you-heading" className="text-xl font-extrabold">
         Needs you
       </h2>
       <p className="text-sm text-muted-foreground">Across every project on this machine.</p>

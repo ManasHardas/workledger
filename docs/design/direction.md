@@ -1,43 +1,54 @@
-# Design direction (2026-09-10, operator: "make it look more like Linear ... I just want it to look good")
+# Design direction (2026-09-11, operator: "lets make the ui pretty ... center it to look more like X interface ... Also match font and style from X")
 
-Designed in code, not in Figma. The Figma path (P7 Wave 1) stays available later; these tokens are
-the source of truth until then. Every value below lives in `packages/tokens` and is consumed
-through the Tailwind preset. No component hardcodes a colour, radius, or shadow.
+Supersedes the Linear direction of 2026-09-10 (DL-22). Designed in code, not in Figma; these tokens
+are the source of truth. Every value below lives in `packages/tokens` and is consumed through the
+Tailwind preset. No component hardcodes a colour, radius, or shadow.
 
 ## Shell
 
-Three panes, in the Linear shape.
+X's shape: one centred group of three columns, with black on either side of it.
 
-- **Left nav, 240 px, fixed, its own scroll.** Top: wordmark plus the project switcher (current
-  project, keyboard-openable, filterable). Then the views for that project: Ledger, Next, Needs
-  you, Jobs, Health, each with a 16 px icon and a right-aligned count where one exists. Then a
-  "Folders with sessions" section listing workspaces with their hook state. Bottom: Add projects.
-  Collapses below 900 px into a sheet behind a hamburger; below 640 px the nav is the sheet only.
-- **Middle pane.** The working surface. Reading content (a session) sits in a 760 px column;
-  lists and tables take the full width. A sticky header carries the title, the status chips, and
-  the primary action, with a hairline border under it.
-- **Right pane: a floating panel, never a full-height drawer.** 380 px wide, inset 12 px from the
-  top, right, and bottom, radius 10, one shadow, its own scroll and its own header with a close
-  control. Non-modal on desktop: the middle pane stays scrollable and clickable behind it, and
-  the panel is what a second click replaces. Below 768 px it becomes a bottom sheet at 85 vh with
-  a drag handle, modal, Escape and swipe-down to close. Focus moves into the panel on open and
-  returns to the opener on close in both forms.
+- **Left nav, 275 px, sticky, full height.** Top: the mark, monochrome, linking Home. Then the
+  views for the current project as pills: 26 px icon, 20 px label, the current one in bold with a
+  heavier icon, a count after the label in grey where one exists. Then "Add projects" as the one
+  big inverted pill (X's Post). Bottom: the project switcher in X's account-switcher shape, an
+  avatar initial, the name in bold, a quiet second line, and the overflow mark. Below 900 px the
+  nav is a sheet behind a hamburger.
+- **Middle column, 600 px**, with a hairline down either side from 640 px. A sticky 48 px header,
+  translucent over the content with a blur, carries the 20 px extrabold title and the health chip.
+  Content is flat: sections and list items are separated by hairlines bled to both edges of the
+  column, not boxed in cards. The session list reads as a timeline: author and harness on the first
+  line, the goal as the body, the counts along the foot.
+- **Right column, 350 px, from 1280 px, sticky.** The evidence panel docks at its top as a module
+  (radius 16, hairline border, 17 px extrabold title, a round close control): X's "Today's News"
+  slot. Under it, Folders with sessions as a module (X's "Who to follow"), then a one-line keyboard
+  hint where X puts its footer. The folders live in the nav instead when there is no right column.
+- **The panel without a right column.** From 768 to 1279 px it floats at the right edge, inset
+  12 px, radius 16, the glow shadow, non-modal; the centred group moves left to make room. Below
+  768 px it is a modal bottom sheet at 85 vh with a drag handle, Escape and swipe-down to close.
+  Focus moves into the panel on open and back to the opener on close in every form.
 
 ## Tokens
 
-Dark first, light kept complete. Surfaces are near-black and separated by hairlines rather than
-heavy borders: base `#0D0E10`, pane `#141517`, raised `#1A1B1F`, hairline `rgba(255,255,255,.07)`.
-Text: primary `rgba(255,255,255,.92)`, secondary `.62`, tertiary `.42`. One accent hue for
-selection, focus, and links only (`#6E79F5` dark / `#4F5BD5` light); status colours stay reserved
-for status: amber for blocked, red for failed, green for verified, all at chip weight, never as a
-whole-row fill. Radii 6 (control), 10 (panel). One shadow, on the floating panel only.
+Dark first, light kept complete, both X's. Dark: background `#000000`, text `#e7e9ea`, secondary
+text `#8b9197`, tertiary `#7e848a` (both a step above X's `#71767b` so they clear AA on the hover
+and selected surfaces), hairline `#2f3336`, hover and selected `#16181c`. Light: `#ffffff`,
+`#0f1419`, `#536471`, hairline `#eff3f4`. One blue, `#1d9bf0`, for selection, focus and links
+only; chips that need a colour take its tint. Status colours stay reserved for status: X's red,
+yellow and green, at chip weight, never as a whole-row fill.
 
-Type: the system UI stack. 13 px base, 12 px meta, 15 px section heading, 20 px page title;
-line-height 1.45; tabular numerals for every count and duration. Monospace only for identifiers:
-paths, commits, ids.
+Shapes: every button, nav item and chip is a pill; modules and the panel are 16 px; rows inside a
+list are 8 px. One shadow, X's soft glow, on things that float over the page only.
 
-Density: 8 px grid. Row height 32 px in lists, 28 px in the nav. A list row shows a hover
-background, a focus ring on keyboard focus, and a left accent bar when selected.
+Type: X's own fallback stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+Arial`), which is SF Pro on a Mac. Chirp itself is X's licensed face and the app never fetches a
+web font (design spec §14). Sizes are X's: 13 meta, 15 body, 17 module heading, 20 nav and page
+title. Weights: 400 body, 700 names, the current view and buttons, 800 headings. Line height 20 px
+on the body. Tabular numerals for every count and duration. Monospace only for identifiers: paths,
+commits, ids.
+
+Density: 8 px grid. List rows 44 px, nav pills 52 px. A list row shows a hover background, a focus
+ring on keyboard focus, and a left accent bar when selected.
 
 ## Rules that outlive this document
 
@@ -45,4 +56,5 @@ background, a focus ring on keyboard focus, and a left accent bar when selected.
 2. Chips carry state, not decoration: harness, status, kind. At most three per row.
 3. Evidence is never inline. It lives in the right panel.
 4. Every count is a link to the thing it counts.
-5. Nothing in the middle pane may scroll horizontally at 375 px.
+5. Nothing in the middle column may scroll horizontally at 375 px.
+6. Three radii only: a pill for anything you press, 16 px for a module, 8 px for a row.

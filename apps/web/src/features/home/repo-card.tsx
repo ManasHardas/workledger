@@ -16,13 +16,15 @@ export function RepoCard({ repo, now }: { repo: Repo; now: number }) {
   return (
     <ListRow aria-label={repo.name}>
       <HealthBadge health={repo.health} />
-      <RowTitle href={repoHref(repo.id, "ledger")} className="font-medium">
+      {/* `flex-initial`: the name keeps its own width and the path below takes what is left, so a
+          long path in the 600 px column cannot squeeze the name down to a couple of letters. */}
+      <RowTitle href={repoHref(repo.id, "ledger")} className="flex-initial font-medium">
         {repo.name}
       </RowTitle>
       {/* The path disambiguates two repos with the same basename. It has no space to wrap at, so
           it truncates rather than pushing the row past a 375 px viewport (rule 5) — and below
           `md` it is gone entirely, where the name alone has to do. */}
-      <span className="hidden min-w-0 shrink truncate font-mono text-xs text-subtle-foreground md:inline">
+      <span className="hidden min-w-0 flex-1 basis-0 truncate font-mono text-xs text-subtle-foreground md:inline">
         {repo.path}
       </span>
       <Count repo={repo} view="next" value={repo.openBacklog} noun="open backlog" />

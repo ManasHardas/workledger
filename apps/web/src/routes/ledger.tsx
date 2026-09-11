@@ -46,7 +46,7 @@ function LedgerList() {
 
   return (
     <section aria-labelledby="ledger-heading" className="flex flex-col gap-4">
-      <h2 id="ledger-heading" className="text-xl font-semibold">
+      <h2 id="ledger-heading" className="text-xl font-extrabold">
         Ledger
       </h2>
       <LedgerFilterBar filters={filters} onChange={setFilters} q={q} onQChange={setQ} />

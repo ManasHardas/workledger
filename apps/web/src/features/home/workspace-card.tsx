@@ -46,10 +46,12 @@ export function WorkspaceCard({
             no hooks
           </Badge>
         )}
-        <span className="min-w-0 flex-1 truncate text-sm" title={workspace.path}>
+        {/* The name keeps its own width and the path takes what is left: in the 600 px column a
+            path sized to its content squeezed the name down to two letters. */}
+        <span className="min-w-0 shrink truncate text-sm" title={workspace.path}>
           {workspace.name}
         </span>
-        <span className="hidden min-w-0 shrink truncate font-mono text-xs text-subtle-foreground md:inline">
+        <span className="hidden min-w-0 flex-1 basis-0 truncate font-mono text-xs text-subtle-foreground md:inline">
           {workspace.path}
         </span>
       </div>

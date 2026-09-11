@@ -67,7 +67,7 @@ export function HomeView({ repos, now = Date.now() }: { repos: Async<Repo[]>; no
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="home-heading" className="text-xl font-semibold leading-title">
+        <h2 id="home-heading" className="text-xl font-extrabold leading-title">
           Overview
         </h2>
         <a

@@ -4,12 +4,8 @@ import { cn } from "../../lib/cn.js";
 
 /**
  * The list row of `docs/design/direction.md` §Density, in one place so Next, Needs you, Jobs,
- * Health and Home cannot drift apart: 32 px tall on the 8 px grid, a hover background, a focus
+ * Health and Home cannot drift apart: 44 px tall on the 8 px grid, a hover background, a focus
  * ring on keyboard focus, and a left accent bar when it is the selected row.
- *
- * The shape is the nav's, deliberately — `components/app-shell.tsx` paints its own rows the same
- * way, and a list that matched the nav in every respect but the accent bar would read as a second
- * hand. The one difference is height: 32 px here, 28 px in the nav, as the direction asks.
  *
  * A row never scrolls sideways at 375 px (rule 5). That is what the `min-w-0 truncate` on
  * {@link RowTitle} and the `shrink-0` on the chips and the trailing controls are for: the title
@@ -31,7 +27,7 @@ export function ListRow({ selected, className, children, ...props }: ListRowProp
     <li
       data-selected={selected === true ? "" : undefined}
       className={cn(
-        "group relative flex min-h-row flex-wrap items-center gap-2 rounded-md py-1 pl-3 pr-1 text-sm transition-colors",
+        "group relative flex min-h-row flex-wrap items-center gap-2 rounded-md py-2 pl-3 pr-2 text-sm leading-body transition-colors",
         "hover:bg-muted",
         selected === true ? "bg-selected" : "",
         className,
@@ -131,7 +127,7 @@ export function RowSection({
   return (
     <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
-        <h3 id={id} className="text-sm font-medium leading-body text-foreground">
+        <h3 id={id} className="text-lg font-extrabold leading-title text-foreground">
           {title}
         </h3>
         {count === undefined ? null : (
