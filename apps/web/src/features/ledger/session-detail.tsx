@@ -398,7 +398,9 @@ function EditorLink({
   editor: EditorScheme | undefined;
   repoPath: string | undefined;
 }) {
-  const href = repoPath === undefined ? null : editorHref(editor, `${repoPath}/${file}`);
+  // The builder vets the path itself, so a `files` entry that leaves the repo simply has no
+  // control here — the same string the web link refuses.
+  const href = editorHref(editor, repoPath, file);
   if (href === null) return null;
   return (
     <a

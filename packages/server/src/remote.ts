@@ -65,9 +65,16 @@ function hostOf(authority: string): { host: RemoteHost; authority: string } | nu
   const lower = authority.toLowerCase();
   const hostname = lower.split(":")[0]!;
   for (const [name, host] of PUBLIC) {
-    if (hostname === name || hostname.startsWith(`${name}-`) || hostname.endsWith(`.${name}`)) {
-      return { host, authority: name };
-    }
+    if (hostname === name || hostname.endsWith(`.${name}`)) return { host, authority: name };
+    if (!hostname.startsWith(`${name}-`)) continue;
+    // An `ssh_config` alias is a single label: `github.com-personal`. A hostname that carries a
+    // dot after the suffix is a *real* host that merely starts the same way
+    // (`github.com-mirror.acme.corp`), and canonicalising it would link to someone else's repo
+    // on the public forge — so it is refused outright rather than falling through to the
+    // self-hosted rule below, which would accept it on its `github` label.
+    return /^[a-z0-9_-]+$/.test(hostname.slice(name.length + 1))
+      ? { host, authority: name }
+      : null;
   }
   const labels = hostname.split(".");
   if (labels.includes("github")) return { host: "github", authority: lower };
@@ -140,13 +147,52 @@ export function commitHref(remote: RepoRemote, sha: string): string {
 }
 
 /**
- * `remote.fileUrl` at `sha`, or at the default branch when the ledger line records no commit.
- * The path's separators stay separators; everything else in a segment is escaped.
+ * A `files` entry as a path *inside* the repo, normalised — or `null` when it is not one.
+ *
+ * The entry is untrusted: it is whatever a checkpoint payload wrote, and the P1 schema accepts
+ * any string. `../../../../etc/passwd` on the end of a blob URL is resolved by the browser into a
+ * different repository. Restated here rather than imported from `@workledger/api-client` for the
+ * same reason `./paths.ts` restates the CLI's path rules — the wire package is the *client's*
+ * copy of the contract, and the server does not depend on it. Keep the two in step.
  */
-export function fileHref(remote: RepoRemote, file: string, sha?: string | undefined): string {
+export function repoRelativePath(file: string): string | null {
+  const raw = file.trim();
+  // A control character or a backslash: neither belongs in a repo-relative path, and both are
+  // ways to smuggle something past a reader. Checked by code point rather than by a regex range,
+  // which `no-control-regex` forbids for the same reason it is worth checking.
+  for (const character of raw) {
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f || character === "\\") return null;
+  }
+  if (raw === "") return null;
+  if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:/.test(raw)) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw)) return null;
+  const segments: string[] = [];
+  for (const segment of raw.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    // Never climb: `a/..` is only safe when `a` is a real directory rather than a link, which
+    // nothing here can know, so the refusal is on the text.
+    if (segment === "..") return null;
+    segments.push(segment);
+  }
+  return segments.length === 0 ? null : segments.join("/");
+}
+
+/**
+ * `remote.fileUrl` at `sha`, or at the default branch when the ledger line records no commit;
+ * `null` for a path that is not inside the repo. The separators stay separators; everything else
+ * in a segment is escaped.
+ */
+export function fileHref(
+  remote: RepoRemote,
+  file: string,
+  sha?: string | undefined,
+): string | null {
+  const relative = repoRelativePath(file);
+  if (relative === null) return null;
   return remote.fileUrl
     .replace("{ref}", encodeURIComponent(sha === undefined || sha === "" ? DEFAULT_REF : sha))
-    .replace("{path}", file.split("/").map(encodeURIComponent).join("/"));
+    .replace("{path}", relative.split("/").map(encodeURIComponent).join("/"));
 }
 
 /**

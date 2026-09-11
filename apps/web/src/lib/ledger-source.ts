@@ -62,7 +62,13 @@ import type {
   Workspace,
 } from "@workledger/api-client";
 
-export { commitHref, editorHref, fileHref, isSuggested } from "@workledger/api-client";
+export {
+  commitHref,
+  editorHref,
+  fileHref,
+  isSuggested,
+  repoRelativePath,
+} from "@workledger/api-client";
 export type {
   Actor,
   BackfillEstimate,

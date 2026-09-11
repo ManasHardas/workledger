@@ -104,26 +104,83 @@ export type EditorScheme = "vscode" | "cursor" | "none";
  */
 export const DEFAULT_REF = "HEAD";
 
+/**
+ * A `files` entry as a path *inside* the repo, normalised — or `null` when it is not one.
+ *
+ * The entry is untrusted: it is whatever a checkpoint payload wrote, and the P1 schema accepts
+ * any string. Appended to a blob URL, `../../../../etc/passwd` is resolved by the browser into a
+ * *different repository*; appended to `vscode://file/<root>` it opens an arbitrary local file. So
+ * the check lives here, in the builders, rather than in one view: every caller inherits it, and a
+ * path that does not survive gets no URL at all.
+ *
+ * Refused: an absolute path, a `~` home path, a Windows or UNC path, anything with a backslash or
+ * a scheme, a control character, and any `..` that climbs past the root — including one reached
+ * through a directory that may itself be a link, which is why `a/b/../../..` is refused on the
+ * text rather than resolved against the filesystem this code cannot see.
+ */
+export function repoRelativePath(file: string): string | null {
+  const raw = file.trim();
+  // A control character or a backslash: neither belongs in a repo-relative path, and both are
+  // ways to smuggle something past a reader. Checked by code point rather than by a regex range,
+  // which `no-control-regex` forbids for the same reason it is worth checking.
+  for (const character of raw) {
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f || character === "\\") return null;
+  }
+  if (raw === "") return null;
+  if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:/.test(raw)) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw)) return null;
+  const segments: string[] = [];
+  for (const segment of raw.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      // Never climb: the root is the boundary, and `a/..` is only safe if `a` is a real
+      // directory rather than a link — which nothing here can know.
+      return null;
+    }
+    segments.push(segment);
+  }
+  return segments.length === 0 ? null : segments.join("/");
+}
+
 /** `remote.commitUrl` with the commit id in it. */
 export function commitHref(remote: RepoRemote, sha: string): string {
   return remote.commitUrl.replace("{sha}", encodeURIComponent(sha));
 }
 
-/** `remote.fileUrl` at `sha`, or at the default branch when the line records no commit. */
-export function fileHref(remote: RepoRemote, file: string, sha?: string | undefined): string {
+/**
+ * `remote.fileUrl` at `sha`, or at the default branch when the line records no commit; `null`
+ * for a path that is not inside the repo ({@link repoRelativePath}).
+ */
+export function fileHref(
+  remote: RepoRemote,
+  file: string,
+  sha?: string | undefined,
+): string | null {
+  const relative = repoRelativePath(file);
+  if (relative === null) return null;
   return remote.fileUrl
     .replace("{ref}", encodeURIComponent(sha === undefined || sha === "" ? DEFAULT_REF : sha))
-    .replace("{path}", file.split("/").map(encodeURIComponent).join("/"));
+    .replace("{path}", relative.split("/").map(encodeURIComponent).join("/"));
 }
 
 /**
- * The `vscode://` / `cursor://` URL that opens one file, or `null` when the repo says `none` or
- * the daemon predates the field. `absolutePath` is exactly that: `repoPath` joined to the
- * ledger's repo-relative file path, which is why the session view carries the repo root.
+ * The `vscode://` / `cursor://` URL that opens one file under `repoPath`, or `null` when the repo
+ * says `none`, when the daemon predates either field, or when the path is not inside the repo.
+ *
+ * It takes the root and the relative path rather than a joined one so that the same check applies
+ * here as to a web link: a caller cannot hand it a path that has already escaped.
  */
-export function editorHref(editor: EditorScheme | undefined, absolutePath: string): string | null {
-  if (editor === undefined || editor === "none") return null;
-  return `${editor}://file${absolutePath.split("/").map(encodeURIComponent).join("/")}`;
+export function editorHref(
+  editor: EditorScheme | undefined,
+  repoPath: string | undefined,
+  file: string,
+): string | null {
+  if (editor === undefined || editor === "none" || repoPath === undefined) return null;
+  const relative = repoRelativePath(file);
+  if (relative === null) return null;
+  const absolute = `${repoPath}/${relative}`.split("/").map(encodeURIComponent).join("/");
+  return `${editor}://file${absolute}`;
 }
 
 /** `GET /api/sessions` element — api.md's `ParsedSession`, not core's. */

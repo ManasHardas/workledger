@@ -487,6 +487,31 @@ describe("session detail — commit and file links (amendment 13)", () => {
     }
   });
 
+  it("never links a file path that leaves the repo, with or without an editor", async () => {
+    const escaping = "../../../../../../etc/passwd";
+    const drawer = await openDrawer(
+      linkedSource({
+        remote: GITHUB,
+        editor: "vscode",
+        repoPath: REPO_PATH,
+        done: [{ ...DONE, files: [escaping, "/etc/hosts", "packages/server/src/remote.ts"] }],
+      }),
+    );
+    for (const bad of [escaping, "/etc/hosts"]) {
+      expect(within(drawer).queryByRole("link", { name: bad })).toBeNull();
+      expect(within(drawer).queryByRole("link", { name: `Open ${bad} in the editor` })).toBeNull();
+      // Still shown, still copyable — it is what the checkpoint recorded.
+      expect(within(drawer).getByText(bad)).toBeDefined();
+      expect(within(drawer).getByRole("button", { name: `Copy ${bad}` })).toBeDefined();
+    }
+    // The well-formed sibling in the same item is unaffected.
+    const good = "packages/server/src/remote.ts";
+    expect(within(drawer).getByRole("link", { name: good }).getAttribute("href")).toBe(
+      `${GITHUB.webBase}/blob/${DONE.commit}/${good}`,
+    );
+    expect(within(drawer).getByRole("link", { name: `Open ${good} in the editor` })).toBeDefined();
+  });
+
   it("falls back to the plain drawer on a daemon that predates the amendment", async () => {
     const drawer = await openDrawer(createSource("fixture"));
     expect(within(drawer).getByText(DONE.commit!)).toBeDefined();

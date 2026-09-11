@@ -13,7 +13,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { commitHref, fileHref, readOriginUrl, resolveRemote } from "../src/remote.js";
+import { commitHref, fileHref, readOriginUrl, repoRelativePath, resolveRemote } from "../src/remote.js";
 import { FakeOps, seedRepo } from "./helpers.js";
 import type { RepoRemote } from "../src/remote.js";
 import type { Repo } from "../src/repos.js";
@@ -128,6 +128,18 @@ describe("resolveRemote", () => {
       },
     },
     { name: "an unrecognised host", url: "git@git.acme.internal:acme/api.git", expected: null },
+    {
+      // The alias rule must not turn someone else's host into github.com: an `ssh_config` alias
+      // is one label, and a dot after the suffix means a real, different host.
+      name: "a lookalike host that merely starts like a public forge",
+      url: "git@github.com-mirror.acme.corp:acme/api.git",
+      expected: null,
+    },
+    {
+      name: "a lookalike https host",
+      url: "https://gitlab.com-evil.example/acme/api.git",
+      expected: null,
+    },
     { name: "a local path remote", url: "/srv/git/api.git", expected: null },
     { name: "a host with no path", url: "https://github.com/", expected: null },
     { name: "an empty remote", url: "", expected: null },
@@ -160,6 +172,29 @@ describe("resolveRemote", () => {
     expect(fileHref(remote, "docs/a file.md")).toBe(
       "https://github.com/ManasHardas/workledger/blob/HEAD/docs/a%20file.md",
     );
+  });
+
+  /**
+   * A `files` entry is untrusted — the P1 schema accepts any string — and the browser resolves
+   * `..` in a blob URL, so an escaping path would link to a *different repository*. The builder
+   * refuses rather than the caller, so every caller inherits the refusal.
+   */
+  it("refuses a file path that is not inside the repo", () => {
+    const remote = resolveRemote("git@github.com:ManasHardas/workledger.git")!;
+    for (const bad of [
+      "../../../../../../etc/passwd",
+      "packages/../../etc/passwd",
+      "node_modules/.bin/../../../etc/hosts",
+      "/etc/passwd",
+      "~/.ssh/id_ed25519",
+      "..\\..\\Windows",
+      "https://evil.example/x",
+      "",
+    ]) {
+      expect(fileHref(remote, bad), bad).toBeNull();
+      expect(repoRelativePath(bad), bad).toBeNull();
+    }
+    expect(repoRelativePath("./packages/./server//src")).toBe("packages/server/src");
   });
 });
 
