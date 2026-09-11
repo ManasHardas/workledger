@@ -11,8 +11,8 @@ import { createProgram, EXIT_OK, EXIT_USAGE, run } from "../src/main.js";
  * The commands `--help` must list: `open`, `stop` and `onboard` from P8
  * (docs/contracts/p8/daemon-and-api.md §CLI — `open` is also what a bare `workledger` runs), the
  * six from docs/contracts/p1/cli.md, `serve` (docs/contracts/p2/api.md) and `note` alongside the
- * now-live `backlog` (docs/contracts/p2/backlog-cli.md), and `scan`, `repair`, `backfill` and
- * `jobs` from P3 (docs/contracts/p3/cli.md).
+ * now-live `backlog` (docs/contracts/p2/backlog-cli.md), `scan`, `repair`, `backfill` and
+ * `jobs` from P3 (docs/contracts/p3/cli.md), and `index` from P8 amendment 14 (#108).
  */
 const COMMANDS = [
   "open",
@@ -28,6 +28,7 @@ const COMMANDS = [
   "backfill",
   "jobs",
   "onboard",
+  "index",
   "backlog",
   "note",
 ];
@@ -55,6 +56,8 @@ const OPTIONS: Record<string, string[]> = {
   backfill: ["--repo", "--since", "--concurrency", "--dry-run", "--yes", "--extract-fallback"],
   jobs: ["--repo", "--json", "--cancel", "--retry"],
   onboard: ["--json", "--roots", "--select", "--workspaces", "--since", "--method", "--yes"],
+  // `index` is a sub-command group; its flags, if it ever grows any, belong to `index rebuild`.
+  index: [],
   // `backlog` and `note` parse their own sub-commands and flags in `src/commands/`, so nothing
   // is registered here beyond the pass-through argument.
   backlog: [],
@@ -86,7 +89,7 @@ afterEach(() => {
 });
 
 describe("command registry", () => {
-  it("registers exactly the fifteen commands", () => {
+  it("registers exactly the sixteen commands", () => {
     expect(createProgram().commands.map((c) => c.name())).toEqual(COMMANDS);
   });
 
@@ -102,6 +105,11 @@ describe("command registry", () => {
       expect(command.options.map((option) => option.long), command.name())
         .toEqual(OPTIONS[command.name()]);
     }
+  });
+
+  it("registers `index rebuild`, the recovery path for a divergent index (#108)", () => {
+    const index = createProgram().commands.find((command) => command.name() === "index");
+    expect(index?.commands.map((command) => command.name())).toEqual(["rebuild"]);
   });
 
   it("rejects a --max-tokens value that is not a positive integer", async () => {

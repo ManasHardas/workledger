@@ -254,6 +254,20 @@ export function createProgram(exit: ExitCell = { code: EXIT_OK }): Command {
       exit.code = await onboardCommand(options);
     });
 
+  // P8 amendment 14 (docs/contracts/p8/daemon-and-api.md): the recovery path for an index a
+  // different build's migrations wrote. A sub-command group rather than a top-level verb, so the
+  // cache's other maintenance verbs have somewhere obvious to land.
+  const index = program
+    .command("index")
+    .description("maintain the local index cache; `workledger index --help` lists the actions");
+  index
+    .command("rebuild")
+    .description("move the index aside and rebuild it from every enabled repo's ledger")
+    .action(async () => {
+      const { indexRebuildCommand } = await import("./commands/index-rebuild.js");
+      exit.code = await indexRebuildCommand();
+    });
+
   // `backlog` and `note` are pass-throughs: the sub-command tables, their flags and their help
   // live in `commands/backlog.ts` and `commands/note.ts` and are parsed there, on demand. Two
   // reasons, both structural. Their option surface is wide and per-sub-command, which commander

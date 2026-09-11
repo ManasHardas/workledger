@@ -9,6 +9,7 @@
  * All paths derive from `WORKLEDGER_HOME` (docs/contracts/p1/cli.md §Global environment) so a
  * test can point the whole CLI at a temp directory and never touch the real `$HOME`.
  */
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -45,6 +46,17 @@ export const INDEX_FILENAME = "index.sqlite";
 
 /** `schema_meta` key holding the numeric id of the last applied migration. */
 export const SCHEMA_VERSION_KEY = "schema_version";
+
+/**
+ * The command that recovers from a divergent index, quoted in every divergence message.
+ *
+ * `workledger open` greps the daemon's log for this string to tell a schema failure apart from
+ * every other reason a spawned daemon might not answer, so the two must stay in step.
+ */
+export const REBUILD_COMMAND = "workledger index rebuild";
+
+/** The sentence every {@link SchemaDivergenceError} ends with. */
+export const REBUILD_HINT = `run \`${REBUILD_COMMAND}\` to rebuild it from the ledgers`;
 
 /**
  * How long a writer waits for another writer's `BEGIN IMMEDIATE` before giving up with
@@ -190,7 +202,7 @@ export interface OpenIndexOptions {
 }
 
 /** A migration file: its numeric id, its filename, and its SQL. */
-interface Migration {
+export interface Migration {
   version: number;
   name: string;
   sql: string;
@@ -202,6 +214,55 @@ export class MigrationError extends Error {
     super(message);
     this.name = "MigrationError";
   }
+}
+
+/**
+ * The on-disk index records a migration history this build cannot continue from.
+ *
+ * Raised on 2026-09-10 by a real incident: a worktree build applied a migration numbered
+ * `0006_workspaces`, the branch that merged numbered the same change `0007_workspaces`, and the
+ * merged build then tried to create a table the index already had. SQLite reported "table
+ * workspaces already exists", `serve` died, and `open` could only say the server had not
+ * answered. Everything in the index is a cache, so the answer is never a hand-edited
+ * `schema_version` — it is {@link REBUILD_COMMAND}.
+ */
+export class SchemaDivergenceError extends Error {
+  /** The migration the divergence is about — a filename, or `version <n>` when no name is known. */
+  readonly migration: string;
+  /** The specific finding, without the framing sentence or the hint. */
+  readonly detail: string;
+
+  constructor(detail: string, migration: string, options?: { cause?: unknown; file?: string }) {
+    const where = options?.file === undefined ? "the index" : `the index at ${options.file}`;
+    super(
+      `${where} was written by a different build — ${detail}; ${REBUILD_HINT}`,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "SchemaDivergenceError";
+    this.migration = migration;
+    this.detail = detail;
+  }
+
+  /** The same finding, naming the file it was found in. */
+  at(file: string): SchemaDivergenceError {
+    return new SchemaDivergenceError(this.detail, this.migration, { cause: this.cause, file });
+  }
+}
+
+/** One row of `schema_migrations`: a migration this index has already run. */
+export interface AppliedMigration {
+  version: number;
+  /** The migration's filename, as the build that applied it knew it. */
+  name: string;
+  /** sha256 of that file's SQL, hex. */
+  sha256: string;
+  /** When the row was written — the migration's own run, or the backfill that adopted it. */
+  applied_at: string;
+}
+
+/** sha256 of a migration's SQL, hex, the form `schema_migrations.sha256` holds. */
+function sqlHash(sql: string): string {
+  return createHash("sha256").update(sql, "utf8").digest("hex");
 }
 
 /**
@@ -244,19 +305,19 @@ export function readMigrations(dir: string = MIGRATIONS_DIR): Migration[] {
   return migrations;
 }
 
-/** `true` when the database already has a `schema_meta` table to read a version out of. */
-function hasSchemaMeta(db: Database.Database): boolean {
+/** `true` when the database already has a table by this name. */
+function hasTable(db: Database.Database, name: string): boolean {
   const row = db
-    .prepare<[], { name: string }>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'",
+    .prepare<[string], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
     )
-    .get();
+    .get(name);
   return row !== undefined;
 }
 
 /** The last applied migration id, or 0 for a database no migration has touched. */
 export function schemaVersion(db: Database.Database): number {
-  if (!hasSchemaMeta(db)) return 0;
+  if (!hasTable(db, "schema_meta")) return 0;
   const row = db
     .prepare<[string], { value: string }>("SELECT value FROM schema_meta WHERE key = ?")
     .get(SCHEMA_VERSION_KEY);
@@ -264,30 +325,211 @@ export function schemaVersion(db: Database.Database): number {
 }
 
 /**
- * Apply every migration newer than the recorded version, in filename order, each one with its
- * `schema_meta` bump in the same transaction: a crash mid-migration leaves the version pointing
- * at the last migration that fully committed, so the re-run resumes rather than double-applies.
+ * Create `schema_migrations` if it is missing.
  *
- * Forward only. There is no `down`; the recovery path for a bad index is to delete the file and
- * let `rebuildIndex` reconstruct it from the ledger.
+ * It is bookkeeping about the migrations, not one of them: a numbered migration could only ever
+ * be checked *after* the run that needs the check, and an index one version behind would have to
+ * be migrated before it could be inspected. Creating it here means every index — fresh, current,
+ * or years old — has the history table the moment anything opens it.
+ */
+function ensureHistoryTable(db: Database.Database): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS schema_migrations (" +
+      "version INTEGER PRIMARY KEY, name TEXT NOT NULL, sha256 TEXT NOT NULL, applied_at TEXT NOT NULL)",
+  );
+}
+
+/** Every migration this index records as applied, oldest first; empty when it records none. */
+export function appliedMigrations(db: Database.Database): AppliedMigration[] {
+  if (!hasTable(db, "schema_migrations")) return [];
+  return db
+    .prepare<[], AppliedMigration>(
+      "SELECT version, name, sha256, applied_at FROM schema_migrations ORDER BY version",
+    )
+    .all();
+}
+
+/**
+ * Adopt an index that predates the history table: record the bundled name and hash for every
+ * migration `schema_version` says has run.
+ *
+ * The names are this build's, which is the only guess available — the index never stored them.
+ * That is enough for every index that has only ever been touched by released builds, and the
+ * one it cannot vouch for (a worktree build's differently numbered migration) is caught instead
+ * when the next migration fails to apply, which is exactly the 2026-09-10 incident.
+ */
+function backfillHistory(db: Database.Database, bundled: Migration[], now: string): void {
+  const current = schemaVersion(db);
+  if (current === 0) return;
+  const insert = db.prepare<[number, string, string, string]>(
+    "INSERT INTO schema_migrations (version, name, sha256, applied_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(version) DO NOTHING",
+  );
+  db.transaction(() => {
+    for (const migration of bundled) {
+      if (migration.version > current) break;
+      insert.run(migration.version, migration.name, sqlHash(migration.sql), now);
+    }
+  }).immediate();
+}
+
+/**
+ * Compare the recorded history with the bundled files.
+ *
+ * Three findings, all of them "this index has run SQL this build does not know about":
+ * a version recorded under a different filename, a version whose recorded hash no longer matches
+ * the file, and a history (or a `schema_version`) that runs past the newest migration this build
+ * ships. Versions the bundled set simply does not reach yet are *not* a finding — that is an
+ * index mid-upgrade, and applying the rest is the whole point of {@link migrate}.
+ *
+ * @returns the divergence, or `undefined` when the history and the files agree
+ */
+export function compareHistory(
+  db: Database.Database,
+  bundled: Migration[],
+): SchemaDivergenceError | undefined {
+  const newest = bundled.at(-1);
+  if (newest === undefined) return undefined;
+  const recorded = appliedMigrations(db);
+  const byVersion = new Map(bundled.map((migration) => [migration.version, migration]));
+
+  for (const row of recorded) {
+    const migration = byVersion.get(row.version);
+    if (migration === undefined) continue;
+    if (migration.name !== row.name) {
+      return new SchemaDivergenceError(
+        `migration ${row.version} ran here as "${row.name}", but this build ships ` +
+          `"${migration.name}" at that number`,
+        row.name,
+      );
+    }
+    const hash = sqlHash(migration.sql);
+    if (hash !== row.sha256) {
+      return new SchemaDivergenceError(
+        `migration "${row.name}" ran from different SQL than this build ships ` +
+          `(recorded sha256 ${row.sha256.slice(0, 12)}, bundled ${hash.slice(0, 12)})`,
+        row.name,
+      );
+    }
+  }
+
+  const ahead = recorded.filter((row) => row.version > newest.version);
+  const first = ahead[0];
+  if (first !== undefined) {
+    return new SchemaDivergenceError(
+      `migration "${first.name}" has been applied here but this build does not ship it ` +
+        `(its newest is "${newest.name}")`,
+      first.name,
+    );
+  }
+  const current = schemaVersion(db);
+  if (current > newest.version) {
+    return new SchemaDivergenceError(
+      `it reports schema version ${current}, past the newest migration this build ships ` +
+        `("${newest.name}", version ${newest.version})`,
+      `version ${current}`,
+    );
+  }
+  return undefined;
+}
+
+/**
+ * SQLite errors that mean "this object is already here" — the signature of a migration that has
+ * effectively already run under another name. Anything else (a full disk, a locked file) is a
+ * real failure and is re-thrown untouched rather than blamed on the schema.
+ */
+const ALREADY_APPLIED = /already exists|duplicate column name/i;
+
+/**
+ * Apply every migration newer than the recorded version, in filename order, each one with its
+ * `schema_meta` bump and its `schema_migrations` row in the same transaction: a crash
+ * mid-migration leaves both pointing at the last migration that fully committed, so the re-run
+ * resumes rather than double-applies.
+ *
+ * Before anything is applied the recorded history is compared with the bundled files
+ * ({@link compareHistory}); a divergence is a {@link SchemaDivergenceError} and nothing is run.
+ * An index from before the history table is adopted first, from `schema_version`.
+ *
+ * Forward only. There is no `down`; the recovery path for a bad index is {@link REBUILD_COMMAND},
+ * which moves the file aside and lets `rebuildIndex` reconstruct it from the ledgers.
  *
  * @returns the migration names applied by this call — empty when the database was current.
+ * @throws SchemaDivergenceError when the index has run SQL this build does not have
  */
 export function migrate(db: Database.Database, dir: string = MIGRATIONS_DIR): string[] {
+  const bundled = readMigrations(dir);
+  const now = new Date().toISOString();
+  ensureHistoryTable(db);
+  backfillHistory(db, bundled, now);
+  const divergence = compareHistory(db, bundled);
+  if (divergence) throw divergence;
+
   const current = schemaVersion(db);
   const applied: string[] = [];
-  for (const migration of readMigrations(dir)) {
+  for (const migration of bundled) {
     if (migration.version <= current) continue;
-    db.transaction(() => {
-      db.exec(migration.sql);
-      db.prepare<[string, string]>(
-        "INSERT INTO schema_meta (key, value) VALUES (?, ?) " +
-          "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      ).run(SCHEMA_VERSION_KEY, String(migration.version));
-    }).immediate();
+    try {
+      db.transaction(() => {
+        db.exec(migration.sql);
+        db.prepare<[string, string]>(
+          "INSERT INTO schema_meta (key, value) VALUES (?, ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ).run(SCHEMA_VERSION_KEY, String(migration.version));
+        db.prepare<[number, string, string, string]>(
+          "INSERT INTO schema_migrations (version, name, sha256, applied_at) VALUES (?, ?, ?, ?) " +
+            "ON CONFLICT(version) DO UPDATE SET name = excluded.name, sha256 = excluded.sha256, " +
+            "applied_at = excluded.applied_at",
+        ).run(migration.version, migration.name, sqlHash(migration.sql), now);
+      }).immediate();
+    } catch (error) {
+      // The pre-history shape of the 2026-09-10 incident: an index whose `schema_version` looks
+      // ordinary but whose tables were made by a migration numbered differently. There is no
+      // record to compare, so the collision itself is the evidence.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!ALREADY_APPLIED.test(message)) throw error;
+      throw new SchemaDivergenceError(
+        `migration "${migration.name}" could not be applied (${message}), so an earlier build ` +
+          "already made that change under another name",
+        migration.name,
+        { cause: error },
+      );
+    }
     applied.push(migration.name);
   }
   return applied;
+}
+
+/**
+ * The repos and workspaces an index file has registered, read without migrating it.
+ *
+ * `workledger index rebuild` needs them from a file it has just refused to open normally — the
+ * enabled-repo list lives nowhere else — so this opens read-only, reads the two tables if they
+ * are there, and returns empty lists for anything it cannot read rather than throwing. The
+ * caller is already in the recovery path; a second failure there helps nobody.
+ */
+export function readRegistrations(file: string): { repos: string[]; workspaces: string[] } {
+  let opened: Database.Database;
+  try {
+    opened = new (databaseConstructor())(file, { readonly: true, fileMustExist: true });
+  } catch {
+    return { repos: [], workspaces: [] };
+  }
+  const db = opened;
+  try {
+    const read = (sql: string): string[] => {
+      try {
+        return db.prepare<[], { path: string }>(sql).all().map((row) => row.path);
+      } catch {
+        return [];
+      }
+    };
+    return {
+      repos: read("SELECT path FROM repos WHERE enabled != 0 ORDER BY path"),
+      workspaces: read("SELECT path FROM workspaces ORDER BY path"),
+    };
+  } finally {
+    db.close();
+  }
 }
 
 /** Columns `updateSession` is allowed to write, so a patch key can never reach SQL unchecked. */
@@ -485,6 +727,9 @@ function completeSession(session: NewSession): SessionRow {
  * Open (creating if needed) the index under `WORKLEDGER_HOME` and bring it up to the latest
  * migration. Safe to call repeatedly: migrations are keyed on `schema_meta`, so a second call on
  * an up-to-date database runs no SQL and leaves the recorded version alone.
+ *
+ * @throws SchemaDivergenceError when the file was written by a build with a different migration
+ * set; the handle is closed first, and the message names the file and {@link REBUILD_COMMAND}.
  */
 export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   const home = resolveHome(options.home);
@@ -500,7 +745,13 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
   db.pragma("synchronous = NORMAL");
   db.pragma(`busy_timeout = ${options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS}`);
 
-  migrate(db);
+  try {
+    migrate(db);
+  } catch (error) {
+    db.close();
+    // The message is what an operator reads out of `serve.log`, so it names the file it is about.
+    throw error instanceof SchemaDivergenceError ? error.at(file) : error;
+  }
 
   const insertColumns = SESSION_COLUMNS.join(", ");
   const insertPlaceholders = SESSION_COLUMNS.map((c) => `@${c}`).join(", ");
