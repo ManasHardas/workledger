@@ -26,6 +26,14 @@ backlog. Design: `docs/superpowers/specs/2026-09-09-workledger-design.md`. Decis
   PR's body (`Closes #10` on PR #22), so its issue had to be closed by hand.
 - **Never remove a worktree from inside it.** Merge and clean up from the repo root.
 - **`workledger onboard`/init must never touch a repo the operator did not select; the wizard and the CLI enforce this (P8).**
+- **ALWAYS CLEAN UP AFTER YOURSELF.** Every process, file, worktree, daemon or load an agent
+  creates is that agent's to remove before it reports. Anything deliberately spawned to generate
+  CPU or I/O load (a measurement under load, a stress run, a parallel busy loop) runs in a killed
+  process group with a hard timeout, and the agent verifies with `pgrep` that nothing survives.
+  Same for temp daemons (stop them), temp homes (remove them), review worktrees (remove them from
+  the repo root) and dev servers. On 2026-09-10 a timing measurement left fifty orphaned busy
+  loops running for an hour at load average 186 and the operator's machine overheated; they had
+  outlived their shells and were reparented to init, so nothing else would ever have reaped them.
 - **Agents never run a build against the operator's real `~/.workledger`.** Every test, review drive, and smoke uses `WORKLEDGER_HOME=$(mktemp -d)/home`; a worktree build that migrates the real index leaves it unreadable by main (2026-09-10: a pre-rebase migration made `serve` fail with "table workspaces already exists"). Only the orchestrator restarts the daemon on port 7419, from the main checkout's build.
 
 ## Orchestration (agentwaves)
