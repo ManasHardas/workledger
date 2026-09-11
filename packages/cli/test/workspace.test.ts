@@ -7,7 +7,7 @@
  * tests grow. The hook is driven in-process through `runHook`, as `hook.test.ts` drives the repo
  * path; the built binary's timing stays `hook-timing.test.ts`'s.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,12 +90,12 @@ function payload(name: string, patch: Record<string, unknown> = {}): string {
   return JSON.stringify({ ...raw, cwd: workspace, transcript_path: transcript, ...patch });
 }
 
-function hookIo(stdin: string): HookIo {
+function hookIo(stdin: string, cwd: string = workspace): HookIo {
   return {
     readStdin: () => Promise.resolve(stdin),
     stdout: (line) => void out.push(line),
     stderr: (line) => void err.push(line),
-    cwd: workspace,
+    cwd,
     env: { WORKLEDGER_HOME: indexHome },
     homeDir: home,
     now: () => new Date(clock),
@@ -359,6 +359,100 @@ describe("hook from a workspace session", () => {
     const file = readFileSync(path.join(repoA, ".workledger", "sessions", `${a.ulid}.md`), "utf8");
     expect(file).toContain("status: ended");
     expect(file).toContain("end_reason: clean");
+  });
+});
+
+describe("the Stop hook infers over the span since the last checkpoint (#130)", () => {
+  /** Bytes appended to the transcript, the way a running session grows it. */
+  function append(text: string): void {
+    writeFileSync(transcript, `${readFileSync(transcript, "utf8")}${text}`, "utf8");
+  }
+
+  /** A checkpoint landing on one repo row: the `checkpoints` row and the counter reset. */
+  function checkpointIn(ulid: string): void {
+    const db = openIndex({ home: indexHome });
+    try {
+      db.appendCheckpoint(ulid, (n) => ({ at: clock.toISOString(), transcript_offset: statSync(transcript).size, turns: n, trigger: "bytes" }));
+      db.resetAfterCheckpoint(ulid, { offset: statSync(transcript).size, at: clock.toISOString() });
+    } finally {
+      db.close();
+    }
+  }
+
+  /** Block, checkpoint the one repo the block asked for, and let the next Stop close the window. */
+  async function checkpointTheBlock(root: string): Promise<void> {
+    const row = rows().find((session) => session.repo_path === root) as SessionRow;
+    checkpointIn(row.ulid);
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_OK);
+    expect(rows()[0]).toMatchObject({ blocks_since_checkpoint: 0, scan_counts: null });
+  }
+
+  it("asks for the repo the span touched, alone, and falls back to the previous checkpoint's repos when the span touched none", async () => {
+    await enableWorkspace();
+    await runHook("SessionStart", hookIo(payload("session-start-startup")));
+
+    // Span 1: a write in repo A.
+    append(toolLine("Edit", { file_path: `${repoA}/a.ts` }));
+    tick(21);
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+    expect(err.join("\n")).toContain(`--repo ${repoA}`);
+    await checkpointTheBlock(repoA);
+    // The window starts at the checkpoint: the counts of span 1 are gone, not carried forward.
+    expect((rows()[0] as SessionRow).scan_offset).toBe(statSync(transcript).size);
+
+    // Span 2: a write in repo B and nothing in repo A — the block asks for B alone.
+    append(toolLine("Write", { file_path: `${repoB}/b.ts`, content: "x" }));
+    tick(21);
+    err.length = 0;
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+    const second = err.join("\n");
+    expect(second).toContain(`--repo ${repoB}`);
+    expect(second).not.toContain(`--repo ${repoA}`);
+    expect(JSON.parse((rows()[0] as SessionRow).context_repos as string).map((entry: { root: string }) => entry.root)).toEqual([repoB]);
+    await checkpointTheBlock(repoB);
+
+    // Span 3: nothing under either repo — the fallback is the repos the previous checkpoint used.
+    append(`${JSON.stringify({ type: "assistant", text: "nothing under any repo" })}\n`);
+    tick(21);
+    err.length = 0;
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+    const third = err.join("\n");
+    expect(third).toContain(`--repo ${repoB}`);
+    expect(third).not.toContain(`--repo ${repoA}`);
+    expect(JSON.parse((rows()[0] as SessionRow).context_repos as string)).toEqual([
+      { root: repoB, references: 0, writes: 0, pathInputs: 0, fallback: true },
+    ]);
+  });
+
+  it("falls back to the start directory's repo when the span qualifies nothing and no checkpoint has landed", async () => {
+    await enableWorkspace();
+    // A session started inside repo A, not in the workspace folder.
+    expect(await runHook("SessionStart", hookIo(payload("session-start-startup", { cwd: repoA }), repoA))).toBe(EXIT_OK);
+    append(`${JSON.stringify({ type: "assistant", text: "only talked" })}\n`);
+    tick(21);
+    err.length = 0;
+
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false", { cwd: repoA }), repoA))).toBe(EXIT_BLOCK);
+
+    const row = rows().find((session) => session.repo_path === repoA) as SessionRow;
+    expect(rows().map((session) => session.repo_path)).toEqual([repoA]);
+    expect(JSON.parse(row.context_repos as string)).toEqual([{ root: repoA, references: 0, writes: 0, pathInputs: 0, fallback: true }]);
+    // The session is about its own repo alone, so this is the P1 block byte for byte.
+    expect(err.join("\n")).toContain("Run exactly one command");
+  });
+
+  it("does not block for a repo the span only named in shell text — no write, no path-tool input", async () => {
+    await enableWorkspace();
+    await runHook("SessionStart", hookIo(payload("session-start-startup")));
+    // Six references to repo B from `grep` command text: over MIN_REFERENCES, but Bash text
+    // alone never attributes (#110), and nothing else in the span qualifies.
+    append(Array.from({ length: 6 }, (_, i) => toolLine("Bash", { command: `grep -rn needle ${repoB}/src/${i}.ts` })).join(""));
+    tick(21);
+
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_OK);
+
+    expect(rows().map((session) => session.repo_path)).toEqual([workspace]);
+    expect(JSON.parse((rows()[0] as SessionRow).scan_counts as string)[repoB]).toEqual({ references: 6, writes: 0, pathInputs: 0 });
   });
 });
 

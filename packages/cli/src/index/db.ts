@@ -691,6 +691,10 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         // The pending trigger is consumed by the checkpoint that stamped it: a repaired session
         // that keeps running must not stamp `repair` on every later checkpoint too.
         pending_trigger: null,
+        // The Stop hook infers over the span since the last checkpoint (#130), so the span — the
+        // scan cursor and the counts it has accumulated — starts over where the window does.
+        scan_offset: reset.offset,
+        scan_counts: null,
         updated_at: reset.at,
       });
     },
@@ -703,6 +707,10 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         turns_since_checkpoint: 0,
         last_offset: reset.offset,
         last_checkpoint_at: reset.at,
+        // A fresh window is a fresh span for the Stop hook's inference (#130), as after a
+        // checkpoint: what the abandoned block was about is not what the next one is about.
+        scan_offset: reset.offset,
+        scan_counts: null,
         updated_at: reset.at,
       });
     },

@@ -364,8 +364,9 @@ describe("hook Stop files by content (amendment 10, #116)", () => {
     const other = enabledSibling(fixture, "other");
     const ulid = await start(fixture);
     // Every path the session touched is under the sibling: it is about the sibling, not about
-    // the repo it was started in.
-    writeFileSync(fixture.transcript, toolLine(fixture.root, "Write", { file_path: path.join(other, "notes.md"), content: "x" }) + "x".repeat(100_000), "utf8");
+    // the repo it was started in. The tool call is appended, so it is inside the span the block
+    // infers over — the bytes since the window opened (#130), not the transcript's history.
+    writeFileSync(fixture.transcript, readFileSync(fixture.transcript, "utf8") + toolLine(fixture.root, "Write", { file_path: path.join(other, "notes.md"), content: "x" }) + "x".repeat(100_000), "utf8");
     fixture.stderr.length = 0;
 
     expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
@@ -402,7 +403,7 @@ describe("hook Stop files by content (amendment 10, #116)", () => {
     const fixture = setup();
     const other = enabledSibling(fixture, "other");
     await start(fixture);
-    writeFileSync(fixture.transcript, toolLine(fixture.root, "Edit", { file_path: path.join(other, "a.ts"), old_string: "a", new_string: "b" }) + "x".repeat(100_000), "utf8");
+    writeFileSync(fixture.transcript, readFileSync(fixture.transcript, "utf8") + toolLine(fixture.root, "Edit", { file_path: path.join(other, "a.ts"), old_string: "a", new_string: "b" }) + "x".repeat(100_000), "utf8");
     expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_BLOCK);
     const db = openIndex({ home: fixture.home });
     try {
