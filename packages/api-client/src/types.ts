@@ -82,6 +82,107 @@ export interface UnparsedLine {
   line: string;
 }
 
+/**
+ * The repo's web base, resolved from its `origin` remote — P8 amendment 13. The two URLs are
+ * templates, not functions, because they cross the wire: `{sha}` in `commitUrl`, `{ref}` and
+ * `{path}` in `fileUrl`. Substitute them with {@link commitHref} and {@link fileHref} rather
+ * than by hand, so a view never has to know a host's URL shape.
+ */
+export interface RepoRemote {
+  host: "github" | "gitlab" | "bitbucket" | "other";
+  webBase: string;
+  commitUrl: string;
+  fileUrl: string;
+}
+
+/** `editor:` from the repo config: which editor an open-in-editor control targets (amendment 13). */
+export type EditorScheme = "vscode" | "cursor" | "none";
+
+/**
+ * The ref a file link uses when the ledger line records no commit — all three hosts resolve
+ * `HEAD` to the default branch, which is what keeps this a string operation with no lookup.
+ */
+export const DEFAULT_REF = "HEAD";
+
+/**
+ * A `files` entry as a path *inside* the repo, normalised — or `null` when it is not one.
+ *
+ * The entry is untrusted: it is whatever a checkpoint payload wrote, and the P1 schema accepts
+ * any string. Appended to a blob URL, `../../../../etc/passwd` is resolved by the browser into a
+ * *different repository*; appended to `vscode://file/<root>` it opens an arbitrary local file. So
+ * the check lives here, in the builders, rather than in one view: every caller inherits it, and a
+ * path that does not survive gets no URL at all.
+ *
+ * Refused: an absolute path, a `~` home path, a Windows or UNC path, anything with a backslash or
+ * a scheme, a control character, and any `..` that climbs past the root — including one reached
+ * through a directory that may itself be a link, which is why `a/b/../../..` is refused on the
+ * text rather than resolved against the filesystem this code cannot see.
+ */
+export function repoRelativePath(file: string): string | null {
+  const raw = file.trim();
+  // A control character or a backslash: neither belongs in a repo-relative path, and both are
+  // ways to smuggle something past a reader. Checked by code point rather than by a regex range,
+  // which `no-control-regex` forbids for the same reason it is worth checking.
+  for (const character of raw) {
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f || character === "\\") return null;
+  }
+  if (raw === "") return null;
+  if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:/.test(raw)) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw)) return null;
+  const segments: string[] = [];
+  for (const segment of raw.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      // Never climb: the root is the boundary, and `a/..` is only safe if `a` is a real
+      // directory rather than a link — which nothing here can know.
+      return null;
+    }
+    segments.push(segment);
+  }
+  return segments.length === 0 ? null : segments.join("/");
+}
+
+/** `remote.commitUrl` with the commit id in it. */
+export function commitHref(remote: RepoRemote, sha: string): string {
+  return remote.commitUrl.replace("{sha}", encodeURIComponent(sha));
+}
+
+/**
+ * `remote.fileUrl` at `sha`, or at the default branch when the line records no commit; `null`
+ * for a path that is not inside the repo ({@link repoRelativePath}).
+ */
+export function fileHref(
+  remote: RepoRemote,
+  file: string,
+  sha?: string | undefined,
+): string | null {
+  const relative = repoRelativePath(file);
+  if (relative === null) return null;
+  return remote.fileUrl
+    .replace("{ref}", encodeURIComponent(sha === undefined || sha === "" ? DEFAULT_REF : sha))
+    .replace("{path}", relative.split("/").map(encodeURIComponent).join("/"));
+}
+
+/**
+ * The `vscode://` / `cursor://` URL that opens one file under `repoPath`, or `null` when the repo
+ * says `none`, when the daemon predates either field, or when the path is not inside the repo.
+ *
+ * It takes the root and the relative path rather than a joined one so that the same check applies
+ * here as to a web link: a caller cannot hand it a path that has already escaped.
+ */
+export function editorHref(
+  editor: EditorScheme | undefined,
+  repoPath: string | undefined,
+  file: string,
+): string | null {
+  if (editor === undefined || editor === "none" || repoPath === undefined) return null;
+  const relative = repoRelativePath(file);
+  if (relative === null) return null;
+  const absolute = `${repoPath}/${relative}`.split("/").map(encodeURIComponent).join("/");
+  return `${editor}://file${absolute}`;
+}
+
 /** `GET /api/sessions` element — api.md's `ParsedSession`, not core's. */
 export interface ParsedSession {
   frontmatter: SessionFrontmatter;
@@ -96,6 +197,16 @@ export interface ParsedSession {
   startedIn: string | null;
   /** The repos the session is about, best first (P8 amendment 10); empty when never inferred. */
   about: string[];
+  /**
+   * Amendment 13, on `GET /api/sessions/:ulid` only: the repo's resolved web base, `null` when
+   * it has no remote or one on a host the daemon does not know. Absent — not `null` — on a
+   * daemon from before the amendment and on the list route, where a view shows no link at all.
+   */
+  remote?: RepoRemote | null;
+  /** Amendment 13: which editor the open-in-editor control targets, or `none`. */
+  editor?: EditorScheme;
+  /** Amendment 13: the repo root, absolute — `files` are relative to it. */
+  repoPath?: string;
 }
 
 /** `GET /api/backlog` element. */
@@ -152,6 +263,10 @@ export interface Repo {
   openNotes: number;
   lastHookAt: string | null;
   health: "ok" | "warn" | "broken";
+  /** Amendment 13: the repo's web base, or `null`; absent on a daemon from before it. */
+  remote?: RepoRemote | null;
+  /** Amendment 13: `editor:` from the repo config. */
+  editor?: EditorScheme;
 }
 
 /**

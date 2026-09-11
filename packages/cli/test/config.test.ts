@@ -45,6 +45,8 @@ describe("config.yaml", () => {
       auto_commit: false,
       // P5 additions (docs/contracts/p5/config-and-identities.md).
       identities_file: "identities.yaml",
+      // P8 amendment 13: which editor the UI's open-in-editor control targets.
+      editor: "vscode",
       // P3 additions (docs/contracts/p3/cli.md §Config additions). `Config` is loose, so
       // these pass through validation unchanged and reach the fast loader as typed values.
       backfill: { since: "14d", concurrency: 2, seconds_per_session: 45 },
@@ -110,5 +112,33 @@ describe("config.yaml", () => {
     expect(check.present).toBe(false);
     expect(check.errors).toEqual([]);
     expect(check.file).toBe(configFile(check.file.replace(/\/\.workledger\/config\.yaml$/, "")));
+  });
+});
+
+/**
+ * P8 amendment 13 — `editor: "vscode" | "cursor" | "none"`, default `vscode`. It decides only
+ * what the UI offers next to a file path; nothing in the CLI acts on it, so an unreadable value
+ * falls back to the default like every other key the fast loader cannot make sense of.
+ */
+describe("config.yaml editor", () => {
+  it("defaults to vscode when the file has no editor line", () => {
+    expect(DEFAULT_CONFIG.editor).toBe("vscode");
+    expect(loadConfig(repoWith("schema_version: 1\n")).editor).toBe("vscode");
+    expect(DEFAULT_CONFIG_YAML).toContain("editor: vscode");
+  });
+
+  it("reads an override", () => {
+    for (const editor of ["cursor", "none", "vscode"] as const) {
+      expect(loadConfig(repoWith(`editor: ${editor}\n`)).editor).toBe(editor);
+    }
+    expect(loadConfig(repoWith('editor: "cursor"\n')).editor).toBe("cursor");
+  });
+
+  it("falls back to the default for a value that is not one of the three", async () => {
+    const root = repoWith("editor: emacs\n");
+    expect(loadConfig(root).editor).toBe("vscode");
+    // And `doctor`'s full validation says so rather than passing it through.
+    const check = await checkConfigFile(root);
+    expect(check.errors.some((line) => line.startsWith("editor:"))).toBe(true);
   });
 });

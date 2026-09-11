@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildBrief } from "@workledger/core/brief";
 import { parseItem } from "@workledger/core/render/backlog";
-import { parseSessionText } from "@workledger/core/render/session";
+import { doneBriefText, parseSessionText } from "@workledger/core/render/session";
 
 import { appFor, seedRepo } from "./helpers.js";
 import type { TempRepo } from "./helpers.js";
@@ -198,7 +198,9 @@ describe("GET /api/brief", () => {
       .map((n) => parseSessionText(readFileSync(path.join(repo.sessions, n), "utf8")))
       .map((parsed) => ({
         frontmatter: parsed.frontmatter,
-        done: parsed.done.map((line) => line.text),
+        // The brief carries the gist *and* the detail (amendment 11), through the same core
+        // helper the route uses; mapping `text` alone pinned this to pre-amendment checkpoints.
+        done: parsed.done.map(doneBriefText),
         notes: parsed.notes.map((line) => ({ type: line.type, text: line.text, cp: line.cp })),
       }));
 

@@ -76,6 +76,14 @@ export type AutoCommitMode = (typeof AUTO_COMMIT_MODES)[number];
 /** `false` is the off position; the contract spells the key `false | on_checkpoint | on_session_end`. */
 export type AutoCommit = false | AutoCommitMode;
 
+/**
+ * `editor` (docs/contracts/p8/daemon-and-api.md amendment 13): which editor the UI offers a file
+ * to, or `none` for no such control. The CLI never launches anything from it; it is read here
+ * only so the server can hand it to the UI alongside the repo's absolute path.
+ */
+export const EDITORS = ["vscode", "cursor", "none"] as const;
+export type Editor = (typeof EDITORS)[number];
+
 /** The subset of `config.yaml` the hook state machine reads. */
 export interface HookConfig {
   /**
@@ -104,6 +112,8 @@ export interface HookConfig {
   auto_commit: AutoCommit;
   /** `identities.yaml`, relative to `.workledger/` — the email → display-name map. */
   identities_file: string;
+  /** Which editor the UI's open-in-editor control targets (P8 amendment 13). */
+  editor: Editor;
   /** `workledger backfill` defaults (docs/contracts/p3/cli.md §Config additions). */
   backfill: BackfillSettings;
   /** `workledger repair --extract` model and rates. */
@@ -120,6 +130,7 @@ export const DEFAULT_CONFIG: HookConfig = {
   private_paths: [],
   auto_commit: false,
   identities_file: "identities.yaml",
+  editor: "vscode",
   backfill: { since: "14d", concurrency: 2, seconds_per_session: 45 },
   extract: { model: "claude-haiku-4-5", usd_per_million_input: 1, usd_per_million_output: 5 },
 };
@@ -135,6 +146,7 @@ export function defaultConfig(): HookConfig {
     private_paths: [...DEFAULT_CONFIG.private_paths],
     auto_commit: DEFAULT_CONFIG.auto_commit,
     identities_file: DEFAULT_CONFIG.identities_file,
+    editor: DEFAULT_CONFIG.editor,
     backfill: { ...DEFAULT_CONFIG.backfill },
     extract: { ...DEFAULT_CONFIG.extract },
   };
@@ -323,6 +335,13 @@ function autoCommit(value: Scalar | undefined, fallback: AutoCommit): AutoCommit
   return false;
 }
 
+/** One of {@link EDITORS}, or `fallback` — an editor nobody ships is not a reason to fail. */
+function editor(value: Scalar | undefined, fallback: Editor): Editor {
+  if (value === undefined) return fallback;
+  const text = unquote(value).toLowerCase();
+  return (EDITORS as readonly string[]).includes(text) ? (text as Editor) : fallback;
+}
+
 /** `true` / `false`, or `fallback` for anything else. */
 function boolean(value: Scalar | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -359,6 +378,7 @@ export function parseConfig(text: string): HookConfig {
     private_paths: sequence(entries.get("private_paths")) ?? [...defaults.private_paths],
     auto_commit: autoCommit(entries.get("auto_commit")?.value, defaults.auto_commit),
     identities_file: nonEmpty(entries.get("identities_file")?.value, defaults.identities_file),
+    editor: editor(entries.get("editor")?.value, defaults.editor),
     backfill: {
       since: sinceWindow(backfill["since"], defaults.backfill.since),
       concurrency: positiveInt(backfill["concurrency"], defaults.backfill.concurrency),
@@ -488,6 +508,8 @@ export function configYaml(harnesses: readonly string[] = DEFAULT_CONFIG.harness
     // `on_checkpoint` or `on_session_end`; `identities_file` is relative to `.workledger/`.
     "auto_commit: false",
     "identities_file: identities.yaml",
+    // P8 amendment 13. Read by the UI, never by the CLI: `vscode`, `cursor` or `none`.
+    "editor: vscode",
     // P3 (docs/contracts/p3/cli.md §Config additions). Emitted so the knobs are discoverable in
     // the file rather than only in the contract; both blocks fall back to the same values when a
     // repo enabled before P3 has no line for them.

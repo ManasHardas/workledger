@@ -79,7 +79,8 @@ describe("GET /api/repos", () => {
     expect(body.map((r) => r.path)).toEqual([alpha.root, beta.root].sort());
     for (const repo of body) {
       expect(Object.keys(repo).sort()).toEqual(
-        ["enabled", "harnesses", "health", "id", "lastHookAt", "name", "openBacklog", "openNotes", "path", "sessions7d"].sort(),
+        // `remote` and `editor` are amendment 13's two additions to the row.
+        ["editor", "enabled", "harnesses", "health", "id", "lastHookAt", "name", "openBacklog", "openNotes", "path", "remote", "sessions7d"].sort(),
       );
       expect(repo.id).toBe(repoId(repo.path));
       expect(repo.name).toBe(path.basename(repo.path));
@@ -88,6 +89,9 @@ describe("GET /api/repos", () => {
       expect(repo.health).toBe("ok");
       expect(typeof repo.sessions7d).toBe("number");
       expect(typeof repo.lastHookAt).toBe("string");
+      // A temp repo has no `.git`, so it has no remote and the UI shows copy controls.
+      expect(repo.remote).toBeNull();
+      expect(repo.editor).toBe("vscode");
     }
     // Counts come from the ledger, so they agree with the per-repo reads.
     const first = body[0]!;

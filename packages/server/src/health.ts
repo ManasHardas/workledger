@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { Config } from "@workledger/core/schema";
+import type { Editor } from "@workledger/core/schema";
 import { parse } from "yaml";
 
 import { fileMtimeMs, fileSize, listMarkdown, readTextFile } from "./paths.js";
@@ -164,6 +165,9 @@ export function checkConfig(paths: LedgerPaths): { valid: boolean; problems: str
 /** What `harnesses:` means when `config.yaml` is absent or invalid — the schema's own default. */
 const DEFAULT_HARNESSES: readonly string[] = ["claude-code"];
 
+/** What `editor:` means for such a file — the schema's default (amendment 13). */
+const DEFAULT_EDITOR: Editor = "vscode";
+
 /**
  * `harnesses:` from `.workledger/config.yaml` — the schema's default, `["claude-code"]`, when
  * the file is absent, unreadable or invalid, which is what `hook` assumes for such a file too.
@@ -179,6 +183,24 @@ export function configHarnesses(paths: LedgerPaths): string[] {
   }
   const result = Config.safeParse(doc ?? {});
   return result.success ? [...result.data.harnesses] : [...DEFAULT_HARNESSES];
+}
+
+/**
+ * `editor:` from `.workledger/config.yaml` — P8 amendment 13. Falls back to the schema's
+ * `vscode` for a file that is absent, unreadable or invalid, exactly as `harnesses` does: an
+ * unreadable config must never take a control away from the operator.
+ */
+export function configEditor(paths: LedgerPaths): Editor {
+  const text = readTextFile(paths.config);
+  if (text === undefined) return DEFAULT_EDITOR;
+  let doc: unknown;
+  try {
+    doc = parse(text);
+  } catch {
+    return DEFAULT_EDITOR;
+  }
+  const result = Config.safeParse(doc ?? {});
+  return result.success ? result.data.editor : DEFAULT_EDITOR;
 }
 
 /** Newest mtime among the session files, ISO 8601, or `null` when there are none. */

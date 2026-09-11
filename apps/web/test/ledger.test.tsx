@@ -392,3 +392,130 @@ describe("session detail — gists, drawer, notes split, memory", () => {
     expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
   });
 });
+
+/**
+ * Amendment 13 (docs/contracts/p8/daemon-and-api.md): the drawer's commit id and file paths are
+ * links out to the repo's host when `origin` resolved to one, an identifier with a copy control
+ * when it did not, and — independently of either — an open-in-editor control while the repo's
+ * `editor` is not `none`.
+ */
+describe("session detail — commit and file links (amendment 13)", () => {
+  const DONE = ENDED_SESSION.done[0]!;
+  const REPO_PATH = "/Users/m/Projects/workledger";
+  const GITHUB = {
+    host: "github" as const,
+    webBase: "https://github.com/ManasHardas/workledger",
+    commitUrl: "https://github.com/ManasHardas/workledger/commit/{sha}",
+    fileUrl: "https://github.com/ManasHardas/workledger/blob/{ref}/{path}",
+  };
+
+  /** The ended session with the amendment's three fields patched onto it. */
+  function linkedSource(patch: object) {
+    const base = createSource("fixture");
+    return Object.assign(Object.create(base) as LedgerSource, {
+      async getSession(ulid: string) {
+        return { ...(await base.getSession(ulid)), ...patch };
+      },
+    });
+  }
+
+  async function openDrawer(source: LedgerSource) {
+    renderLedger(source);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(DONE.text) }));
+    return screen.findByRole("dialog");
+  }
+
+  beforeEach(() => {
+    window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
+  });
+
+  it("links the commit id and every file at that commit, in a new tab", async () => {
+    const drawer = await openDrawer(
+      linkedSource({ remote: GITHUB, editor: "none", repoPath: REPO_PATH }),
+    );
+
+    const commit = within(drawer).getByRole("link", { name: DONE.commit! });
+    expect(commit.getAttribute("href")).toBe(`${GITHUB.webBase}/commit/${DONE.commit}`);
+    expect(commit.getAttribute("target")).toBe("_blank");
+    expect(commit.getAttribute("rel")).toBe("noreferrer noopener");
+
+    for (const file of DONE.files!) {
+      const link = within(drawer).getByRole("link", { name: file });
+      expect(link.getAttribute("href")).toBe(`${GITHUB.webBase}/blob/${DONE.commit}/${file}`);
+      expect(link.getAttribute("rel")).toBe("noreferrer noopener");
+    }
+    // `editor: none` means no second control next to a file.
+    expect(within(drawer).queryByRole("link", { name: /Open .* in the editor/ })).toBeNull();
+  });
+
+  it("links a file at the default branch when the item records no commit", async () => {
+    const drawer = await openDrawer(
+      linkedSource({
+        remote: GITHUB,
+        editor: "none",
+        repoPath: REPO_PATH,
+        done: [{ ...DONE, commit: undefined }],
+      }),
+    );
+    const file = DONE.files![0]!;
+    expect(within(drawer).getByRole("link", { name: file }).getAttribute("href")).toBe(
+      `${GITHUB.webBase}/blob/HEAD/${file}`,
+    );
+    expect(within(drawer).getByText("None")).toBeDefined();
+  });
+
+  it("shows the identifier with a copy control and no link when the repo has no known remote", async () => {
+    const drawer = await openDrawer(
+      linkedSource({ remote: null, editor: "none", repoPath: REPO_PATH }),
+    );
+    expect(within(drawer).queryByRole("link", { name: DONE.commit! })).toBeNull();
+    expect(within(drawer).getByText(DONE.commit!)).toBeDefined();
+    expect(within(drawer).getByRole("button", { name: `Copy ${DONE.commit}` })).toBeDefined();
+    for (const file of DONE.files!) {
+      expect(within(drawer).queryByRole("link", { name: file })).toBeNull();
+      expect(within(drawer).getByRole("button", { name: `Copy ${file}` })).toBeDefined();
+    }
+  });
+
+  it("offers an open-in-editor control per file, built from the absolute local path", async () => {
+    const drawer = await openDrawer(
+      linkedSource({ remote: null, editor: "cursor", repoPath: REPO_PATH }),
+    );
+    for (const file of DONE.files!) {
+      const open = within(drawer).getByRole("link", { name: `Open ${file} in the editor` });
+      expect(open.getAttribute("href")).toBe(`cursor://file${REPO_PATH}/${file}`);
+    }
+  });
+
+  it("never links a file path that leaves the repo, with or without an editor", async () => {
+    const escaping = "../../../../../../etc/passwd";
+    const drawer = await openDrawer(
+      linkedSource({
+        remote: GITHUB,
+        editor: "vscode",
+        repoPath: REPO_PATH,
+        done: [{ ...DONE, files: [escaping, "/etc/hosts", "packages/server/src/remote.ts"] }],
+      }),
+    );
+    for (const bad of [escaping, "/etc/hosts"]) {
+      expect(within(drawer).queryByRole("link", { name: bad })).toBeNull();
+      expect(within(drawer).queryByRole("link", { name: `Open ${bad} in the editor` })).toBeNull();
+      // Still shown, still copyable — it is what the checkpoint recorded.
+      expect(within(drawer).getByText(bad)).toBeDefined();
+      expect(within(drawer).getByRole("button", { name: `Copy ${bad}` })).toBeDefined();
+    }
+    // The well-formed sibling in the same item is unaffected.
+    const good = "packages/server/src/remote.ts";
+    expect(within(drawer).getByRole("link", { name: good }).getAttribute("href")).toBe(
+      `${GITHUB.webBase}/blob/${DONE.commit}/${good}`,
+    );
+    expect(within(drawer).getByRole("link", { name: `Open ${good} in the editor` })).toBeDefined();
+  });
+
+  it("falls back to the plain drawer on a daemon that predates the amendment", async () => {
+    const drawer = await openDrawer(createSource("fixture"));
+    expect(within(drawer).getByText(DONE.commit!)).toBeDefined();
+    expect(within(drawer).queryByRole("link", { name: DONE.commit! })).toBeNull();
+    for (const file of DONE.files!) expect(within(drawer).getByText(file)).toBeDefined();
+  });
+});

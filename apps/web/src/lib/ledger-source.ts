@@ -62,7 +62,13 @@ import type {
   Workspace,
 } from "@workledger/api-client";
 
-export { isSuggested } from "@workledger/api-client";
+export {
+  commitHref,
+  editorHref,
+  fileHref,
+  isSuggested,
+  repoRelativePath,
+} from "@workledger/api-client";
 export type {
   Actor,
   BackfillEstimate,
@@ -72,6 +78,7 @@ export type {
   DiscoverResult,
   DoctorEntry,
   EditPatch,
+  EditorScheme,
   Excerpt,
   ExtractEstimate,
   ExtractionEstimate,
@@ -102,6 +109,7 @@ export type {
   PlanResult,
   Repo,
   RepoCandidate,
+  RepoRemote,
   ResumeEstimate,
   RunInput,
   RunResult,
