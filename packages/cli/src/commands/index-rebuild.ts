@@ -13,7 +13,7 @@
  * it, so job history is gone. The command says so in as many words rather than leaving the
  * operator to notice.
  */
-import { existsSync, renameSync } from "node:fs";
+import { closeSync, existsSync, openSync, renameSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -38,23 +38,60 @@ export function processIo(): IndexRebuildIo {
   };
 }
 
-/** The suffix a moved-aside index gets: `index.sqlite.20260910T193000Z.bak`. */
-export function backupSuffix(at: Date = new Date()): string {
-  return `${at.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}.bak`;
+/** The timestamp a moved-aside index is named after: `20260910T193000Z`. */
+export function backupStamp(at: Date = new Date()): string {
+  return at.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
 /**
- * Move `file` and its WAL sidecars aside under one suffix.
+ * How many same-second backups one home will hold before the command gives up. A rebuild is
+ * seconds of work, so reaching this means something is looping, and silently picking name 1001
+ * would be worse than saying so.
+ */
+const MAX_BACKUPS_PER_SECOND = 100;
+
+/**
+ * Claim an unused backup name for `file`, atomically.
+ *
+ * The stamp has one-second resolution and a rebuild takes well under a second, so two rebuilds
+ * back to back produce the same stamp — and a bare `renameSync` onto an existing name replaces
+ * it silently. That destroys the previous backup, which is precisely the one that matters when
+ * the rebuild being retried is a rebuild that was interrupted (#141 review).
+ *
+ * `wx` is an exclusive create: it fails with `EEXIST` rather than truncating, so the name is
+ * either ours or somebody else's, never quietly shared. The empty placeholder it leaves is what
+ * the rename then replaces — our own file, so nothing of the operator's is overwritten.
+ *
+ * @returns the claimed path, e.g. `index.sqlite.20260910T193000Z.bak`, then `…Z-2.bak`
+ */
+function claimBackupName(file: string, stamp: string): string {
+  for (let attempt = 1; attempt <= MAX_BACKUPS_PER_SECOND; attempt += 1) {
+    const target = `${file}.${stamp}${attempt === 1 ? "" : `-${attempt}`}.bak`;
+    try {
+      closeSync(openSync(target, "wx"));
+      return target;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error(
+    `${MAX_BACKUPS_PER_SECOND} backups of ${file} already exist for ${stamp}; move some away first`,
+  );
+}
+
+/**
+ * Move `file` and its WAL sidecars aside under one claimed name.
  *
  * The `-wal` goes with it: a SQLite database separated from its write-ahead log is missing
  * whatever had not been checkpointed, and the point of keeping the old file at all is that the
- * operator can still open it.
+ * operator can still open it. The sidecar names derive from the claimed one, so they cannot
+ * collide either.
  *
  * @returns the new path of the database itself, or `undefined` when there was no file to move
  */
-function moveAside(file: string, suffix: string): string | undefined {
+function moveAside(file: string, stamp: string): string | undefined {
   if (!existsSync(file)) return undefined;
-  const target = `${file}.${suffix}`;
+  const target = claimBackupName(file, stamp);
   renameSync(file, target);
   for (const sidecar of ["-wal", "-shm"]) {
     if (existsSync(`${file}${sidecar}`)) renameSync(`${file}${sidecar}`, `${target}${sidecar}`);
@@ -86,7 +123,7 @@ export async function indexRebuildCommand(io: IndexRebuildIo = processIo()): Pro
 
   let moved: string | undefined;
   try {
-    moved = moveAside(file, backupSuffix());
+    moved = moveAside(file, backupStamp());
   } catch (error) {
     io.stderr(
       `workledger index rebuild: could not move ${file} aside: ` +
@@ -94,7 +131,11 @@ export async function indexRebuildCommand(io: IndexRebuildIo = processIo()): Pro
     );
     return EXIT_USAGE;
   }
-  say(moved === undefined ? `no index at ${file} yet; building a fresh one` : `moved the old index to ${moved}`);
+  say(
+    moved === undefined
+      ? `no index at ${file} yet; building a fresh one`
+      : `moved the old index aside; the backup is at ${moved}`,
+  );
 
   let db;
   try {

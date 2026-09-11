@@ -334,11 +334,12 @@ describe("workledger index rebuild", () => {
     expect(await indexRebuildCommand(io)).toBe(EXIT_OK);
 
     const said = io.out.join("\n");
-    expect(said).toContain("moved the old index to");
+    expect(said).toContain("the backup is at");
     expect(said).toContain("job history is not recoverable");
     const backups = readdirSync(home).filter((name) => name.endsWith(".bak"));
     expect(backups).toHaveLength(1);
     expect(backups[0]).toMatch(/^index\.sqlite\.\d{8}T\d{6}Z\.bak$/);
+    expect(said).toContain(path.join(home, backups[0]!));
 
     // The rebuilt index opens, and lists the same repos and sessions the ledgers hold.
     const db = openIndex({ home });
@@ -356,6 +357,35 @@ describe("workledger index rebuild", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("never overwrites an earlier backup, even two rebuilds inside one second", async () => {
+    // The stamp has one-second resolution and a rebuild is milliseconds of work, so this is the
+    // ordinary case, not a race: re-running after an interrupted rebuild is exactly when the
+    // earlier backup is the only copy of the pre-rebuild index (#141 review).
+    const alpha = repoWithLedger("alpha");
+    divergentIndex();
+    seedRegistrations(alpha, path.join(dir, "workspace"));
+    mark("first");
+
+    const first = rebuildIo();
+    expect(await indexRebuildCommand(first)).toBe(EXIT_OK);
+    mark("second");
+    const second = rebuildIo();
+    expect(await indexRebuildCommand(second)).toBe(EXIT_OK);
+
+    const backups = readdirSync(home).filter((name) => name.endsWith(".bak")).sort();
+    expect(backups).toHaveLength(2);
+    expect(new Set(backups).size).toBe(2);
+    // Each run named the file it actually wrote, and each backup still holds its own marker.
+    for (const [io, name] of [
+      [first, backups.find((b) => marker(b) === "first")],
+      [second, backups.find((b) => marker(b) === "second")],
+    ] as const) {
+      expect(name, io.out.join("\n")).toBeDefined();
+      expect(io.out.join("\n")).toContain(path.join(home, name!));
+    }
+    expect(existsSync(indexFile())).toBe(true);
   });
 
   it("builds a fresh index when there is none, and says so", async () => {
@@ -384,14 +414,43 @@ describe("workledger index rebuild", () => {
   });
 });
 
+/** A `better-sqlite3` handle on a raw index file, for the writes `openIndex` would refuse. */
+function raw(file: string): import("better-sqlite3").Database {
+  const require_ = createRequire(import.meta.url);
+  const Database = require_("better-sqlite3") as typeof import("better-sqlite3");
+  return new Database(file);
+}
+
+/** Stamp the live index with a marker table, so a backup can be told from every other backup. */
+function mark(text: string): void {
+  const db = raw(indexFile());
+  try {
+    db.exec("CREATE TABLE IF NOT EXISTS rebuild_marker (tag TEXT)");
+    db.exec("DELETE FROM rebuild_marker");
+    db.prepare<[string]>("INSERT INTO rebuild_marker (tag) VALUES (?)").run(text);
+  } finally {
+    db.close();
+  }
+}
+
+/** The marker inside one backup file, or `undefined` when it carries none. */
+function marker(backup: string): string | undefined {
+  const db = raw(path.join(home, backup));
+  try {
+    return db.prepare<[], { tag: string }>("SELECT tag FROM rebuild_marker").get()?.tag;
+  } catch {
+    return undefined;
+  } finally {
+    db.close();
+  }
+}
+
 /** Write `repos` and `workspaces` rows straight into the divergent file, as `init` would have. */
 function seedRegistrations(repoPath: string, workspacePath: string): void {
   const now = new Date().toISOString();
   // The file cannot be opened through `openIndex` any more, which is the whole point; the
   // registrations still have to come out of it, so they go in the same way they will come out.
-  const require_ = createRequire(import.meta.url);
-  const Database = require_("better-sqlite3") as typeof import("better-sqlite3");
-  const db = new Database(path.join(home, INDEX_FILENAME));
+  const db = raw(path.join(home, INDEX_FILENAME));
   try {
     db.prepare("INSERT INTO repos (path, enabled, added_at, updated_at) VALUES (?, 1, ?, ?)").run(
       repoPath,
