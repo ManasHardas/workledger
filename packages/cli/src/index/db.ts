@@ -691,9 +691,14 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         // The pending trigger is consumed by the checkpoint that stamped it: a repaired session
         // that keeps running must not stamp `repair` on every later checkpoint too.
         pending_trigger: null,
-        // The Stop hook infers over the span since the last checkpoint (#130), so the span — the
-        // scan cursor and the counts it has accumulated — starts over where the window does.
-        scan_offset: reset.offset,
+        // The Stop hook infers over the span since the last checkpoint (#130): the counts are
+        // everything the scan has attributed to the span that just ended, and the checkpoint is
+        // what recorded it, so they go. The cursor does not go with them — it may only ever move
+        // back, never forward: the allow path does not scan, so the bytes between the last block
+        // and this checkpoint are unread, and advancing over them would drop the work they carry
+        // (a write in another repo after the block) with nothing recording it. `reset.offset` is
+        // the transcript's current size, so the minimum is also the rotation clamp.
+        scan_offset: Math.min(selectByUlid.get(ulid)?.scan_offset ?? reset.offset, reset.offset),
         scan_counts: null,
         updated_at: reset.at,
       });
@@ -707,10 +712,9 @@ export function openIndex(options: OpenIndexOptions = {}): IndexDb {
         turns_since_checkpoint: 0,
         last_offset: reset.offset,
         last_checkpoint_at: reset.at,
-        // A fresh window is a fresh span for the Stop hook's inference (#130), as after a
-        // checkpoint: what the abandoned block was about is not what the next one is about.
-        scan_offset: reset.offset,
-        scan_counts: null,
+        // The span and its counts are deliberately left alone (#130): a give-up records nothing,
+        // so the work the abandoned block asked about is still unrecorded and the next block must
+        // still ask for it. The span ends at a checkpoint and nowhere else.
         updated_at: reset.at,
       });
     },

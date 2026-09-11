@@ -11,16 +11,19 @@
  * alone gets the P1 block, byte for byte. Repos the span never touched are never written to.
  *
  * **The span, not the file (#130).** A block asks about the work since the last checkpoint, so
- * that is what it infers over: the bytes from the window's start (`last_offset`, reset by a
- * checkpoint and by the give-up rule) to the file's current size, scanned incrementally through
- * `scan_offset` and accumulated in `scan_counts`, both of which a window reset clears with it. A
- * repo with no evidence in the span is not listed, however much of the transcript before it was
- * about that repo — the noise #130 reports is a span that changed one repo being asked to check
- * in three. Discovery, history and the backfill infer over the whole transcript, which is what
- * they are about ({@link inferContext}); only the live Stop hook narrows to the span. Where the
- * span qualifies nothing, the fallback is the repos the previous checkpoint used, and failing
- * that the repo containing the start directory — a workspace-started session with neither is
- * allowed.
+ * that is what it infers over: the counts `scan_counts` has accumulated since that checkpoint,
+ * plus the bytes after `scan_offset`, which is how far the scan has actually read. A checkpoint
+ * clears the counts — it is what recorded that work — and is the only thing that does; the
+ * cursor is not cleared with them and may only ever move back (`resetAfterCheckpoint`), because
+ * the allow path does not scan and the bytes between the last block and the checkpoint are
+ * unread: advancing over them would drop the work they carry. A give-up leaves both alone: it
+ * records nothing, so its block's work is still owed. A repo with no evidence in the span is not
+ * listed, however much of the transcript before it was about that repo — the noise #130 reports
+ * is a span that changed one repo being asked to check in three. Discovery, history and the
+ * backfill infer over the whole transcript, which is what they are about
+ * ({@link inferContext}); only the live Stop hook narrows to the span. Where the span qualifies
+ * nothing, the fallback is the repos the previous checkpoint used, and failing that the repo
+ * containing the start directory — a workspace-started session with neither is allowed.
  *
  * Reached only by a lazy import from `hook.ts`, on the block ladder, so the Stop allow path
  * pays nothing for the scanner (the timing budget of hooks-claude-code.md).
@@ -78,17 +81,6 @@ export function contextOf(ctx: Context, session: SessionRow, counts: Record<stri
 }
 
 /**
- * The first byte of the span this Stop infers over (#130): the start of the checkpoint window
- * (`last_offset`), or how far the scan has already read within it (`scan_offset`) — whichever is
- * further in. The two are set together by every window reset, so they differ only while a span
- * is being read a Stop at a time, and the maximum is also what a row from before the reset
- * cleared its counts wants: never re-read bytes already folded into `scan_counts`.
- */
-export function spanStart(session: SessionRow): number {
-  return Math.max(session.scan_offset, session.last_offset);
-}
-
-/**
  * The repos the previous checkpoint of this harness session used — the fallback for a span that
  * qualifies nothing (#130). The row's recorded `context_repos` is the inference the last block
  * asked on; a root of it counts here only while it is still enabled and its per-repo row has a
@@ -126,17 +118,18 @@ export function spanContext(ctx: Context, session: SessionRow, counts: Record<st
 /**
  * Scan the bytes of the span not yet read, fold them into the row, and infer the context repos.
  *
- * The scanner is `scanTranscript` from {@link spanStart} to the file's current size; the tallies
- * are added to the row's `scan_counts`, so each Stop reads only what arrived since the last one
- * and the counts never reach back past the last checkpoint (#130). Relative paths in the new
- * bytes resolve against the session's start directory. The inference is {@link spanContext},
- * recorded as `context_repos` on the row and as `about` in the repo row's frontmatter; a
- * transcript that cannot be read leaves the counts as they were.
+ * The scanner is `scanTranscript` from `scan_offset` to the file's current size; the tallies are
+ * added to the row's `scan_counts`, so each Stop reads only what arrived since the last one and
+ * every byte is read exactly once, whether or not a checkpoint landed in between. The counts
+ * themselves reach back no further than the last checkpoint, which cleared them (#130). Relative
+ * paths in the new bytes resolve against the session's start directory. The inference is
+ * {@link spanContext}, recorded as `context_repos` on the row and as `about` in the repo row's
+ * frontmatter; a transcript that cannot be read leaves the counts as they were.
  */
 export async function scanContext(ctx: Context, session: SessionRow, transcript: string | undefined): Promise<ContextRepo[]> {
   const roots = candidatesFor(ctx, session);
   const counts = readCounts(session);
-  const start = spanStart(session);
+  const start = session.scan_offset;
   if (transcript !== undefined && roots.length > 0) {
     try {
       const size = statSync(transcript).size;

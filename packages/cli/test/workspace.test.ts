@@ -441,6 +441,61 @@ describe("the Stop hook infers over the span since the last checkpoint (#130)", 
     expect(err.join("\n")).toContain("Run exactly one command");
   });
 
+  it("keeps the work written between the block and the checkpoint: the cursor never passes unscanned bytes", async () => {
+    await enableWorkspace();
+    await runHook("SessionStart", hookIo(payload("session-start-startup")));
+    // A write in repo A blocks; the agent then writes twice in repo B and only afterwards files
+    // A's checkpoint. The allow path never scans, so B's writes are still unread when the window
+    // closes — the reset may clear the counts, but it must not step over those bytes.
+    append(toolLine("Edit", { file_path: `${repoA}/a.ts` }));
+    tick(21);
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+    const scanned = (rows()[0] as SessionRow).scan_offset;
+    append(toolLine("Write", { file_path: `${repoB}/one.md`, content: "x" }) + toolLine("Edit", { file_path: `${repoB}/two.md` }));
+    await checkpointTheBlock(repoA);
+    expect(rows()[0]).toMatchObject({ scan_offset: scanned, scan_counts: null });
+
+    tick(21);
+    err.length = 0;
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+
+    const text = err.join("\n");
+    expect(text).toContain(`--repo ${repoB}`);
+    expect(text).not.toContain(`--repo ${repoA}`);
+    expect(JSON.parse((rows()[0] as SessionRow).context_repos as string)).toEqual([
+      { root: repoB, references: 2, writes: 2, pathInputs: 2 },
+    ]);
+  });
+
+  it("keeps the span's counts across a give-up: nothing was recorded, so the next block still asks for that repo", async () => {
+    await enableWorkspace();
+    await runHook("SessionStart", hookIo(payload("session-start-startup")));
+    // A write in repo A blocks; the agent ignores it for a full turn threshold while writing in
+    // repo B, and the give-up rule starts the window over. No checkpoint landed anywhere, so A's
+    // write is still owed and the next block must ask for it beside B's.
+    append(toolLine("Edit", { file_path: `${repoA}/a.ts` }));
+    tick(21);
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+    for (let i = 0; i < 16; i += 1) {
+      append(toolLine("Write", { file_path: `${repoB}/${i}.md`, content: "x" }));
+      expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_OK);
+    }
+    expect(rows()[0]).toMatchObject({ blocks_since_checkpoint: 0 });
+    expect((rows()[0] as SessionRow).scan_counts).not.toBeNull();
+
+    tick(21);
+    err.length = 0;
+    expect(await runHook("Stop", hookIo(payload("stop-hook-active-false")))).toBe(EXIT_BLOCK);
+
+    const text = err.join("\n");
+    expect(text).toContain(`--repo ${repoB}`);
+    expect(text).toContain(`--repo ${repoA}`);
+    expect(JSON.parse((rows()[0] as SessionRow).context_repos as string)).toEqual([
+      { root: repoB, references: 16, writes: 16, pathInputs: 16 },
+      { root: repoA, references: 1, writes: 1, pathInputs: 1 },
+    ]);
+  });
+
   it("does not block for a repo the span only named in shell text — no write, no path-tool input", async () => {
     await enableWorkspace();
     await runHook("SessionStart", hookIo(payload("session-start-startup")));

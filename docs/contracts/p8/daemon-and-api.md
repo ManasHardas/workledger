@@ -161,11 +161,14 @@ where they conflict; the write rule stays for roots other than the fallback.
 **The span the live Stop hook infers over (#130, 2026-09-10).** Discovery, history, the backfill
 and the repair job infer over the **whole transcript** — they describe a session that is over, and
 that is what it was about. The **live Stop hook** infers over the **span since the session's last
-checkpoint** alone: the bytes from the start of the current checkpoint window (`sessions.last_offset`,
-which a checkpoint and the give-up rule reset) to the transcript's current size, read incrementally
-through `sessions.scan_offset` and accumulated in `sessions.scan_counts`, both of which a window
-reset clears with it. The block asks about the work since the last checkpoint, so only evidence from
-that work attributes: a repo with no qualifying evidence in the span is **not** listed, however much
+checkpoint** alone: what `sessions.scan_counts` has accumulated since that checkpoint, plus the
+bytes after `sessions.scan_offset`, which is how far the scan has actually read. A checkpoint
+clears the counts — it is what recorded that work — and nothing else does; it never advances the
+cursor past what was read (`scan_offset := min(scan_offset, size)`), because the allow path does
+not scan and the bytes between the last block and the checkpoint are unread, so stepping over them
+would drop the work they carry. The give-up rule leaves cursor and counts alone: it records
+nothing, so its block's work is still owed and the next block still asks for it. The block asks
+about the work since the last checkpoint, so only evidence from that work attributes: a repo with no qualifying evidence in the span is **not** listed, however much
 of the transcript before the span was about it, and a repo whose whole span contribution is reads —
 no write and no path-tool input or `cd` — never blocks a Stop. Where the span qualifies nothing, the
 fallback is the repos **the previous checkpoint used** (the row's recorded `context_repos`, limited
