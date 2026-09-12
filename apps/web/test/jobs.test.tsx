@@ -200,7 +200,7 @@ describe("jobs view", () => {
     // The session is a link into the Ledger, not 26 characters of text.
     expect(
       within(panel).getByRole("link", { name: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE" }).getAttribute("href"),
-    ).toBe(`#/r/${REPO}/ledger/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
+    ).toBe(`#/r/${REPO}/session/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
   });
 
   it("shows an empty state, a loading state and a read failure", async () => {
@@ -530,9 +530,10 @@ describe("repair and the extraction consent", () => {
     render(<App source={source} />);
     // Amendment 11: one list, no scope tabs — the crashed session is listed straight away.
     // Scoped to the session list: the left nav's "Folders with sessions" section is a list too.
-    const rows = within(await screen.findByRole("list", { name: /Sessions, open first/ })).getAllByRole(
-      "listitem",
-    );
+    await screen.findByRole("list", { name: /Sessions, open first/ });
+    const rows = screen
+      .getAllByRole("list", { name: /^Sessions/ })
+      .flatMap((list) => within(list).getAllByRole("listitem"));
     expect(within(rows[0]!).getByRole("button", { name: "Repair session…" })).toBeDefined();
     expect(within(rows[1]!).queryByRole("button", { name: "Repair session…" })).toBeNull();
     window.location.hash = "";

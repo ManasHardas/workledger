@@ -8,6 +8,7 @@ import type { LedgerEvent, LedgerSource, ParsedSession, SessionQuery } from "../
 import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
 import { openFirst } from "../src/features/ledger/session-list.js";
 import { LedgerView } from "../src/routes/ledger.js";
+import { SessionView } from "../src/routes/session.js";
 
 /** The first fixture repo: the Ledger's links and detail route live under `#/r/<id>/ledger`. */
 const REPO = "0123456789ab";
@@ -52,6 +53,20 @@ function renderLedger(source: LedgerSource = createSource("fixture")) {
   );
 }
 
+/**
+ * The detail is its own destination now (P9): `#/r/<id>/session/<ulid>`. The Ledger renders the
+ * list and nothing else, so a detail test mounts the Session view.
+ */
+function renderSession(source: LedgerSource = createSource("fixture")) {
+  return render(
+    <RepoIdProvider id={REPO}>
+      <SourceProvider source={source}>
+        <SessionView />
+      </SourceProvider>
+    </RepoIdProvider>,
+  );
+}
+
 /** Amendment 11: one list, no scope tabs — every session is on screen from the first render. */
 const SESSION_LIST = /Sessions, open first/;
 
@@ -68,8 +83,11 @@ describe("ledger list", () => {
     expect(screen.queryAllByRole("tab")).toEqual([]);
     expect(screen.queryByRole("tablist")).toBeNull();
 
-    const list = await screen.findByRole("list", { name: SESSION_LIST });
-    const cards = within(list).getAllByRole("listitem");
+    // The list is grouped by day now, so the cards live across one list per day.
+    await screen.findByRole("list", { name: SESSION_LIST });
+    const cards = screen
+      .getAllByRole("list", { name: /^Sessions/ })
+      .flatMap((list) => within(list).getAllByRole("listitem"));
     expect(cards).toHaveLength(FIXTURE_SESSIONS.length);
 
     const newestFirst = [...FIXTURE_SESSIONS].sort((a, b) =>
@@ -90,10 +108,10 @@ describe("ledger list", () => {
     expect(card.textContent).toContain(frontmatter.harness);
     expect(card.textContent).toContain(frontmatter.status);
     expect(card.textContent).toContain(`${frontmatter.checkpoints.length} checkpoints`);
-    expect(card.textContent).toContain(
-      `${OPEN_SESSION.done.length} done · ${OPEN_SESSION.remaining.length} remaining`,
-    );
-    expect(card.textContent).toContain("Started 2026-09-09 08:02 UTC");
+    // The row speaks the redesign's vocabulary: outcomes recorded, and what is still open.
+    expect(card.textContent).toContain(`${OPEN_SESSION.done.length} outcome`);
+    expect(card.textContent).toContain(`${OPEN_SESSION.remaining.length} open`);
+    expect(card.textContent).toContain("2026-09-09 08:02 UTC");
   });
 
   it("filters the list through listSessions({ q })", async () => {
@@ -132,18 +150,18 @@ describe("ledger list", () => {
     await screen.findByText(ENDED_SESSION.goal!);
 
     fireEvent.keyDown(window, { key: "j" });
-    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/session/${OPEN_SESSION.frontmatter.id}`);
 
     fireEvent.keyDown(window, { key: "j" });
     expect(document.activeElement?.getAttribute("href")).toBe(
-      `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`,
+      `#/r/${REPO}/session/${ENDED_SESSION.frontmatter.id}`,
     );
 
     fireEvent.keyDown(window, { key: "k" });
-    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(document.activeElement?.getAttribute("href")).toBe(`#/r/${REPO}/session/${OPEN_SESSION.frontmatter.id}`);
 
     fireEvent.keyDown(window, { key: "Enter" });
-    expect(window.location.hash).toBe(`#/r/${REPO}/ledger/${OPEN_SESSION.frontmatter.id}`);
+    expect(window.location.hash).toBe(`#/r/${REPO}/session/${OPEN_SESSION.frontmatter.id}`);
   });
 
   it("leaves j and k alone while the search box has focus", async () => {
@@ -220,7 +238,7 @@ describe("open sessions first, then the rest (amendment 11)", () => {
     // The keyboard cursor walks the list as rendered, so `j` reaches the open session first.
     fireEvent.keyDown(window, { key: "j" });
     expect(document.activeElement?.getAttribute("href")).toBe(
-      `#/r/${REPO}/ledger/${OLDER_OPEN.frontmatter.id}`,
+      `#/r/${REPO}/session/${OLDER_OPEN.frontmatter.id}`,
     );
   });
 });
@@ -230,9 +248,10 @@ describe("session detail", () => {
     window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
-  it("shows Goal, Done, Remaining and Notes with their [cp n] markers", async () => {
-    renderLedger();
-    for (const heading of ["Goal", "Done", "Remaining", "Notes"]) {
+  it("shows Goal, What happened, Remaining and Notes with their [cp n] markers", async () => {
+    renderSession();
+    // The Done section became the recap (P9): a few points over the outcomes, not a flat list.
+    for (const heading of ["Goal", "What happened", "Remaining", "Notes"]) {
       expect(await screen.findByRole("heading", { name: heading, level: 3 })).toBeDefined();
     }
 
@@ -248,7 +267,7 @@ describe("session detail", () => {
   });
 
   it("shows where the session started and what it is about in the header (P8 amendment 10)", async () => {
-    renderLedger();
+    renderSession();
     await screen.findByText(ENDED_SESSION.goal!);
     const header = screen.getByText(/started in/);
     expect(header.textContent).toContain(`started in ${ENDED_SESSION.startedIn}`);
@@ -256,14 +275,14 @@ describe("session detail", () => {
   });
 
   it("renders each Remaining line as → WL-id (rel)", async () => {
-    renderLedger();
+    renderSession();
     for (const line of ENDED_SESSION.remaining) {
       expect(await screen.findByText(`→ ${line.ref} (${line.rel})`)).toBeDefined();
     }
   });
 
   it("shows the provenance panel for every checkpoint plus the P3 notice", async () => {
-    renderLedger();
+    renderSession();
     expect(await screen.findByRole("heading", { name: "Provenance", level: 3 })).toBeDefined();
 
     for (const checkpoint of ENDED_SESSION.frontmatter.checkpoints) {
@@ -284,7 +303,7 @@ describe("session detail", () => {
         return { ...session, unparsed: [{ section: "notes" as const, line: "- hand-typed line" }] };
       },
     });
-    renderLedger(withUnparsed);
+    renderSession(withUnparsed);
     expect(await screen.findByText(/notes: - hand-typed line/)).toBeDefined();
   });
 });
@@ -313,17 +332,20 @@ describe("session detail — gists, drawer, notes split, memory", () => {
     window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
-  it("shows only the gist per Done item; detail, commit and files stay out of the page", async () => {
-    renderLedger();
+  it("shows only the gist per outcome; detail, files and verification stay out of the page", async () => {
+    renderSession();
     expect(await screen.findByRole("button", { name: new RegExp(DONE.text) })).toBeDefined();
     expect(screen.queryByText(DONE.detail!)).toBeNull();
-    expect(screen.queryByText(DONE.commit!)).toBeNull();
     for (const file of DONE.files!) expect(screen.queryByText(file)).toBeNull();
     expect(screen.queryByText(DONE.verified!)).toBeNull();
+    // The commit is the exception, and a deliberate one: the recap groups outcomes *by* their
+    // evidence, so a point names the commit it covers. Everything that commit touched — the
+    // detail, the files, whether tests ran — still waits in the drawer (rule 3).
+    expect(screen.getAllByText(DONE.commit!).length).toBeGreaterThan(0);
   });
 
   it("opens a drawer with detail, commit, files, verified and the checkpoint stamp on click", async () => {
-    renderLedger();
+    renderSession();
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(DONE.text) }));
     const drawer = await screen.findByRole("dialog");
     expect(within(drawer).getByText(DONE.detail!)).toBeDefined();
@@ -340,7 +362,7 @@ describe("session detail — gists, drawer, notes split, memory", () => {
   });
 
   it("renders a pre-amendment checkpoint's text as the gist and says the drawer has no detail", async () => {
-    renderLedger(
+    renderSession(
       sessionSource((session) => ({
         done: session.done.map((line) => ({ ...line, detail: undefined })),
       })),
@@ -353,7 +375,7 @@ describe("session detail — gists, drawer, notes split, memory", () => {
   });
 
   it("shows blocker, question and decision notes; discovery waits behind For agents (n)", async () => {
-    renderLedger();
+    renderSession();
     for (const note of ENDED_SESSION.notes.filter((line) => line.type !== "discovery")) {
       expect(await screen.findByText(note.text)).toBeDefined();
     }
@@ -367,13 +389,13 @@ describe("session detail — gists, drawer, notes split, memory", () => {
   });
 
   it("omits the For agents disclosure when no note is a discovery", async () => {
-    renderLedger(sessionSource((session) => ({ notes: session.notes.filter((n) => n.type !== "discovery") })));
+    renderSession(sessionSource((session) => ({ notes: session.notes.filter((n) => n.type !== "discovery") })));
     expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
     expect(screen.queryByRole("button", { name: /For agents/ })).toBeNull();
   });
 
   it("shows a Memory section with each entry and its file badge", async () => {
-    renderLedger();
+    renderSession();
     expect(await screen.findByRole("heading", { name: "Memory", level: 3 })).toBeDefined();
     for (const entry of ENDED_SESSION.memory) {
       expect(screen.getByText(entry.text)).toBeDefined();
@@ -382,13 +404,13 @@ describe("session detail — gists, drawer, notes split, memory", () => {
   });
 
   it("hides Memory when the session has no entries or predates the field", async () => {
-    renderLedger(sessionSource(() => ({ memory: [] })));
+    renderSession(sessionSource(() => ({ memory: [] })));
     expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
     expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
     cleanup();
 
     // A daemon older than amendment 11 sends no `memory` key at all; the view must not throw.
-    renderLedger(sessionSource(() => ({ memory: undefined as unknown as [] })));
+    renderSession(sessionSource(() => ({ memory: undefined as unknown as [] })));
     expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
     expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
   });
@@ -421,7 +443,7 @@ describe("session detail — commit and file links (amendment 13)", () => {
   }
 
   async function openDrawer(source: LedgerSource) {
-    renderLedger(source);
+    renderSession(source);
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(DONE.text) }));
     return screen.findByRole("dialog");
   }
