@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TRANSCRIPT_GONE } from "../src/features/ledger/excerpt-viewer.js";
 import { createSource } from "../src/lib/ledger-source.js";
 import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
-import { LedgerView } from "../src/routes/ledger.js";
+import { SessionView } from "../src/routes/session.js";
 
 import type { Excerpt, LedgerSource } from "../src/lib/ledger-source.js";
 
@@ -43,11 +43,11 @@ function provenanceSource(
 }
 
 function renderDetail(source: LedgerSource) {
-  window.location.hash = `#/r/${REPO}/ledger/${SESSION}`;
+  window.location.hash = `#/r/${REPO}/session/${SESSION}`;
   return render(
     <RepoIdProvider id={REPO}>
       <SourceProvider source={source}>
-        <LedgerView />
+        <SessionView />
       </SourceProvider>
     </RepoIdProvider>,
   );

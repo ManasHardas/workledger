@@ -80,23 +80,23 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("Needs you, machine-wide", () => {
-  it("lists every open note with its repo, linking to that repo's own Needs you", async () => {
-    renderAt("#/needs", machine().source);
-    await screen.findByRole("heading", { name: "Needs you", level: 2 });
+describe("Review, machine-wide", () => {
+  it("lists every open note with its repo, linking to that repo’s own Review", async () => {
+    renderAt("#/review", machine().source);
+    await screen.findByRole("heading", { name: "Review", level: 2 });
     for (const note of FIXTURE_NOTES_ALL) {
       expect(await screen.findByText(note.text)).toBeDefined();
     }
-    const first = screen.getByRole("link", { name: `${WORKLEDGER.name} — Needs you` });
-    expect(first.getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "needs"));
-    expect(screen.getByRole("link", { name: `${DASHERO.name} — Needs you` }).getAttribute("href")).toBe(
-      repoHref(DASHERO.id, "needs"),
+    const first = screen.getByRole("link", { name: `${WORKLEDGER.name} — Review` });
+    expect(first.getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
+    expect(screen.getByRole("link", { name: `${DASHERO.name} — Review` }).getAttribute("href")).toBe(
+      repoHref(DASHERO.id, "review"),
     );
   });
 
   it("resolves a row through the source of the row's repo", async () => {
     const live = machine();
-    renderAt("#/needs", live.source);
+    renderAt("#/review", live.source);
     const dashero = FIXTURE_NOTES_ALL.find((note) => note.repo.id === DASHERO.id)!;
 
     // The row's text opens the panel; the decision is written there (#134, rule 3).
@@ -117,7 +117,7 @@ describe("Needs you, machine-wide", () => {
       [WORKLEDGER.id]: [{ email, name: "Ada Lovelace", dome_user: null }],
       [DASHERO.id]: [{ email, name: "Grace Hopper", dome_user: null }],
     };
-    renderAt("#/needs", machine({}, (id) => ({ listIdentities: () => Promise.resolve(names[id] ?? []) })).source);
+    renderAt("#/review", machine({}, (id) => ({ listIdentities: () => Promise.resolve(names[id] ?? []) })).source);
 
     // One panel at a time, so each repo's mapping is checked against its own row.
     const shown: string[] = [];
@@ -133,7 +133,7 @@ describe("Needs you, machine-wide", () => {
   it("re-reads on notes.changed from any repo, and shows the empty state", async () => {
     let notes = FIXTURE_NOTES_ALL;
     const live = machine({ listAllNotes: () => Promise.resolve(notes) });
-    renderAt("#/needs", live.source);
+    renderAt("#/review", live.source);
     expect(await screen.findByText(FIXTURE_NOTES_ALL[0]!.text)).toBeDefined();
 
     notes = [];
@@ -158,7 +158,7 @@ describe("Jobs, machine-wide", () => {
     fireEvent.click(within(row).getByRole("button", { name: FIXTURE_JOBS_ALL[0]!.session_ulid }));
     const panel = await screen.findByRole("dialog");
     expect(within(panel).getByRole("link", { name: FIXTURE_JOBS_ALL[0]!.session_ulid }).getAttribute("href")).toBe(
-      repoHref(DASHERO.id, "ledger", FIXTURE_JOBS_ALL[0]!.session_ulid),
+      repoHref(DASHERO.id, "session", FIXTURE_JOBS_ALL[0]!.session_ulid),
     );
     expect(screen.queryByRole("button", { name: "Scan now" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Backfill/ })).toBeNull();

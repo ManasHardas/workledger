@@ -27,8 +27,8 @@ export function RepoCard({ repo, now }: { repo: Repo; now: number }) {
       <span className="hidden min-w-0 flex-1 basis-0 truncate font-mono text-xs text-subtle-foreground md:inline">
         {repo.path}
       </span>
-      <Count repo={repo} view="next" value={repo.openBacklog} noun="open backlog" />
-      <Count repo={repo} view="needs" value={repo.openNotes} noun="open notes" />
+      <Count repo={repo} view="review" value={repo.openBacklog} noun="open backlog" />
+      <Count repo={repo} view="review" value={repo.openNotes} noun="open notes" />
       <Count repo={repo} view="ledger" value={repo.sessions7d} noun="sessions in the last 7 days" />
       <RowMeta className="hidden sm:inline">{formatRelative(repo.lastHookAt, now)}</RowMeta>
     </ListRow>
@@ -46,7 +46,7 @@ function Count({
   noun,
 }: {
   repo: Repo;
-  view: "ledger" | "next" | "needs";
+  view: "ledger" | "review";
   value: number;
   noun: string;
 }) {

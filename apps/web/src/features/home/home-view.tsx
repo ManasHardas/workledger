@@ -99,10 +99,10 @@ function NeedsYouGroup({ notes }: { notes: Async<NoteAcrossRepos[]> }) {
   return (
     <RowSection
       id="home-needs"
-      title="Needs you"
+      title="Review"
       count={notes.state === "ready" ? list.length : undefined}
-      countHref={machineHref("needs")}
-      countLabel={`${String(list.length)} open questions and blockers — Needs you`}
+      countHref={machineHref("review")}
+      countLabel={`${String(list.length)} open questions and blockers — Review`}
     >
       <AsyncPanel
         result={notes}
@@ -110,13 +110,13 @@ function NeedsYouGroup({ notes }: { notes: Async<NoteAcrossRepos[]> }) {
         empty="Nothing is waiting on you."
       >
         {(value) => (
-          <RowList aria-label="Needs you">
+          <RowList aria-label="Review">
             {value.slice(0, PREVIEW).map((note) => (
               <ListRow key={`${note.repo.id}-${note.session}-${String(note.cp)}-${String(note.index)}`}>
                 <Badge variant={note.type === "blocker" ? "destructive" : "accent"} className="shrink-0">
                   {note.type}
                 </Badge>
-                <RowTitle href={repoHref(note.repo.id, "needs")}>{note.text}</RowTitle>
+                <RowTitle href={repoHref(note.repo.id, "review")}>{note.text}</RowTitle>
                 <RowMeta>{note.repo.name}</RowMeta>
               </ListRow>
             ))}

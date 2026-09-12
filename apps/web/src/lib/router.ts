@@ -4,23 +4,32 @@ import { useCallback, useSyncExternalStore } from "react";
  * Hash routing, per design spec §14 — the app is served from a random local port and, as a Dome
  * card, from an iframe whose path it does not control, so the route has to live after the `#`.
  *
- * P8 (docs/contracts/p8/daemon-and-api.md §Wizard routes): one daemon serves every repo on the
- * machine, so the P2 views moved under `#/r/<repoId>/…`. The map:
+ * P9 (2026-09-12, operator): the nav is four destinations in this order — Home, Ledger, Session,
+ * Review — and the map is:
  *
- *   #/                        Home — one card per repo
+ *   #/                        Home — every tracked project on the machine
  *   #/onboarding              the wizard (#79)
- *   #/needs, #/jobs           machine-wide Needs you and Jobs, a repo per row
- *   #/r/<id>/<view>[/…]       one repo's Ledger, Next, Needs you, Jobs or Health
+ *   #/review, #/jobs          machine-wide Review and Jobs, a repo per row
+ *   #/r/<id>/ledger           one repo's sessions over time
+ *   #/r/<id>/session[/<ulid>] one session; without a ulid, that repo's most recent
+ *   #/r/<id>/review           what needs a human: answers owed, and proposals to triage
+ *   #/r/<id>/jobs, /health    kept as routes, off the nav (recovery queue and diagnostics)
  *   #/ledger, #/next, …       the P2 routes, redirected by the app to the first repo's
+ *
+ * **Review absorbed two views.** P2's `next` (the backlog) and `needs` (open questions and
+ * blockers) were separate; both are a human judging what agents produced, and splitting them
+ * scattered one sitting across two screens, so `#/…/next` and `#/…/needs` now resolve to
+ * `review`. **Session took the Ledger's sub-route**: a session used to live at
+ * `#/r/<id>/ledger/<ulid>` and is now a destination of its own, with the old form still parsing.
  *
  * `parseRoute` only reads; the redirect needs the repo list, which is the app's to fetch.
  */
-export const VIEW_IDS = ["ledger", "next", "needs", "jobs", "health"] as const;
+export const VIEW_IDS = ["ledger", "session", "review", "jobs", "health"] as const;
 
 export type ViewId = (typeof VIEW_IDS)[number];
 
-/** The two views that also exist machine-wide, aggregated across repos. */
-export type MachineView = "needs" | "jobs";
+/** The views that also exist machine-wide, aggregated across repos. */
+export type MachineView = "review" | "jobs";
 
 export type Route =
   | { kind: "home" }
@@ -33,10 +42,21 @@ export type Route =
 export const HOME_HREF = "#/";
 export const ONBOARDING_HREF = "#/onboarding";
 
-/** P2 spelled the view `needs-you`; the segment is `needs` now, and the old one still parses. */
+/**
+ * Older spellings of a view segment, kept parsing so no saved link or open tab breaks:
+ * P2 wrote `needs-you`, and P8 had `next` and `needs` as separate views that Review now holds.
+ */
+const VIEW_ALIASES: Record<string, ViewId> = {
+  "needs-you": "review",
+  needs: "review",
+  next: "review",
+};
+
 function viewFrom(segment: string | undefined): ViewId | undefined {
-  if (segment === "needs-you") return "needs";
-  return (VIEW_IDS as readonly string[]).includes(segment ?? "") ? (segment as ViewId) : undefined;
+  if (segment === undefined) return undefined;
+  const alias = VIEW_ALIASES[segment];
+  if (alias !== undefined) return alias;
+  return (VIEW_IDS as readonly string[]).includes(segment) ? (segment as ViewId) : undefined;
 }
 
 export function machineHref(view: MachineView): string {
@@ -70,9 +90,15 @@ export function parseRoute(hash: string): Route {
     const [repo, viewSegment, ...rest] = tail;
     const view = viewFrom(viewSegment);
     if (repo === undefined || repo === "" || view === undefined) return { kind: "home" };
+    // A session used to hang off the Ledger. `#/r/<id>/ledger/<ulid>` keeps working by becoming
+    // the Session route it now is, so bookmarks and a card's `openDeepLink` survive the move.
+    if (view === "ledger" && rest.length > 0) return { kind: "repo", repo, view: "session", rest };
     return { kind: "repo", repo, view, rest };
   }
-  if (head === "needs" || head === "jobs") return { kind: "machine", view: head };
+  if (head === "jobs") return { kind: "machine", view: "jobs" };
+  if (head === "review" || head === "needs" || head === "needs-you") {
+    return { kind: "machine", view: "review" };
+  }
   const view = viewFrom(head);
   if (view === undefined) return { kind: "home" };
   return { kind: "legacy", view, rest: tail };
@@ -80,6 +106,10 @@ export function parseRoute(hash: string): Route {
 
 /** `#/r/<id>/<view>` for a legacy route, keeping whatever followed the view (a session ulid). */
 export function legacyTarget(route: Extract<Route, { kind: "legacy" }>, repo: string): string {
+  // `#/ledger/<ulid>` is a session, the same way `#/r/<id>/ledger/<ulid>` is.
+  if (route.view === "ledger" && route.rest.length > 0) {
+    return repoHref(repo, "session", ...route.rest);
+  }
   return repoHref(repo, route.view, ...route.rest);
 }
 

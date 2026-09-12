@@ -13,14 +13,19 @@ import { HealthView } from "./routes/health.js";
 import { HomeView } from "./routes/home.js";
 import { JobsView } from "./routes/jobs.js";
 import { LedgerView } from "./routes/ledger.js";
-import { NeedsYouView } from "./routes/needs-you.js";
-import { NextView } from "./routes/next.js";
 import { OnboardingView } from "./routes/onboarding.js";
+import { ReviewView } from "./routes/review.js";
+import { SessionView } from "./routes/session.js";
 
+/**
+ * The four destinations the nav offers, plus the two kept as routes without one: Jobs (the
+ * recovery queue) and Health (diagnostics) are reachable by link and from Home, but they are
+ * machinery rather than places you go to read, so P9 took them off the nav.
+ */
 const REPO_VIEWS: Record<ViewId, () => React.JSX.Element> = {
   ledger: LedgerView,
-  next: NextView,
-  needs: NeedsYouView,
+  session: SessionView,
+  review: ReviewView,
   jobs: JobsView,
   health: HealthView,
 };
@@ -28,7 +33,7 @@ const REPO_VIEWS: Record<ViewId, () => React.JSX.Element> = {
 /**
  * The whole app, parameterised by its one dependency.
  *
- * `source` is the machine-wide source (P8): Home and the `#/needs` / `#/jobs` tabs read it
+ * `source` is the machine-wide source (P8): Home and the `#/review` / `#/jobs` tabs read it
  * directly, and a `#/r/<id>/…` route hands its view `source.forRepo(id)` through the same
  * `SourceProvider` the P2 views were built against, so none of them knows the daemon exists.
  */
@@ -60,7 +65,7 @@ function Screen({ route, source, repos }: { route: Route; source: AppSource; rep
     case "onboarding":
       return <OnboardingView />;
     case "machine":
-      return route.view === "needs" ? <AllNeedsView /> : <AllJobsView />;
+      return route.view === "review" ? <AllNeedsView /> : <AllJobsView />;
     case "legacy":
       return <LegacyRedirect route={route} repos={repos} />;
     case "repo":

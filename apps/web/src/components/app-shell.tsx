@@ -42,15 +42,34 @@ export interface NavItem {
   /** The count after the label, when the view has one. Rendered with tabular numerals. */
   count?: number;
   icon: ViewIconName;
+  /**
+   * True for the machinery below the separator — Jobs and Health. They are reachable, but they
+   * are not places you go to read, so the four that are keep the top of the nav to themselves.
+   */
+  secondary?: boolean;
 }
 
-type ViewIconName = "ledger" | "next" | "needs" | "jobs" | "health" | "home";
+type ViewIconName = "ledger" | "session" | "review" | "jobs" | "health" | "home";
 
-/** The five per-repo views, in the order the nav shows them. */
+/**
+ * The nav, in the order the operator asked for (P9, 2026-09-12): Home, Ledger, Session, Review.
+ * Home is machine-wide and is added by {@link navFor}; the three below are this project's.
+ *
+ * Jobs and Health are deliberately absent. They are still routes and still reachable — Home links
+ * to them and `#/r/<id>/jobs` still resolves — but they are machinery, not places to read, and a
+ * nav of six blunts the four that matter.
+ */
 const REPO_VIEWS: readonly { id: ViewId; label: string; icon: ViewIconName }[] = [
   { id: "ledger", label: "Ledger", icon: "ledger" },
-  { id: "next", label: "Next", icon: "next" },
-  { id: "needs", label: "Needs you", icon: "needs" },
+  { id: "session", label: "Session", icon: "session" },
+  { id: "review", label: "Review", icon: "review" },
+];
+
+/**
+ * Below the separator: the recovery queue and the diagnostics. Reachable, but not places you go
+ * to read, so they sit apart from the four that are (operator, 2026-09-12).
+ */
+const SECONDARY_VIEWS: readonly { id: ViewId; label: string; icon: ViewIconName }[] = [
   { id: "jobs", label: "Jobs", icon: "jobs" },
   { id: "health", label: "Health", icon: "health" },
 ];
@@ -64,38 +83,57 @@ const REPO_VIEWS: readonly { id: ViewId; label: string; icon: ViewIconName }[] =
 function countFor(view: ViewId, repo: Repo | undefined): number | undefined {
   if (repo === undefined) return undefined;
   if (view === "ledger") return repo.sessions7d;
-  if (view === "next") return repo.openBacklog;
-  if (view === "needs") return repo.openNotes;
+  // Review holds both halves of what waits on a person: the questions and blockers an agent
+  // raised, and the backlog it proposed. The count is both, because both are on that screen.
+  if (view === "review") return repo.openNotes + repo.openBacklog;
   return undefined;
 }
 
-/** The nav for a route: Home and the machine-wide tabs, or one repo's five views. */
+/**
+ * The nav for a route: Home first always, then this project's Ledger, Session and Review (P9).
+ *
+ * On a machine-wide route there is no project to scope to, so Home is followed by the aggregated
+ * Review and Jobs tabs — the same two surfaces, read across every repo.
+ */
 export function navFor(route: Route, repos: Repo[] = []): NavItem[] {
+  const home: NavItem = {
+    href: HOME_HREF,
+    label: "Home",
+    current: route.kind === "home",
+    icon: "home",
+  };
   if (route.kind === "repo") {
     const repo = repos.find((each) => each.id === route.repo);
-    return REPO_VIEWS.map((view) => ({
+    const item = (view: { id: ViewId; label: string; icon: ViewIconName }, secondary?: boolean) => ({
       href: repoHref(route.repo, view.id),
       label: view.label,
       current: route.view === view.id,
       count: countFor(view.id, repo),
       icon: view.icon,
-    }));
+      ...(secondary === true ? { secondary: true } : {}),
+    });
+    return [
+      home,
+      ...REPO_VIEWS.map((view) => item(view)),
+      ...SECONDARY_VIEWS.map((view) => item(view, true)),
+    ];
   }
-  const openNotes = repos.reduce((total, repo) => total + repo.openNotes, 0);
+  const waiting = repos.reduce((total, repo) => total + repo.openNotes + repo.openBacklog, 0);
   return [
-    { href: HOME_HREF, label: "Home", current: route.kind === "home", icon: "home" },
+    home,
     {
-      href: machineHref("needs"),
-      label: "Needs you",
-      current: route.kind === "machine" && route.view === "needs",
-      count: repos.length === 0 ? undefined : openNotes,
-      icon: "needs",
+      href: machineHref("review"),
+      label: "Review",
+      current: route.kind === "machine" && route.view === "review",
+      count: repos.length === 0 ? undefined : waiting,
+      icon: "review",
     },
     {
       href: machineHref("jobs"),
       label: "Jobs",
       current: route.kind === "machine" && route.view === "jobs",
       icon: "jobs",
+      secondary: true,
     },
   ];
 }
@@ -271,8 +309,8 @@ function Sidebar({
 
       {/* Pills as wide as their label; full width in the sheet, for the thumb. */}
       <nav aria-label="Views" className={cn("flex flex-col gap-1", inSheet ? "items-stretch" : "items-start")}>
-        {nav.map((item) => (
-          <Dismissing key={item.href} inSheet={inSheet}>
+        {nav.map((item, index) => (
+          <Dismissing key={item.href} inSheet={inSheet} separated={isFirstSecondary(nav, index)}>
             <a
               href={item.href}
               aria-current={item.current ? "page" : undefined}
@@ -308,8 +346,31 @@ function Sidebar({
  * A link that also closes the nav sheet when it is inside one. `SheetClose` is Radix's dialog
  * close, so it must not be rendered outside the sheet — hence the flag rather than a hook.
  */
-function Dismissing({ inSheet, children }: { inSheet: boolean; children: React.ReactElement }) {
-  return inSheet ? <SheetClose asChild>{children}</SheetClose> : children;
+function Dismissing({
+  inSheet,
+  separated,
+  children,
+}: {
+  inSheet: boolean;
+  /** Draws the hairline that divides the four reading views from the machinery below them. */
+  separated?: boolean;
+  children: React.ReactElement;
+}) {
+  const link = inSheet ? <SheetClose asChild>{children}</SheetClose> : children;
+  if (separated !== true) return link;
+  return (
+    <>
+      <span aria-hidden="true" className="my-2 h-px w-full bg-hairline" />
+      {link}
+    </>
+  );
+}
+
+/** True at the first item below the separator, so the hairline is drawn exactly once. */
+function isFirstSecondary(nav: NavItem[], index: number): boolean {
+  const item = nav[index];
+  if (item?.secondary !== true) return false;
+  return nav[index - 1]?.secondary !== true;
 }
 
 /** The repo's own health, as a chip in the sticky header — status colour, never a row fill. */
@@ -366,8 +427,10 @@ function ViewIcon({ name, current }: { name: ViewIconName; current: boolean }) {
   const paths: Record<ViewIconName, React.ReactNode> = {
     home: <path d="M2.5 7L8 2.5 13.5 7v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V7z" />,
     ledger: <path d="M3 3h10v10H3zM5.5 6h5M5.5 8.5h5M5.5 11h3" />,
-    next: <path d="M3 4.5h10M3 8h10M3 11.5h6" />,
-    needs: <path d="M6 6a2 2 0 1 1 2 2v1.5M8 12h.01" />,
+    // One session: a single record with its checkpoints down the side.
+    session: <path d="M4 2.5h8v11H4zM2 5h2M2 8h2M2 11h2" />,
+    // Review: a mark against a list — the human passing over what the agents produced.
+    review: <path d="M2.5 4.5h7M2.5 8h5M2.5 11.5h4M10 10.5l1.5 1.5 3-3.5" />,
     jobs: <path d="M2.5 8h3l1.5 3 2-6 1.5 3h3" />,
     health: <path d="M8 13.5S2.5 10.2 2.5 6.6A2.9 2.9 0 0 1 8 5a2.9 2.9 0 0 1 5.5 1.6c0 3.6-5.5 6.9-5.5 6.9z" />,
   };

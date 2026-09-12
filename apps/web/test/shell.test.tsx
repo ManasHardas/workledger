@@ -7,7 +7,10 @@ import { detailUlidFromHash } from "../src/features/ledger/detail-route.js";
 import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { NAV_SHEET_QUERY } from "../src/lib/media.js";
 import { createSource, type AppSource, type Repo } from "../src/lib/ledger-source.js";
-import { VIEW_IDS, legacyTarget, parseRoute, repoHref } from "../src/lib/router.js";
+import { HOME_HREF, VIEW_IDS, legacyTarget, parseRoute, repoHref } from "../src/lib/router.js";
+
+/** The nav's order (P9): the three views you read, then the machinery below the separator. */
+const NAV_VIEWS = ["ledger", "session", "review", "jobs", "health"] as const;
 
 const FIRST = FIXTURE_REPOS[0]!;
 const SECOND = FIXTURE_REPOS[1]!;
@@ -56,12 +59,15 @@ describe("router", () => {
     expect(parseRoute("#/")).toEqual({ kind: "home" });
     expect(parseRoute("#/nope")).toEqual({ kind: "home" });
     expect(parseRoute("#/onboarding")).toEqual({ kind: "onboarding" });
-    expect(parseRoute("#/needs")).toEqual({ kind: "machine", view: "needs" });
+    expect(parseRoute("#/review")).toEqual({ kind: "machine", view: "review" });
     expect(parseRoute("#/jobs")).toEqual({ kind: "machine", view: "jobs" });
-    expect(parseRoute("#/r/abc/next")).toEqual({ kind: "repo", repo: "abc", view: "next", rest: [] });
-    expect(parseRoute("#/r/abc/ledger/01ULID")).toEqual({ kind: "repo", repo: "abc", view: "ledger", rest: ["01ULID"] });
+    // Review absorbed Next and Needs you (P9); both old segments resolve to it.
+    expect(parseRoute("#/needs")).toEqual({ kind: "machine", view: "review" });
+    expect(parseRoute("#/r/abc/next")).toEqual({ kind: "repo", repo: "abc", view: "review", rest: [] });
+    // A session is its own view now; the Ledger's old sub-route still reaches it.
+    expect(parseRoute("#/r/abc/ledger/01ULID")).toEqual({ kind: "repo", repo: "abc", view: "session", rest: ["01ULID"] });
     // P2's spelling of the view still parses; the id is decoded.
-    expect(parseRoute("#/r/a%2Fb/needs-you")).toEqual({ kind: "repo", repo: "a/b", view: "needs", rest: [] });
+    expect(parseRoute("#/r/a%2Fb/needs-you")).toEqual({ kind: "repo", repo: "a/b", view: "review", rest: [] });
     // A repo route missing its view or its id is nowhere in particular.
     expect(parseRoute("#/r/abc")).toEqual({ kind: "home" });
     expect(parseRoute("#/r//ledger")).toEqual({ kind: "home" });
@@ -69,20 +75,28 @@ describe("router", () => {
 
   it("reads the P2 routes as legacy and resolves them to a repo", () => {
     for (const view of VIEW_IDS) {
-      if (view === "needs" || view === "jobs") continue;
+      // Review and Jobs are machine-wide tabs, not legacy repo routes.
+      if (view === "review" || view === "jobs") continue;
       expect(parseRoute(`#/${view}`)).toEqual({ kind: "legacy", view, rest: [] });
     }
-    expect(parseRoute("#/needs-you")).toEqual({ kind: "legacy", view: "needs", rest: [] });
+    // `#/needs-you` is the machine-wide Review now, not a legacy repo route.
+    expect(parseRoute("#/needs-you")).toEqual({ kind: "machine", view: "review" });
     const detail = parseRoute("#/ledger/01ULID");
     expect(detail).toEqual({ kind: "legacy", view: "ledger", rest: ["01ULID"] });
     if (detail.kind !== "legacy") throw new Error("unreachable");
-    expect(legacyTarget(detail, "abc")).toBe("#/r/abc/ledger/01ULID");
+    // A legacy session link lands on the Session view, keeping its ulid.
+    expect(legacyTarget(detail, "abc")).toBe("#/r/abc/session/01ULID");
   });
 
   it("builds hrefs and reads the session ulid back out of one", () => {
     expect(repoHref("abc", "health")).toBe("#/r/abc/health");
     expect(repoHref("a/b", "ledger", "01ULID")).toBe("#/r/a%2Fb/ledger/01ULID");
+    expect(repoHref("abc", "session", "01ULID")).toBe("#/r/abc/session/01ULID");
+    expect(detailUlidFromHash("#/r/abc/session/01ULID")).toBe("01ULID");
+    // The old sub-route still resolves to the session it names.
     expect(detailUlidFromHash("#/r/abc/ledger/01ULID")).toBe("01ULID");
+    // The Session view with no ulid means "the most recent one", not an error.
+    expect(detailUlidFromHash("#/r/abc/session")).toBeNull();
     expect(detailUlidFromHash("#/r/abc/ledger")).toBeNull();
     expect(detailUlidFromHash("#/ledger/01ULID")).toBeNull();
   });
@@ -96,13 +110,15 @@ describe("legacy redirects", () => {
 
     const ulid = FIXTURE_SESSIONS[0]!.frontmatter.id;
     renderAt(`#/ledger/${ulid}`);
-    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "ledger", ulid)));
+    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "session", ulid)));
     expect(await screen.findByRole("heading", { name: "Session", level: 2 })).toBeDefined();
   });
 
-  it("sends #/needs-you and #/health to the first repo, and #/jobs stays machine-wide", async () => {
+  it("sends #/health to the first repo, and #/needs-you and #/jobs stay machine-wide", async () => {
+    // Needs you became the machine-wide Review, so it no longer redirects into a repo.
     renderAt("#/needs-you");
-    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "needs")));
+    await screen.findByRole("heading", { name: "Review", level: 2 });
+    expect(window.location.hash).toBe("#/needs-you");
     cleanup();
 
     renderAt("#/health");
@@ -126,7 +142,7 @@ describe("legacy redirects", () => {
     window.location.hash = "#/next";
     const before = window.history.length;
     renderAt("#/next");
-    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "next")));
+    await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "review")));
     expect(window.history.length).toBe(before);
   });
 });
@@ -141,31 +157,31 @@ describe("app shell", () => {
     const hrefs = within(nav)
       .getAllByRole("link")
       .map((link) => link.getAttribute("href"));
-    expect(hrefs).toEqual(["#/", "#/needs", "#/jobs"]);
+    expect(hrefs).toEqual(["#/", "#/review", "#/jobs"]);
     expect(within(nav).getByRole("link", { current: "page" }).getAttribute("href")).toBe("#/");
   });
 
-  it("renders the five per-repo links under a repo route and marks the active one", async () => {
+  it("renders Home, the three views and the machinery below the separator, marking the active one", async () => {
     renderAt(repoHref(FIRST.id, "health"));
     await screen.findByRole("heading", { name: "Health", level: 2 });
     const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
     const hrefs = within(nav)
       .getAllByRole("link")
       .map((link) => link.getAttribute("href"));
-    expect(hrefs).toEqual(VIEW_IDS.map((view) => repoHref(FIRST.id, view)));
+    expect(hrefs).toEqual([HOME_HREF, ...NAV_VIEWS.map((view) => repoHref(FIRST.id, view))]);
     const current = screen.getAllByRole("link", { current: "page" });
     expect(current.every((link) => link.getAttribute("href") === repoHref(FIRST.id, "health"))).toBe(true);
   });
 
   it("names the current repo in the switcher and switches to the same view of another", async () => {
-    renderAt(repoHref(FIRST.id, "next"));
+    renderAt(repoHref(FIRST.id, "review"));
     // The switcher is a button opening a filterable list, not a `<select>`: the direction asks for
     // a filter and a native select has none (docs/design/direction.md §Shell).
     await waitFor(() => expect(screen.getByRole("button", { name: `Project: ${FIRST.name}` })).toBeDefined());
 
     fireEvent.click(screen.getByRole("button", { name: `Project: ${FIRST.name}` }));
     fireEvent.click(await screen.findByRole("button", { name: SECOND.name }));
-    expect(window.location.hash).toBe(repoHref(SECOND.id, "next"));
+    expect(window.location.hash).toBe(repoHref(SECOND.id, "review"));
 
     // The hash change is what renames the switcher, and jsdom delivers `hashchange` a tick later.
     fireEvent.click(await screen.findByRole("button", { name: `Project: ${SECOND.name}` }));
@@ -209,14 +225,13 @@ describe("app shell", () => {
       const ledger = within(nav).getByRole("link", { name: /^Ledger/ });
       expect(ledger.textContent).toContain(String(FIRST.sessions7d));
     });
-    const nextRow = within(nav).getByRole("link", { name: /^Next/ });
-    expect(nextRow.textContent).toContain(String(FIRST.openBacklog));
-    const needs = within(nav).getByRole("link", { name: /^Needs you/ });
-    expect(needs.textContent).toContain(String(FIRST.openNotes));
+    // Review holds both halves of what waits on a person, so its count is both.
+    const review = within(nav).getByRole("link", { name: /^Review/ });
+    expect(review.textContent).toContain(String(FIRST.openNotes + FIRST.openBacklog));
     // Health has no count on the repo row, and an invented one would be worse than none.
     expect(within(nav).getByRole("link", { name: "Health" }).textContent).toBe("Health");
     expect(
-      within(nav).getByText(String(FIRST.openBacklog)).className,
+      within(nav).getByText(String(FIRST.openNotes + FIRST.openBacklog)).className,
     ).toContain("tabular-nums");
   });
 
@@ -248,7 +263,7 @@ describe("app shell", () => {
       within(nav)
         .getAllByRole("link")
         .map((link) => link.getAttribute("href")),
-    ).toEqual(VIEW_IDS.map((view) => repoHref(FIRST.id, view)));
+    ).toEqual([HOME_HREF, ...NAV_VIEWS.map((view) => repoHref(FIRST.id, view))]);
   });
 
   it("closes the nav sheet on a tap on any of the five views, and offers a visible way out", async () => {
@@ -302,8 +317,8 @@ describe("routes render fixture data", () => {
     expect(cards[0]!.textContent).toContain(open[0]!.goal!);
   });
 
-  it("Next lists the fixture backlog grouped by status", async () => {
-    renderAt(repoHref(FIRST.id, "next"));
+  it("Review lists the fixture backlog grouped by status", async () => {
+    renderAt(repoHref(FIRST.id, "review"));
     await screen.findByRole("heading", { name: "Next", level: 2 });
     for (const item of FIXTURE_BACKLOG) {
       expect(await screen.findByText(item.frontmatter.title)).toBeDefined();
@@ -313,9 +328,9 @@ describe("routes render fixture data", () => {
     expect(buttons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  it("Needs you lists the open questions and blockers", async () => {
-    renderAt(repoHref(FIRST.id, "needs"));
-    await screen.findByRole("heading", { name: "Needs you", level: 2 });
+  it("Review lists the open questions and blockers above the backlog", async () => {
+    renderAt(repoHref(FIRST.id, "review"));
+    await screen.findByRole("heading", { name: "Waiting on an answer", level: 2 });
     for (const note of FIXTURE_NOTES) {
       expect(await screen.findByText(note.text)).toBeDefined();
     }

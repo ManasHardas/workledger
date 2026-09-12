@@ -118,9 +118,9 @@ async function openNote(text: string): Promise<HTMLElement> {
   return screen.findByRole("dialog");
 }
 
-describe("Needs you", () => {
+describe("Review", () => {
   it("renders every open note as a row, with its type and checkpoint", async () => {
-    renderAt(`#/r/${REPO}/needs`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+    renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
     const list = await screen.findByRole("list", { name: "Open questions and blockers" });
     const row = within(list).getByRole("listitem");
@@ -133,7 +133,7 @@ describe("Needs you", () => {
   });
 
   it("keeps the rows on the list rhythm and off the horizontal scroll at 375 px", async () => {
-    renderAt(`#/r/${REPO}/needs`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+    renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
     const list = await screen.findByRole("list", { name: "Open questions and blockers" });
     const row = within(list).getByRole("listitem");
     expect(row.className).toContain("min-h-row");
@@ -153,7 +153,7 @@ describe("Needs you", () => {
         return SESSION;
       },
     });
-    renderAt(`#/r/${REPO}/needs`, source);
+    renderAt(`#/r/${REPO}/review`, source);
 
     const panel = await openNote(BLOCKER);
     fireEvent.change(within(panel).getByLabelText("Your decision"), {
@@ -176,7 +176,7 @@ describe("Needs you", () => {
   it("names the session author from identities.yaml, with the email as the tooltip", async () => {
     const email = SESSION.frontmatter.author.email;
     renderAt(
-      `#/r/${REPO}/needs`,
+      `#/r/${REPO}/review`,
       stubSource({
         listNotes: async () => NOTES,
         getSession: async () => SESSION,
@@ -200,7 +200,7 @@ describe("Needs you", () => {
 
     for (const identities of reads) {
       renderAt(
-        `#/r/${REPO}/needs`,
+        `#/r/${REPO}/review`,
         stubSource({
           listNotes: async () => NOTES,
           getSession: async () => SESSION,
@@ -221,7 +221,7 @@ describe("Needs you", () => {
     let identities: Identity[] = [];
     const handlers = new Set<(event: LedgerEvent) => void>();
     renderAt(
-      `#/r/${REPO}/needs`,
+      `#/r/${REPO}/review`,
       stubSource({
         listNotes: async () => NOTES,
         getSession: async () => SESSION,
@@ -241,7 +241,7 @@ describe("Needs you", () => {
   });
 
   it("disables resolving on a read-only source", async () => {
-    renderAt(`#/r/${REPO}/needs`, createSource("fixture"));
+    renderAt(`#/r/${REPO}/review`, createSource("fixture"));
 
     const panel = await openNote(FIXTURE_NOTES[0]!.text);
     const resolve = within(panel).getByRole("button", { name: "Resolve" });

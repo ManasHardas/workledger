@@ -91,7 +91,7 @@ describe("Home — folders with sessions (amendment 11)", () => {
     expect(title.textContent).toBe("Overview");
     const groups = within(screen.getByRole("main")).getAllByRole("heading", { level: 3 });
     expect(groups.map((h) => h.textContent)).toEqual([
-      "Needs you",
+      "Review",
       "Running",
       "Projects",
       "Folders with sessions",
@@ -246,8 +246,8 @@ describe("Home", () => {
     // Rule 4: every count is a link to the thing it counts, and its name says what it counts.
     const count = (noun: string, value: number) =>
       within(first).getByRole("link", { name: `${WORKLEDGER.name} — ${String(value)} ${noun}` });
-    expect(count("open backlog", 4).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "next"));
-    expect(count("open notes", 2).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "needs"));
+    expect(count("open backlog", 4).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
+    expect(count("open notes", 2).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
     expect(count("sessions in the last 7 days", 3).getAttribute("href")).toBe(
       repoHref(WORKLEDGER.id, "ledger"),
     );
@@ -277,8 +277,8 @@ describe("Home", () => {
     // Home no longer carries a second copy of the nav's tabs: the counts are the links (rule 4).
     expect(screen.queryByRole("navigation", { name: "Across projects" })).toBeNull();
     expect(
-      main.getByRole("link", { name: /open questions and blockers — Needs you$/ }).getAttribute("href"),
-    ).toBe("#/needs");
+      main.getByRole("link", { name: /open questions and blockers — Review$/ }).getAttribute("href"),
+    ).toBe("#/review");
     expect(
       main.getByRole("link", { name: /jobs running, queued or failed — Jobs$/ }).getAttribute("href"),
     ).toBe("#/jobs");
@@ -319,10 +319,10 @@ describe("Home", () => {
 
   it("shows what needs the operator and what is running, across projects", async () => {
     renderHome();
-    const needs = await screen.findByRole("list", { name: "Needs you" });
+    const needs = await screen.findByRole("list", { name: "Review" });
     for (const note of FIXTURE_NOTES_ALL) {
       const row = within(needs).getByRole("link", { name: note.text });
-      expect(row.getAttribute("href")).toBe(repoHref(note.repo.id, "needs"));
+      expect(row.getAttribute("href")).toBe(repoHref(note.repo.id, "review"));
     }
     // The fixture queue has one failed repair and nothing running: the group says both.
     const running = await screen.findByRole("list", { name: "Running" });

@@ -200,7 +200,7 @@ describe("jobs view", () => {
     // The session is a link into the Ledger, not 26 characters of text.
     expect(
       within(panel).getByRole("link", { name: "01JBQ4Z8W2K7N3RQ9XMDT5V0AE" }).getAttribute("href"),
-    ).toBe(`#/r/${REPO}/ledger/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
+    ).toBe(`#/r/${REPO}/session/01JBQ4Z8W2K7N3RQ9XMDT5V0AE`);
   });
 
   it("shows an empty state, a loading state and a read failure", async () => {

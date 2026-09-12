@@ -36,8 +36,8 @@ export function NoteCard({
       <span className="shrink-0 font-mono text-xs text-subtle-foreground">{`cp ${String(note.cp)}`}</span>
       {repo === undefined ? null : (
         <a
-          href={repoHref(repo.id, "needs")}
-          aria-label={`${repo.name} — Needs you`}
+          href={repoHref(repo.id, "review")}
+          aria-label={`${repo.name} — Review`}
           className="shrink-0 rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {repo.name}
