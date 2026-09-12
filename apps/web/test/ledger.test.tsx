@@ -245,9 +245,10 @@ describe("session detail", () => {
     window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
-  it("shows Goal, Done, Remaining and Notes with their [cp n] markers", async () => {
+  it("shows Goal, What happened, Remaining and Notes with their [cp n] markers", async () => {
     renderSession();
-    for (const heading of ["Goal", "Done", "Remaining", "Notes"]) {
+    // The Done section became the recap (P9): a few points over the outcomes, not a flat list.
+    for (const heading of ["Goal", "What happened", "Remaining", "Notes"]) {
       expect(await screen.findByRole("heading", { name: heading, level: 3 })).toBeDefined();
     }
 
@@ -328,13 +329,16 @@ describe("session detail — gists, drawer, notes split, memory", () => {
     window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
-  it("shows only the gist per Done item; detail, commit and files stay out of the page", async () => {
+  it("shows only the gist per outcome; detail, files and verification stay out of the page", async () => {
     renderSession();
     expect(await screen.findByRole("button", { name: new RegExp(DONE.text) })).toBeDefined();
     expect(screen.queryByText(DONE.detail!)).toBeNull();
-    expect(screen.queryByText(DONE.commit!)).toBeNull();
     for (const file of DONE.files!) expect(screen.queryByText(file)).toBeNull();
     expect(screen.queryByText(DONE.verified!)).toBeNull();
+    // The commit is the exception, and a deliberate one: the recap groups outcomes *by* their
+    // evidence, so a point names the commit it covers. Everything that commit touched — the
+    // detail, the files, whether tests ran — still waits in the drawer (rule 3).
+    expect(screen.getAllByText(DONE.commit!).length).toBeGreaterThan(0);
   });
 
   it("opens a drawer with detail, commit, files, verified and the checkpoint stamp on click", async () => {

@@ -14,8 +14,10 @@ import type {
   RepoRemote,
   Verified,
 } from "../../lib/ledger-source.js";
+import { cn } from "../../lib/cn.js";
 import { ledgerListHref } from "./detail-route.js";
 import { cpMarker, formatInstant } from "./format.js";
+import { checkpointLabel, recap, type RecapPoint } from "./recap.js";
 import { useLiveSession } from "./live.js";
 import { ProvenancePanel } from "./provenance-panel.js";
 
@@ -77,6 +79,8 @@ function SessionBody({ session }: { session: ParsedSession }) {
   const agentNotes = session.notes.filter((line) => !HUMAN_NOTE_TYPES.has(line.type));
   const memory = session.memory ?? [];
   const opened = openDone === null ? null : (session.done[openDone] ?? null);
+  // Derived at render, never stored: the outcomes already carry the evidence that groups them.
+  const points = recap(session.done);
 
   return (
     <div className="flex flex-col">
@@ -121,31 +125,26 @@ function SessionBody({ session }: { session: ParsedSession }) {
         {session.goal === null ? <Empty>No goal recorded.</Empty> : <p className="text-sm">{session.goal}</p>}
       </Section>
 
-      <Section title="Done">
+      <Section
+        title="What happened"
+        aside={
+          session.done.length === 0
+            ? undefined
+            : `${String(session.done.length)} ${session.done.length === 1 ? "outcome" : "outcomes"}, grouped by evidence`
+        }
+      >
         {session.done.length === 0 ? (
           <Empty>Nothing recorded as done yet.</Empty>
         ) : (
-          <Lines>
-            {session.done.map((line, index) => (
-              <Line key={`${line.cp}-${index}`} cp={line.cp}>
-                {/*
-                  A real button, so Enter and Space open it, it is in the tab order, and a screen
-                  reader announces it as something that does something — none of which a `<li>`
-                  with an onClick would give.
-                */}
-                <button
-                  type="button"
-                  onClick={() => setOpenDone(index)}
-                  aria-haspopup="dialog"
-                  // Bled 8 px past the text on either side so the hover reads as a row, as X's
-                  // timeline does, while the text stays aligned with every other section's.
-                  className="-mx-2 -my-1 block w-[calc(100%_+_1rem)] rounded-md px-2 py-1 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {line.text}
-                </button>
-              </Line>
+          <ul className="flex flex-col gap-2">
+            {points.map((point) => (
+              <RecapCard
+                key={point.key}
+                point={point}
+                onOpen={(line) => setOpenDone(session.done.indexOf(line))}
+              />
             ))}
-          </Lines>
+          </ul>
         )}
       </Section>
 
@@ -472,12 +471,99 @@ function ForAgents({ notes }: { notes: NoteLine[] }) {
  * One body section, flat on the timeline column rather than boxed: a hairline bled to both edges
  * of the column above it, as X separates posts, and an extrabold heading.
  */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  aside,
+  children,
+}: {
+  title: string;
+  /** A quiet line to the right of the heading — a count, a span. */
+  aside?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="-mx-4 border-t border-hairline px-4 py-4">
-      <h3 className="mb-3 text-lg font-extrabold leading-title">{title}</h3>
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3">
+        <h3 className="text-lg font-extrabold leading-title">{title}</h3>
+        {aside === undefined ? null : (
+          <span className="text-xs text-subtle-foreground">{aside}</span>
+        )}
+      </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * One recap point: the newest outcome in it reads as the headline, the rest fold behind a
+ * disclosure, and the evidence — the commit, the checkpoints it spans — sits underneath.
+ *
+ * Every outcome, headline or folded, still opens the drawer that holds its detail, files and
+ * verification. The recap summarises; it does not replace what it summarises (rule 3: evidence
+ * is never inline).
+ */
+function RecapCard({ point, onOpen }: { point: RecapPoint; onOpen: (line: DoneLine) => void }) {
+  const [open, setOpen] = useState(false);
+  const [headline, ...rest] = point.lines;
+  if (headline === undefined) return null;
+
+  const tone =
+    point.verified === "tests-passed"
+      ? "bg-success"
+      : point.verified === "tests-failed"
+        ? "bg-destructive"
+        : "bg-subtle-foreground";
+
+  return (
+    <li className="flex gap-3 rounded-lg border border-hairline bg-card p-3">
+      <span aria-hidden="true" className={cn("mt-2 h-2 w-2 shrink-0 rounded-full", tone)} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => onOpen(headline)}
+          aria-haspopup="dialog"
+          className="rounded-sm text-left text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {headline.text}
+        </button>
+
+        {rest.length === 0 ? null : open ? (
+          <ul className="flex flex-col gap-1 border-l border-hairline pl-3">
+            {rest.map((line, index) => (
+              <li key={`${String(line.cp)}-${String(index)}`}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(line)}
+                  aria-haspopup="dialog"
+                  className="rounded-sm text-left text-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {line.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-subtle-foreground">
+          <span className="font-mono">{checkpointLabel(point.checkpoints)}</span>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono">{point.commit ?? "no commit"}</span>
+          {rest.length === 0 ? null : (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setOpen((prior) => !prior)}
+                className="rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {open ? "fewer" : `${String(rest.length)} more`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </li>
   );
 }
 
