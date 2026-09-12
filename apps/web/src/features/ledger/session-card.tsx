@@ -13,15 +13,14 @@ function statusVariant(status: string) {
 }
 
 /**
- * One session, summarised: goal, when it started, who ran it, on what harness, its status, how many
- * checkpoints it has, and how much is done versus still remaining (design spec §8, Ledger).
+ * One session in the Ledger list.
  *
- * Laid out as a post on X's timeline: who and where on the first line in bold and grey, the goal as
- * the body, the counts along the foot where X keeps its action bar. The list around it separates
- * the posts with hairlines; the card itself has no box.
+ * The goal leads, because that is what a person scans for — what the session was *asked* to do,
+ * in the human's own words. Who ran it and on what harness are provenance, not identity, so they
+ * drop to the foot beside the counts.
  *
- * The whole card is one link to `#/r/<repo>/ledger/<ulid>`, so it is reachable by Tab, activates on Enter
- * for free, and the list's `j`/`k` handler only has to move focus.
+ * The whole card is one link to `#/r/<repo>/session/<ulid>`, so it is reachable by Tab, activates
+ * on Enter for free, and the list's `j`/`k` handler only has to move focus.
  */
 export function SessionCard({
   session,
@@ -46,25 +45,34 @@ export function SessionCard({
       href={detailHref(repo, frontmatter.id)}
       onFocus={onFocus}
       data-active={active ? "" : undefined}
-      className="block px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-[active]:bg-muted/50"
+      className="group block rounded-lg border border-hairline bg-card p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active]:border-primary data-[active]:bg-selected"
     >
-      <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm leading-body">
-        <span className="min-w-0 truncate font-bold text-foreground">{frontmatter.author.name}</span>
-        <span className="text-muted-foreground">· {frontmatter.harness}</span>
-        <span className="ml-auto shrink-0">
+      <div className="flex items-start gap-3">
+        <p className="min-w-0 flex-1 break-words text-sm font-medium leading-body text-foreground">
+          {session.goal ?? "No goal recorded"}
+        </p>
+        <span className="shrink-0">
           <Badge variant={statusVariant(frontmatter.status)}>{frontmatter.status}</Badge>
         </span>
       </div>
-      <p className="mt-1 break-words text-sm leading-body text-foreground">
-        {session.goal ?? "No goal recorded"}
-      </p>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs tabular-nums text-muted-foreground">
-        <span>Started {formatInstant(frontmatter.started)}</span>
-        <span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground">
+        <span className="tabular-nums">{formatInstant(frontmatter.started)}</span>
+        <span aria-hidden="true">·</span>
+        <span className="tabular-nums">
           {checkpoints} {checkpoints === 1 ? "checkpoint" : "checkpoints"}
         </span>
-        <span>
-          {done} done · {remaining} remaining
+        <span aria-hidden="true">·</span>
+        <span className="tabular-nums">
+          {done} {done === 1 ? "outcome" : "outcomes"}
+        </span>
+        {remaining === 0 ? null : (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">{remaining} open</span>
+          </>
+        )}
+        <span className="ml-auto truncate">
+          {frontmatter.author.name} · {frontmatter.harness}
         </span>
       </div>
     </a>

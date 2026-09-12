@@ -83,8 +83,11 @@ describe("ledger list", () => {
     expect(screen.queryAllByRole("tab")).toEqual([]);
     expect(screen.queryByRole("tablist")).toBeNull();
 
-    const list = await screen.findByRole("list", { name: SESSION_LIST });
-    const cards = within(list).getAllByRole("listitem");
+    // The list is grouped by day now, so the cards live across one list per day.
+    await screen.findByRole("list", { name: SESSION_LIST });
+    const cards = screen
+      .getAllByRole("list", { name: /^Sessions/ })
+      .flatMap((list) => within(list).getAllByRole("listitem"));
     expect(cards).toHaveLength(FIXTURE_SESSIONS.length);
 
     const newestFirst = [...FIXTURE_SESSIONS].sort((a, b) =>
@@ -105,10 +108,10 @@ describe("ledger list", () => {
     expect(card.textContent).toContain(frontmatter.harness);
     expect(card.textContent).toContain(frontmatter.status);
     expect(card.textContent).toContain(`${frontmatter.checkpoints.length} checkpoints`);
-    expect(card.textContent).toContain(
-      `${OPEN_SESSION.done.length} done · ${OPEN_SESSION.remaining.length} remaining`,
-    );
-    expect(card.textContent).toContain("Started 2026-09-09 08:02 UTC");
+    // The row speaks the redesign's vocabulary: outcomes recorded, and what is still open.
+    expect(card.textContent).toContain(`${OPEN_SESSION.done.length} outcome`);
+    expect(card.textContent).toContain(`${OPEN_SESSION.remaining.length} open`);
+    expect(card.textContent).toContain("2026-09-09 08:02 UTC");
   });
 
   it("filters the list through listSessions({ q })", async () => {

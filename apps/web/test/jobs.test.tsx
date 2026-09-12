@@ -530,9 +530,10 @@ describe("repair and the extraction consent", () => {
     render(<App source={source} />);
     // Amendment 11: one list, no scope tabs — the crashed session is listed straight away.
     // Scoped to the session list: the left nav's "Folders with sessions" section is a list too.
-    const rows = within(await screen.findByRole("list", { name: /Sessions, open first/ })).getAllByRole(
-      "listitem",
-    );
+    await screen.findByRole("list", { name: /Sessions, open first/ });
+    const rows = screen
+      .getAllByRole("list", { name: /^Sessions/ })
+      .flatMap((list) => within(list).getAllByRole("listitem"));
     expect(within(rows[0]!).getByRole("button", { name: "Repair session…" })).toBeDefined();
     expect(within(rows[1]!).queryByRole("button", { name: "Repair session…" })).toBeNull();
     window.location.hash = "";

@@ -12,10 +12,29 @@ import { formatRelative } from "./format.js";
  * showed a sign of life. Every count is a link to the view that holds it (rule 4), so the row is
  * three ways into the repo rather than one.
  */
-export function RepoCard({ repo, now }: { repo: Repo; now: number }) {
+/**
+ * True when this tracked repo is really the folder the others sit in.
+ *
+ * The operator's `~/Projects` carries more open items than every real project combined, because a
+ * session run from a worktree or a sibling directory is filed against the nearest enabled repo —
+ * which, for anything under `~/Projects`, is `~/Projects` itself. Nothing in the ledger says
+ * "this is a container"; the repo list says it, if you look: its path is a prefix of another
+ * tracked repo's.
+ */
+export function isContainerOf(repo: Repo, all: readonly Repo[]): number {
+  const prefix = repo.path.endsWith("/") ? repo.path : `${repo.path}/`;
+  return all.filter((other) => other.id !== repo.id && other.path.startsWith(prefix)).length;
+}
+
+export function RepoCard({ repo, now, contains = 0 }: { repo: Repo; now: number; contains?: number }) {
   return (
     <ListRow aria-label={repo.name}>
       <HealthBadge health={repo.health} />
+      {contains === 0 ? null : (
+        <Badge variant="warning" className="shrink-0" title={`Holds ${String(contains)} tracked projects`}>
+          folder
+        </Badge>
+      )}
       {/* `flex-initial`: the name keeps its own width and the path below takes what is left, so a
           long path in the 600 px column cannot squeeze the name down to a couple of letters. */}
       <RowTitle href={repoHref(repo.id, "ledger")} className="flex-initial font-medium">

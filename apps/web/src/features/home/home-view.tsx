@@ -19,7 +19,7 @@ import type { Async } from "../../lib/use-async.js";
 import { elapsed, shortId } from "../jobs/format.js";
 import { useJobList, useNow } from "../jobs/use-jobs.js";
 import { useLiveAllNotes, useLiveWorkspaces } from "./live.js";
-import { RepoCard } from "./repo-card.js";
+import { RepoCard, isContainerOf } from "./repo-card.js";
 import { WorkspaceCard } from "./workspace-card.js";
 
 /** How many rows an overview group shows before it stops being an overview. */
@@ -185,7 +185,7 @@ function ProjectsGroup({ repos, now }: { repos: Async<Repo[]>; now: number }) {
             {[...list]
               .sort((a, b) => (b.lastHookAt ?? "").localeCompare(a.lastHookAt ?? ""))
               .map((repo) => (
-                <RepoCard key={repo.id} repo={repo} now={now} />
+                <RepoCard key={repo.id} repo={repo} now={now} contains={isContainerOf(repo, list)} />
               ))}
           </RowList>
         )}

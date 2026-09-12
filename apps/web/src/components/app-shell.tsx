@@ -61,7 +61,7 @@ type ViewIconName = "ledger" | "session" | "review" | "jobs" | "health" | "home"
  */
 const REPO_VIEWS: readonly { id: ViewId; label: string; icon: ViewIconName }[] = [
   { id: "ledger", label: "Ledger", icon: "ledger" },
-  { id: "session", label: "Session", icon: "session" },
+  { id: "session", label: "Sessions", icon: "session" },
   { id: "review", label: "Review", icon: "review" },
 ];
 

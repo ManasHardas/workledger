@@ -86,34 +86,82 @@ export function SessionList({ sessions }: { sessions: ParsedSession[] }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sessions, repo]);
 
+  // Grouping is presentational only: `j`/`k` still walk the flat order, so a burst of sessions
+  // reads as a day without the keyboard skipping or restarting at each heading.
+  const groups = groupByDay(sessions);
+  let flat = -1;
+
   return (
-    // A timeline: the posts run to both edges of the column, separated by hairlines.
-    <ul
-      className="-mx-4 flex flex-col divide-y divide-hairline border-y border-hairline"
-      aria-label="Sessions, open first then newest first"
-    >
-      {sessions.map((session, index) => (
-        <li key={session.frontmatter.id} className="flex flex-col">
-          <SessionCard
-            session={session}
-            active={index === cursor}
-            onFocus={() => setCursor(index)}
-            ref={(node) => {
-              cards.current[index] = node;
-            }}
-          />
-          {/*
-            The repair control sits beside the card and never inside it: the card is one anchor,
-            and a button nested in a link is neither clickable nor reachable by keyboard in the way
-            either element promises. It appears only where there is something to repair.
-          */}
-          {source.capabilities.write && needsRepair(session) ? (
-            <div className="px-4 pb-3">
-              <RepairSheet session={session.frontmatter.id} label="Repair session…" />
-            </div>
-          ) : null}
-        </li>
+    <div className="flex flex-col gap-5">
+      {groups.map((group) => (
+        <section key={group.label} aria-labelledby={`day-${group.label}`} className="flex flex-col gap-2">
+          <h3 id={`day-${group.label}`} className="text-xs font-medium text-subtle-foreground">
+            {group.label}
+          </h3>
+          <ul
+            className="flex flex-col gap-2"
+            aria-label={
+              group === groups[0] ? "Sessions, open first then newest first" : `Sessions on ${group.label}`
+            }
+          >
+            {group.sessions.map((session) => {
+              flat += 1;
+              const index = flat;
+              return (
+                <li key={session.frontmatter.id} className="flex flex-col gap-2">
+                  <SessionCard
+                    session={session}
+                    active={index === cursor}
+                    onFocus={() => setCursor(index)}
+                    ref={(node) => {
+                      cards.current[index] = node;
+                    }}
+                  />
+                  {/*
+                    The repair control sits beside the card and never inside it: the card is one
+                    anchor, and a button nested in a link is neither clickable nor reachable by
+                    keyboard in the way either element promises.
+                  */}
+                  {source.capabilities.write && needsRepair(session) ? (
+                    <RepairSheet session={session.frontmatter.id} label="Repair session…" />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ))}
-    </ul>
+    </div>
   );
+}
+
+/** `Today`, `Yesterday`, or `11 September` — the day a session started, in the reader's timezone. */
+export function dayLabel(started: string, now: Date = new Date()): string {
+  const at = new Date(started);
+  if (Number.isNaN(at.getTime())) return "Undated";
+  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(at)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return at.toLocaleDateString(undefined, { day: "numeric", month: "long" });
+}
+
+interface DayGroup {
+  label: string;
+  sessions: ParsedSession[];
+}
+
+/**
+ * Split the list into day groups, keeping the order it was handed. Open sessions sort first
+ * overall ({@link openFirst}), so the first group is whatever day the newest work belongs to.
+ */
+export function groupByDay(sessions: ParsedSession[], now: Date = new Date()): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const session of sessions) {
+    const label = dayLabel(session.frontmatter.started, now);
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.label === label) last.sessions.push(session);
+    else groups.push({ label, sessions: [session] });
+  }
+  return groups;
 }
