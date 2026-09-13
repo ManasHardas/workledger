@@ -197,8 +197,8 @@ export function Panel({ open, onOpenChange, title, description, children, classN
               ? "fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-xl border-b-0 shadow-panel"
               : docked
                 ? // A module in the right column's flow: no shadow, as tall as the viewport allows
-                  // under the column's own 12 px of padding, scrolling inside itself past that.
-                  "max-h-[calc(100vh_-_2_*_var(--wl-spacing-4))] w-full rounded-xl"
+                  // under the header band and the column's top padding, scrolling inside itself past that.
+                  "max-h-[calc(100vh_-_3.25rem_-_2_*_var(--wl-spacing-5))] w-full rounded-xl"
                 : "fixed bottom-inset right-inset top-inset z-50 w-panel rounded-xl shadow-panel",
             className,
           )}
