@@ -92,8 +92,9 @@ describe("Review, machine-wide", () => {
     for (const note of FIXTURE_NOTES_ALL) {
       expect(await screen.findByText(note.text)).toBeDefined();
     }
-    // No proposals: there is no machine-wide backlog read.
-    expect(screen.queryByRole("heading", { name: "Proposed by agents" })).toBeNull();
+    // Every project's proposals follow the answers, grouped by repo (operator, 2026-09-13).
+    expect(await screen.findByRole("heading", { name: "Proposed by agents" })).toBeDefined();
+    expect(await screen.findByRole("region", { name: WORKLEDGER.name })).toBeDefined();
     const first = screen.getByRole("link", { name: `${WORKLEDGER.name} — Review` });
     expect(first.getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
     expect(screen.getByRole("link", { name: `${DASHERO.name} — Review` }).getAttribute("href")).toBe(
@@ -190,7 +191,7 @@ describe("Jobs, machine-wide", () => {
   it("lists every repo's jobs with the repo per row and no scan or backfill controls", async () => {
     renderAt("#/jobs", machine().source);
     await screen.findByRole("heading", { name: "Jobs", level: 1 });
-    const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole("listitem");
+    const rows = within(await screen.findByRole("list", { name: "Finished, newest first" })).getAllByRole("listitem");
     expect(rows).toHaveLength(FIXTURE_JOBS_ALL.length);
     const row = rows[0]!;
     expect(within(row).getByText("failed")).toBeDefined();
@@ -211,23 +212,26 @@ describe("Jobs, machine-wide", () => {
   it("retries a row through the source of the row's repo and reconciles the row", async () => {
     const live = machine();
     renderAt("#/jobs", live.source);
-    const row = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole("listitem")[0]!;
+    const row = within(await screen.findByRole("list", { name: "Finished, newest first" })).getAllByRole("listitem")[0]!;
 
     fireEvent.click(within(row).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(live.writes).toEqual([`${DASHERO.id}:retryJob:${FIXTURE_JOBS_ALL[0]!.id}`]));
-    expect(await within(row).findByText("queued")).toBeDefined();
+    // Retried, it is queued again — in flight, not finished.
+    const flying = await screen.findByRole("list", { name: "In flight, running first" });
+    const [retried] = within(flying).getAllByRole("listitem");
+    expect(within(retried!).getByText("queued")).toBeDefined();
     // The repo column survives the reconcile: the answer was a bare `Job`, the row keeps its repo.
-    expect(within(row).getByRole("link", { name: `${DASHERO.name} — Jobs` })).toBeDefined();
+    expect(within(retried!).getByRole("link", { name: `${DASHERO.name} — Jobs` })).toBeDefined();
   });
 
   it("filters by status on the client and re-reads on job.changed", async () => {
     let jobs = FIXTURE_JOBS_ALL;
     const live = machine({ listAllJobs: () => Promise.resolve(jobs) });
     renderAt("#/jobs", live.source);
-    await screen.findByRole("list", { name: "Jobs, newest first" });
+    await screen.findByRole("list", { name: "Finished, newest first" });
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "queued" } });
-    expect(await screen.findByText("No queued jobs in any project.")).toBeDefined();
+    fireEvent.click(screen.getByRole("tab", { name: /^In flight/ }));
+    expect(await screen.findByText("Nothing in flight in any project.")).toBeDefined();
 
     jobs = [{ ...FIXTURE_JOBS_ALL[0]!, id: "01JBQ7FIXTUREJOB000000002", status: "queued", repo: WORKLEDGER }];
     live.emit({ type: "job.changed", id: "01JBQ7FIXTUREJOB000000002", status: "queued", repo: WORKLEDGER.id });

@@ -11,6 +11,7 @@ import {
   formatLocalTime,
   formatUsd,
   shortId,
+  statusVariant,
   waitingUntil,
 } from "../src/features/jobs/format.js";
 import { estimateFrom } from "../src/features/jobs/repair-sheet.js";
@@ -120,6 +121,39 @@ function renderJobs(source: LedgerSource) {
 
 afterEach(cleanup);
 
+/** One job in every status: queued and running (in flight), then done, failed and cancelled. */
+const MIXED: Job[] = [
+  job({ id: "01JOB000000000000000000001", status: "queued", created_at: "2026-09-09T09:00:00.000Z" }),
+  job({
+    id: "01JOB000000000000000000002",
+    status: "running",
+    created_at: "2026-09-09T08:00:00.000Z",
+    started_at: "2026-09-09T08:00:01.000Z",
+  }),
+  job({
+    id: "01JOB000000000000000000003",
+    kind: "backfill",
+    status: "done",
+    created_at: "2026-09-09T07:00:00.000Z",
+    started_at: "2026-09-09T07:00:01.000Z",
+    finished_at: "2026-09-09T07:10:00.000Z",
+  }),
+  job({
+    id: "01JOB000000000000000000004",
+    status: "failed",
+    created_at: "2026-09-09T06:00:00.000Z",
+    started_at: "2026-09-09T06:00:01.000Z",
+    finished_at: "2026-09-09T07:20:00.000Z",
+  }),
+  job({
+    id: "01JOB000000000000000000005",
+    kind: "extract",
+    status: "cancelled",
+    created_at: "2026-09-09T05:00:00.000Z",
+    finished_at: "2026-09-09T07:30:00.000Z",
+  }),
+];
+
 /**
  * A job row's title is its session id, and it opens the right panel — where the timestamps, the
  * error and the resumed session's log live (#134, rule 3).
@@ -214,19 +248,104 @@ describe("jobs view", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("index is locked");
   });
 
-  it("filters through listJobs(status)", async () => {
-    const { source, calls } = stubSource({}, [job({ status: "failed" })]);
+  it("reads the whole queue once and filters it through status tabs that carry their counts", async () => {
+    const { source, calls } = stubSource({}, MIXED);
     renderJobs(source);
-    await screen.findByRole("list", { name: "Jobs, newest first" });
+    await screen.findByRole("list", { name: "In flight, running first" });
+    // One read, unfiltered, so every tab can say what it holds before it is opened.
+    expect(calls.filter((call) => call.startsWith("listJobs"))).toEqual(["listJobs:all"]);
 
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "running" } });
-    await waitFor(() => expect(calls).toContain("listJobs:running"));
+    const tablist = screen.getByRole("tablist", { name: "Job status" });
+    const tabs = within(tablist).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["All 5", "In flight 2", "Done 1", "Failed 1", "Cancelled 1"]);
+    expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs[0]!.className).toContain("bg-selected");
+    expect(tabs[1]!.className).not.toContain("bg-selected");
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Done/ }));
+    expect(screen.getByRole("tab", { name: /^Done/ }).getAttribute("aria-selected")).toBe("true");
+    let rows = within(screen.getByRole("list", { name: "Jobs, newest first" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["backfill …00000003"]);
+    expect(screen.queryByRole("heading", { name: "Finished" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^In flight/ }));
+    rows = within(screen.getByRole("list", { name: "Jobs, newest first" })).getAllByRole("listitem");
+    // Running first, then queued.
+    expect(rows.map((row) => within(row).getAllByText(/queued|running/)[0]!.textContent)).toEqual([
+      "running",
+      "queued",
+    ]);
+
+    // The arrow keys move along the tablist, and focus goes with the selection.
+    fireEvent.keyDown(screen.getByRole("tab", { name: /^In flight/ }), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: /^Done/ }).getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: /^Done/ }));
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: /^All/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("splits All into In flight and Finished, in that order, each with its count", async () => {
+    renderJobs(stubSource({}, MIXED).source);
+    const flying = await screen.findByRole("list", { name: "In flight, running first" });
+    const finished = screen.getByRole("list", { name: "Finished, newest first" });
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+    expect(headings).toEqual(["In flight", "Finished"]);
+    expect(flying.compareDocumentPosition(finished) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const inFlightHead = screen.getByRole("heading", { name: "In flight" });
+    expect(inFlightHead.nextElementSibling?.textContent).toBe("2");
+    expect(within(flying).getAllByRole("listitem").map((row) => row.getAttribute("aria-label"))).toEqual([
+      "repair …00000002",
+      "repair …00000001",
+    ]);
+    // Most recently finished first, whatever order they were queued in.
+    expect(within(finished).getAllByRole("listitem").map((row) => row.getAttribute("aria-label"))).toEqual([
+      "extract …00000005",
+      "repair …00000004",
+      "backfill …00000003",
+    ]);
+  });
+
+  it("says so when one half of All is empty", async () => {
+    renderJobs(stubSource({}, [job({ status: "done", finished_at: "2026-09-09T09:05:00.000Z" })]).source);
+    expect(await screen.findByText("Nothing in flight.")).toBeDefined();
+    cleanup();
+    renderJobs(stubSource({}, [job()]).source);
+    expect(await screen.findByText("Nothing has finished yet.")).toBeDefined();
+  });
+
+  it("colours a job by its status and nothing else", async () => {
+    renderJobs(stubSource({}, MIXED).source);
+    await screen.findByRole("list", { name: "In flight, running first" });
+    const chip = (label: string, status: string) =>
+      within(screen.getByRole("listitem", { name: label })).getByText(status);
+
+    expect(chip("repair …00000001", "queued").className).toContain("bg-warning");
+    const running = chip("repair …00000002", "running");
+    expect(running.className).toContain("bg-accent");
+    expect(running.querySelector("[aria-hidden]")?.className).toContain("motion-safe:animate-pulse");
+    expect(chip("backfill …00000003", "done").className).toContain("bg-success");
+    expect(chip("repair …00000004", "failed").className).toContain("bg-destructive");
+    expect(chip("extract …00000005", "cancelled").className).toContain("bg-muted");
+    // The kind is always neutral, and always after the status.
+    const kind = within(screen.getByRole("listitem", { name: "backfill …00000003" })).getByText("backfill");
+    expect(kind.className).toContain("bg-muted");
+    expect(kind.previousElementSibling?.textContent).toBe("done");
+
+    expect(["queued", "running", "done", "failed", "cancelled"].map(statusVariant)).toEqual([
+      "warning",
+      "accent",
+      "success",
+      "destructive",
+      "secondary",
+    ]);
   });
 
   it("re-reads the queue on job.changed and on nothing else", async () => {
     const { source, calls, emit } = stubSource({}, [job()]);
     renderJobs(source);
-    await screen.findByRole("list", { name: "Jobs, newest first" });
+    await screen.findByRole("list", { name: "In flight, running first" });
     const before = calls.length;
 
     await act(async () => {
@@ -249,11 +368,10 @@ describe("jobs view", () => {
     renderJobs(source);
 
     // Scoped to the queue: the left nav's "Folders with sessions" section is a list too.
-    const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole(
+    const queuedRow = within(await screen.findByRole("list", { name: "In flight, running first" })).getByRole(
       "listitem",
     );
-    const queuedRow = rows[0]!;
-    const failedRow = rows[1]!;
+    const failedRow = within(screen.getByRole("list", { name: "Finished, newest first" })).getByRole("listitem");
 
     expect(within(queuedRow).getByRole("button", { name: "Retry" })).toHaveProperty("disabled", true);
     // Cancel loses work, so it is a quiet control whose second step is the one that confirms it
@@ -266,7 +384,10 @@ describe("jobs view", () => {
     expect(confirm.className).toContain("border-destructive");
     fireEvent.click(confirm);
     await waitFor(() => expect(calls).toContain("cancel:01JOB000000000000000000001"));
-    expect(await within(queuedRow).findByText("cancelled")).toBeDefined();
+    // A cancelled job has finished: it leaves In flight for Finished.
+    expect(await screen.findByText("Nothing in flight.")).toBeDefined();
+    const finished = screen.getByRole("list", { name: "Finished, newest first" });
+    expect(within(finished).getByText("cancelled")).toBeDefined();
 
     expect(within(failedRow).getByRole("button", { name: "Cancel" })).toHaveProperty("disabled", true);
     fireEvent.click(within(failedRow).getByRole("button", { name: "Retry" }));
@@ -280,7 +401,7 @@ describe("jobs view", () => {
     ]);
     renderJobs(source);
 
-    await screen.findByRole("list", { name: "Jobs, newest first" });
+    await screen.findByRole("list", { name: "Finished, newest first" });
     // Nothing is read until a row is opened: a log is a file, not a list column.
     expect(calls.filter((call) => call.startsWith("log:"))).toEqual([]);
 
@@ -307,7 +428,7 @@ describe("jobs view", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Cancel" }));
     fireEvent.click(within(row).getByRole("button", { name: "Confirm cancel" }));
     expect((await within(row).findByRole("alert")).textContent).toContain("already done");
-    expect(screen.getByRole("list", { name: "Jobs, newest first" })).toBeDefined();
+    expect(screen.getByRole("list", { name: "In flight, running first" })).toBeDefined();
   });
 
   it("runs a scan, reports its counts, and re-reads the queue", async () => {

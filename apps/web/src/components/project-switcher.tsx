@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import { cn } from "../lib/cn.js";
 import type { Repo } from "../lib/ledger-source.js";
-import { ONBOARDING_HREF } from "../lib/router.js";
 
 /**
  * The project switcher: the first row of the left nav in every Product Designs frame — "current
@@ -104,14 +103,6 @@ export function ProjectSwitcher({ repos, value, onSelect }: ProjectSwitcherProps
               <li className="px-4 py-3 text-sm text-muted-foreground">No project matches.</li>
             ) : null}
           </ul>
-          {/* Adding projects lives with choosing one: the frames' nav has no button for it. */}
-          <a
-            href={ONBOARDING_HREF}
-            onClick={() => setOpen(false)}
-            className="border-t border-hairline px-4 py-3 text-base font-medium leading-body tracking-body text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            Add projects
-          </a>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

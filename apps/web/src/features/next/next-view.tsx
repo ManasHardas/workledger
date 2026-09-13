@@ -11,7 +11,7 @@ import {
   rankWrites,
   reorder,
 } from "./backlog-model.js";
-import { useBacklog } from "./use-backlog.js";
+import { useBacklog, type Backlog } from "./use-backlog.js";
 import { Button } from "../../components/ui/button.js";
 import { useArm } from "../../components/ui/confirm.js";
 import { RowEmpty, RowList, RowSection } from "../../components/ui/list-row.js";
@@ -50,9 +50,32 @@ function isTyping(target: EventTarget | null): boolean {
  * runs the same `backlog-ops` function `workledger backlog …` runs, so the CLI and this list can
  * never disagree about what a transition means.
  */
-export function NextView() {
-  const source = useSource();
+export function NextView(props: NextListProps) {
   const backlog = useBacklog();
+  return <NextList backlog={backlog} {...props} />;
+}
+
+export interface NextListProps {
+  /**
+   * `proposed` renders only the "Proposed by agents" group — Review's Proposals view — and the
+   * keyboard walks only that group. Omitted, every group renders.
+   */
+  only?: "proposed";
+  /**
+   * Whether this list takes `j`/`k`/`e`/`a`/`d`/`x`/`alt+↑↓` from the page. Every project's
+   * Proposals renders one list per repo, and only one of them may own the keys — so none does.
+   */
+  keyboard?: boolean;
+  /** Whether the proposed group draws its own section head; a per-repo sub-group has one already. */
+  head?: boolean;
+}
+
+/**
+ * {@link NextView} over a backlog read the caller owns — Review reads it once for the list and
+ * for the toolbar's Proposals count, so an optimistic Accept moves both.
+ */
+export function NextList({ backlog, only, keyboard = true, head = true }: NextListProps & { backlog: Backlog }) {
+  const source = useSource();
   // One read for the whole list rather than one per row: the map is the same for every item.
   const identities = useIdentities();
   const actions = useMemo(() => backlogActions(source, backlog.run), [source, backlog.run]);
@@ -74,7 +97,10 @@ export function NextView() {
   const items = backlog.result.state === "ready" ? backlog.result.value : [];
   // The keyboard walks the rendered order, so `j` from the last proposed item lands on the first
   // accepted one rather than jumping back to the top.
-  const order = useMemo(() => flatten(items), [items]);
+  const order = useMemo(
+    () => (only === "proposed" ? flatten(items).filter((item) => item.frontmatter.status === "proposed") : flatten(items)),
+    [items, only],
+  );
   const orderRef = useRef(order);
   orderRef.current = order;
   const selectedRef = useRef(selectedId);
@@ -179,9 +205,10 @@ export function NextView() {
   );
 
   useEffect(() => {
+    if (!keyboard) return;
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onKey]);
+  }, [onKey, keyboard]);
 
   /**
    * Drop-to-reorder — the pointer's half of the same move the keyboard makes above.
@@ -229,7 +256,32 @@ export function NextView() {
 
   const proposed = groups.find((group) => group.status === "proposed")?.items ?? [];
   const accepted = items.filter((item) => item.frontmatter.status === "accepted").length;
-  const rest = groups.filter((group) => group.status !== "proposed");
+  const rest = only === "proposed" ? [] : groups.filter((group) => group.status !== "proposed");
+
+  const proposals = (
+    <>
+      {canWrite ? null : (
+        <p className="text-xs leading-tight text-subtle-foreground">
+          read-only source · accepting, discarding and editing are disabled
+        </p>
+      )}
+      {backlog.result.state === "loading" ? (
+        <p role="status" className="px-3.5 py-2 text-base leading-body tracking-body text-muted-foreground">
+          Loading…
+        </p>
+      ) : backlog.result.state === "error" ? (
+        <p role="alert" className="px-3.5 py-2 text-base leading-body tracking-body text-destructive">
+          Could not read the backlog: {backlog.result.message}
+        </p>
+      ) : items.length === 0 ? (
+        <RowEmpty>The backlog is empty. Agent-proposed items appear here as checkpoints land.</RowEmpty>
+      ) : proposed.length === 0 ? (
+        <RowEmpty>Nothing an agent proposed is waiting.</RowEmpty>
+      ) : (
+        <RowList aria-label={GROUP_LABELS.proposed}>{proposed.map((item) => renderItem(item, "proposal"))}</RowList>
+      )}
+    </>
+  );
 
   return (
     <div className="flex min-w-0 flex-col gap-6.5">
@@ -241,36 +293,21 @@ export function NextView() {
         {moved}
       </p>
 
-      <PageSection
-        id="review-proposals-heading"
-        title="Proposed by agents"
-        aside={
-          backlog.result.state === "ready"
-            ? `${String(proposed.length)} waiting · ${String(accepted)} accepted`
-            : undefined
-        }
-      >
-        {canWrite ? null : (
-          <p className="text-xs leading-tight text-subtle-foreground">
-            read-only source · accepting, discarding and editing are disabled
-          </p>
-        )}
-        {backlog.result.state === "loading" ? (
-          <p role="status" className="px-3.5 py-2 text-base leading-body tracking-body text-muted-foreground">
-            Loading…
-          </p>
-        ) : backlog.result.state === "error" ? (
-          <p role="alert" className="px-3.5 py-2 text-base leading-body tracking-body text-destructive">
-            Could not read the backlog: {backlog.result.message}
-          </p>
-        ) : items.length === 0 ? (
-          <RowEmpty>The backlog is empty. Agent-proposed items appear here as checkpoints land.</RowEmpty>
-        ) : proposed.length === 0 ? (
-          <RowEmpty>Nothing an agent proposed is waiting.</RowEmpty>
-        ) : (
-          <RowList aria-label={GROUP_LABELS.proposed}>{proposed.map((item) => renderItem(item, "proposal"))}</RowList>
-        )}
-      </PageSection>
+      {head ? (
+        <PageSection
+          id="review-proposals-heading"
+          title="Proposed by agents"
+          aside={
+            backlog.result.state === "ready"
+              ? `${String(proposed.length)} waiting · ${String(accepted)} accepted`
+              : undefined
+          }
+        >
+          {proposals}
+        </PageSection>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-2.5">{proposals}</div>
+      )}
 
       {rest.map((group) => {
         const collapsed = group.status === "discarded" && !showDiscarded;

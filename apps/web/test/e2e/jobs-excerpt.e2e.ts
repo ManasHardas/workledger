@@ -219,7 +219,7 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
     // Machine-wide first: the same repair, with the repo named on the row and no scan control.
     await page.goto(`${fixture.url}/#/jobs`);
     await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
-    const across = page.getByRole("list", { name: "Jobs, newest first" }).getByRole("listitem").first();
+    const across = page.getByRole("list", { name: "In flight, running first" }).getByRole("listitem").first();
     await expect(across).toContainText("repair");
     await expect(across.getByRole("link", { name: "repo — Jobs" })).toHaveAttribute("href", `#/r/${fixture.id}/jobs`);
     await expect(page.getByRole("button", { name: "Scan now" })).toHaveCount(0);
@@ -227,7 +227,7 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
     await page.goto(`${fixture.url}/#/r/${fixture.id}/jobs`);
     await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
 
-    const row = page.getByRole("list", { name: "Jobs, newest first" }).getByRole("listitem").first();
+    const row = page.getByRole("list", { name: "In flight, running first" }).getByRole("listitem").first();
     await expect(row).toContainText("repair");
     await expect(row).toContainText("queued");
     await expect(row.getByRole("button", { name: fixture.orphan })).toBeVisible();
@@ -257,8 +257,10 @@ test.describe("Jobs and the provenance excerpt viewer, end to end", () => {
       // The destructive colour is on the confirming step only (#134) — never on a button sitting
       // in the list.
       await row.getByRole("button", { name: "Confirm cancel", exact: true }).click();
-      await expect(row).toContainText("cancelled");
-      await expect(row.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+      // Cancelled is finished: the job leaves In flight for Finished.
+      const finished = page.getByRole("list", { name: "Finished, newest first" }).getByRole("listitem").first();
+      await expect(finished).toContainText("cancelled");
+      await expect(finished.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
     });
 
     expect(errors, "no console errors on Jobs").toEqual([]);

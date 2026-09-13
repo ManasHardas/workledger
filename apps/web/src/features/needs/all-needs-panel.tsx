@@ -1,24 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { LedgerSource, NoteAcrossRepos } from "../../lib/ledger-source.js";
+import type { LedgerSource, NoteAcrossRepos, NoteType } from "../../lib/ledger-source.js";
 import { useMachine } from "../../lib/source-context.js";
 import { useAsync } from "../../lib/use-async.js";
 import { NO_IDENTITIES, type IdentityMap } from "../identity/live.js";
-import { Answers } from "./needs-panel.js";
+import type { LiveNotes } from "./live.js";
+import { ANSWER_SECTIONS, Answers, useNotesOfType, type AnswerSection } from "./needs-panel.js";
 
 /**
- * Review's answers across every repo the daemon serves — `GET /api/notes/all` (P8), a card per
- * note, each naming its repo. There is no proposals section: there is no machine-wide backlog read.
- *
- * The selected note resolves through `forRepo(id)` of the repo its note came from, so the write carries
- * the `repo` parameter the daemon requires, and reads its session context and identities from the
- * same scoped source. The list re-reads on any `notes.changed`, whichever repo stamped it: the
- * aggregate is one request either way.
+ * The notes of `types` across every repo the daemon serves — `GET /api/notes/all` (P8) — each row
+ * naming its repo, re-read on any `notes.changed`, whichever repo stamped it: the aggregate is one
+ * request either way. Filtered by type here too, as `useLiveNotes` does for one repo.
  */
-export function AllNeedsPanel() {
+export function useLiveMachineNotes(types: readonly NoteType[], open?: boolean): LiveNotes<NoteAcrossRepos> {
   const machine = useMachine();
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  const key = types.join(",");
 
   useEffect(() => {
     return machine.subscribe((event) => {
@@ -28,25 +26,52 @@ export function AllNeedsPanel() {
 
   const result = useAsync(
     // `nonce` is a dependency, not an argument: a bump re-runs the same read.
-    useCallback(() => machine.listAllNotes({ type: ["blocker", "question"], open: true }), [machine, nonce]),
+    useCallback(async () => {
+      const wanted = key.split(",") as NoteType[];
+      const notes = await machine.listAllNotes({ type: wanted, ...(open === undefined ? {} : { open }) });
+      return notes.filter((note) => wanted.includes(note.type) && (open !== true || note.resolved !== true));
+    }, [machine, key, open, nonce]),
   );
+  return { result, refresh };
+}
+
+/**
+ * Review's answers across every repo — a card per note, each naming its repo. The read is the
+ * page's (`live`), because the toolbar counts the same notes.
+ *
+ * The selected note resolves through `forRepo(id)` of the repo its note came from, so the write carries
+ * the `repo` parameter the daemon requires, and reads its session context and identities from the
+ * same scoped source.
+ */
+export function AllNeedsPanel({
+  live,
+  section = "all",
+}: {
+  live: LiveNotes<NoteAcrossRepos>;
+  section?: AnswerSection;
+}) {
+  const machine = useMachine();
+  const result = useNotesOfType(live.result, section);
   const notes = result.state === "ready" ? result.value : [];
   const sources = useRepoSources(notes);
   const identities = useIdentitiesByRepo(sources);
+  const copy = ANSWER_SECTIONS[section];
 
   return (
     <Answers
       result={result}
       sourceOf={(note) => (note?.repo === undefined ? machine : (sources.get(note.repo.id) ?? machine))}
       identitiesOf={(note) => (note.repo === undefined ? NO_IDENTITIES : (identities.get(note.repo.id) ?? NO_IDENTITIES))}
-      onResolved={refresh}
-      empty="Nothing is waiting on you in any project. Open questions and blockers appear here."
+      onResolved={live.refresh}
+      title={copy.title}
+      label={copy.label}
+      empty={copy.emptyAcross}
     />
   );
 }
 
 /** One scoped source per distinct repo in the list, stable across re-reads of the same repos. */
-function useRepoSources(notes: NoteAcrossRepos[]): ReadonlyMap<string, LedgerSource> {
+export function useRepoSources(notes: readonly NoteAcrossRepos[]): ReadonlyMap<string, LedgerSource> {
   const machine = useMachine();
   const ids = [...new Set(notes.map((note) => note.repo.id))].sort().join(",");
   return useMemo(
