@@ -1,10 +1,10 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 
 import { actionLabel, actionsFor, armKeyFor, isAgentProposed } from "./backlog-model.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
-import { ConfirmAction } from "../../components/ui/confirm.js";
+import { useArm } from "../../components/ui/confirm.js";
 import { ListRow, RowActions, RowTitle } from "../../components/ui/list-row.js";
 
 import type { Arm } from "../../components/ui/confirm.js";
@@ -32,21 +32,30 @@ export interface BacklogItemProps extends Omit<ComponentProps<"li">, "onSelect" 
    * Without one the button keeps its own, which is the pointer-only two-step of #134 unchanged.
    */
   arm?: Arm;
+  /**
+   * `proposal` is Review's "Proposed by agents" card (frame `10:75`): the title, where it came
+   * from, Accept and Discard — nothing else. `row` is the same card for the groups below it, which
+   * keep their chips, Edit, and every move the status machine allows.
+   */
+  variant?: "proposal" | "row";
+}
+
+/** `WL-01M26N0TJEE · 01M26DA5RBB · cp 9` — the item, the session that proposed it, its checkpoint. */
+export function provenanceLine(item: BacklogView): string {
+  const { id, proposed_by: by } = item.frontmatter;
+  return [id.slice(0, 14), by.session.slice(0, 11), `cp ${String(by.checkpoint)}`].join(" · ");
 }
 
 /**
- * One backlog item, as a row (`docs/design/direction.md` §Density): the title, at most three
- * chips that carry state and nothing else, and the two controls a person uses from the list.
+ * One backlog item, as a card: the title (which opens the right panel) over a mono line naming
+ * where it came from, and the controls a person uses from the list.
  *
- * Everything the item *is* rather than what it says — the body, where it was proposed, its owner,
- * its history, the merge target — is evidence, and evidence is never inline (rule 3). It lives in
- * the right panel, which the title opens.
+ * The body, the owner, the history and the merge target are evidence, and evidence is never
+ * inline (rule 3): they live in the panel. The provenance line is short identifiers only — the
+ * full session ulid is in the panel too.
  *
- * Discard is a quiet control, not a red block sitting in the list: the destructive colour appears
- * only on the step that confirms it ({@link ConfirmAction}, #134).
- *
- * Inline rename stays on the row, because renaming is the one edit that is about the line the eye
- * is already on — `e` toggles it, exactly as it did before.
+ * Inline rename stays on the card, because renaming is the one edit that is about the line the eye
+ * is already on — `e` toggles it on every card, and the `row` cards also carry an Edit button.
  */
 export function BacklogItem({
   item,
@@ -60,6 +69,7 @@ export function BacklogItem({
   onOpen,
   onEditingChange,
   arm,
+  variant = "row",
   ...row
 }: BacklogItemProps) {
   const { frontmatter: fm } = item;
@@ -79,9 +89,10 @@ export function BacklogItem({
 
   const disabled = !canWrite || busy;
   const legal = actionsFor(fm.status);
-  // Discard is rendered by itself, as the confirming control; the rest of the machine's moves are
-  // quiet buttons, and the ones the row has no width for are in the panel beside them.
-  const moves = legal.filter((action) => action !== "discard");
+  const proposal = variant === "proposal";
+  // Discard is rendered by itself, as the confirming control. A proposal card offers Accept beside
+  // it and nothing else (the frame); Done is still `d`, and in the panel.
+  const moves = legal.filter((action) => action !== "discard" && (!proposal || action === "accept"));
 
   return (
     <ListRow
@@ -92,20 +103,19 @@ export function BacklogItem({
       // whichever one `j`/`k` last landed on (#138). `focusin` bubbles, so one handler covers
       // the title, the chips and every control on the row.
       onFocus={onSelect}
+      className="gap-3"
       {...row}
     >
       {/*
-        `basis-48`, not `flex-col` below `sm`: a row that is `flex-col` *and* `flex-wrap` wraps into
-        a second **column** and grows sideways, which is rule 5 broken in the one place the rule is
-        about. A wrapping row in row direction whose title prefers 12 rem instead pushes the
-        controls onto a second line when there is no room for both.
+        `basis-48`: a wrapping row whose text column prefers 12 rem pushes the controls onto a
+        second line when there is no room for both, rather than growing sideways (rule 5).
       */}
-      <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+      <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.75">
         {editing ? (
-          <label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+          <label className="flex min-w-0 items-center gap-2 text-xs leading-tight text-muted-foreground">
             <span className="sr-only sm:not-sr-only">Title</span>
             <Input
-              className="h-7 min-w-0 flex-1 text-sm"
+              className="h-7 min-w-0 flex-1"
               value={title}
               autoFocus
               onChange={(event) => setTitle(event.target.value)}
@@ -116,40 +126,39 @@ export function BacklogItem({
             />
           </label>
         ) : (
-          <RowTitle aria-haspopup="dialog" onClick={onOpen}>
-            {fm.title}
-          </RowTitle>
+          <div className="flex min-w-0 items-center gap-2">
+            <RowTitle aria-haspopup="dialog" onClick={onOpen}>
+              {fm.title}
+            </RowTitle>
+            {proposal ? null : <Chips item={item} />}
+          </div>
         )}
-        <Chips item={item} />
+        <p className="truncate font-mono text-xs leading-tight text-subtle-foreground">{provenanceLine(item)}</p>
       </div>
 
-      <RowActions className="ml-auto">
+      <RowActions className="ml-auto gap-2">
         {editing ? (
           <>
-            <Button variant="quiet" size="xs" onClick={save} disabled={disabled}>
+            <Button size="sm" onClick={save} disabled={disabled}>
               Save
             </Button>
-            <Button variant="quiet" size="xs" onClick={() => onEditingChange(false)}>
+            <Button variant="quiet" size="sm" onClick={() => onEditingChange(false)}>
               Cancel
             </Button>
           </>
         ) : (
           <>
-            {/* Rename is the one edit that is about the line the eye is already on, so it has a
-                control on the row as well as the `e` key — a pointer has no keyboard shortcut. */}
-            <Button
-              variant="quiet"
-              size="xs"
-              onClick={() => onEditingChange(true)}
-              disabled={disabled}
-            >
-              Edit
-            </Button>
+            {proposal ? null : (
+              // Rename has a control on the row as well as the `e` key — a pointer has no shortcut.
+              <Button variant="quiet" size="sm" onClick={() => onEditingChange(true)} disabled={disabled}>
+                Edit
+              </Button>
+            )}
             {moves.map((action) => (
               <Button
                 key={action}
-                variant="quiet"
-                size="xs"
+                variant={action === "accept" ? "default" : "outline"}
+                size="sm"
                 onClick={() => actions.run(item, action)}
                 disabled={disabled}
               >
@@ -157,9 +166,7 @@ export function BacklogItem({
               </Button>
             ))}
             {legal.includes("discard") ? (
-              <ConfirmAction
-                label="Discard"
-                confirmLabel="Confirm discard"
+              <DiscardControl
                 disabled={disabled}
                 arm={arm}
                 armKey={armKeyFor("discard", fm.id)}
@@ -171,7 +178,7 @@ export function BacklogItem({
       </RowActions>
 
       {error === undefined ? null : (
-        <p role="alert" className="basis-full text-xs text-destructive">
+        <p role="alert" className="basis-full text-xs leading-tight text-destructive">
           {error}
         </p>
       )}
@@ -180,13 +187,96 @@ export function BacklogItem({
 }
 
 /**
- * State, never decoration (rule 2): the priority, and whether a human has confirmed the item yet.
+ * Discard, drawn as the frame draws it — the destructive outline from the start — and still the
+ * two-step of #134/#138: the first press (or `x`) arms it, the second runs it.
  *
- * Two, not three. The areas are a taxonomy rather than a state, so they are in the panel; the
- * priority is an outline chip because amber, red and green are reserved for status
- * (direction.md §Tokens) and a p2 is neither blocked nor failed nor verified; and the
- * agent-proposed marker is the muted kind chip rather than the warning one it used to be — every
- * unconfirmed row wearing amber made the whole list look like a warning.
+ * It is `ConfirmAction`'s latch and behaviour with the frame's trigger: arming renames the control
+ * to "Confirm discard" and says so in a live region, Escape or Keep disarm it and hand the focus
+ * back, and moving focus out of the pair disarms it.
+ */
+function DiscardControl({
+  disabled,
+  arm,
+  armKey,
+  onConfirm,
+}: {
+  disabled: boolean;
+  arm?: Arm;
+  armKey: string;
+  onConfirm: () => void;
+}) {
+  const own = useArm();
+  const latch = arm ?? own;
+  const key = armKey;
+  const armed = latch.isArmed(key);
+
+  const trigger = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (armed) confirm.current?.focus();
+  }, [armed]);
+
+  useEffect(() => {
+    if (latch.restoring !== key) return;
+    trigger.current?.focus();
+    latch.restoreTaken(key);
+  }, [latch, key]);
+
+  useEffect(() => {
+    if (disabled && armed) latch.disarm();
+  }, [disabled, armed, latch]);
+
+  if (!armed) {
+    return (
+      <Button ref={trigger} type="button" variant="danger" size="sm" disabled={disabled} onClick={() => latch.arm(key)}>
+        Discard
+      </Button>
+    );
+  }
+
+  return (
+    <div
+      ref={wrap}
+      className="flex shrink-0 items-center gap-2"
+      onBlur={(event) => {
+        if (!wrap.current?.contains(event.relatedTarget as Node | null)) latch.disarm();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          latch.disarm({ restoreFocus: true });
+        }
+      }}
+    >
+      <span role="status" className="sr-only">
+        Discard armed. Confirm discard, or Escape to keep it.
+      </span>
+      <Button
+        ref={confirm}
+        type="button"
+        variant="danger"
+        size="sm"
+        disabled={disabled}
+        onClick={() => {
+          latch.disarm();
+          onConfirm();
+        }}
+      >
+        Confirm discard
+      </Button>
+      <Button type="button" variant="quiet" size="sm" onClick={() => latch.disarm({ restoreFocus: true })}>
+        Keep
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * State, never decoration (rule 2): the priority, and whether a human has confirmed the item yet.
+ * Only on the `row` cards: the proposal card is the frame's, which carries neither — every item in
+ * that section is agent-proposed, and its priority is in the panel.
  */
 function Chips({ item }: { item: BacklogView }) {
   const { frontmatter: fm } = item;

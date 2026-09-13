@@ -1,40 +1,89 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
+import { Module, ModuleHead, ModuleSection, ModuleTitle } from "../../components/ui/module.js";
 import { Panel } from "../../components/ui/panel.js";
 import { TextareaField } from "../../components/ui/textarea-field.js";
 import { messageOf } from "../../lib/errors.js";
-import type { Actor, LedgerSource, NoteRef, Repo } from "../../lib/ledger-source.js";
+import type { LedgerSource, NoteRef, ParsedSession, Repo } from "../../lib/ledger-source.js";
+import { formatDayMonthYear } from "../ledger/format.js";
 import { ActorName } from "../identity/actor-name.js";
 import { NO_IDENTITIES, type IdentityMap } from "../identity/live.js";
 
 /**
- * The note in full, and the decision that resolves it — in the right panel (rule 3).
+ * A note in full, and the answer that resolves it — two presentations of one form.
+ *
+ * From 1280 px it is Review's docked "Selected" module ({@link NoteModule}, frame `10:121`); below
+ * that there is no right column, so the same readings and the same form open in the floating
+ * {@link NotePanel}. Both submit through {@link NoteForm}, so the two can never disagree about
+ * what an answer writes.
  *
  * A `NoteRef` carries its own `session`, `cp` and `index`, which is the whole of a `resolveNote`
- * ref, so the panel never reconstructs one from a session listing. `source` is a prop rather than
- * `useSource()` because the machine-wide tab shows notes from several repos in one list, and each
- * has to resolve through the source of the repo its note lives in (P8).
+ * ref, so nothing reconstructs one from a session listing. `source` is a prop rather than
+ * `useSource()` because the machine-wide Review shows notes from several repos in one list, and
+ * each has to resolve through the source of the repo its note lives in (P8).
  *
- * The panel stays mounted with `note === null` so focus returns to the row that opened it and a
- * second row replaces the contents rather than closing and reopening.
+ * `session` is the note's own session when it has been read, and `undefined` until then (or when
+ * the read failed): it is context — the goal, the author, the checkpoint's time — never what makes
+ * the note resolvable, so every reading falls back to what the `NoteRef` itself carries.
+ */
+
+export interface NoteViewProps {
+  note: NoteRef;
+  source: LedgerSource;
+  session?: ParsedSession;
+  identities?: IdentityMap;
+  onResolved: () => void;
+  /** Bumped by an Answer button: the form takes the focus each time it changes. */
+  focusSignal?: number;
+}
+
+/** `blocker` stops work; `question` is asked. The chip says which, in the status colours. */
+export function NoteChip({ type, className }: { type: NoteRef["type"]; className?: string }) {
+  return (
+    <Badge variant={type === "blocker" ? "destructive" : "accent"} className={className}>
+      {type}
+    </Badge>
+  );
+}
+
+/** When the checkpoint that raised `note` was recorded, if its session has been read. */
+export function checkpointAt(note: NoteRef, session: ParsedSession | undefined): string | undefined {
+  return session?.frontmatter.checkpoints.find((checkpoint) => checkpoint.n === note.cp)?.at;
+}
+
+/** Review's docked "Selected" module: the chip and the note, its readings, and the answer. */
+export function NoteModule({ note, source, session, identities = NO_IDENTITIES, onResolved, focusSignal }: NoteViewProps) {
+  const titleId = useId();
+  return (
+    <Module aria-labelledby={titleId}>
+      <ModuleHead className="gap-2">
+        <NoteChip type={note.type} className="self-start" />
+        <ModuleTitle id={titleId}>{note.text}</ModuleTitle>
+      </ModuleHead>
+      <NoteReadings note={note} session={session} identities={identities} framed />
+      <NoteForm note={note} source={source} onResolved={onResolved} focusSignal={focusSignal} framed />
+    </Module>
+  );
+}
+
+/**
+ * The same note in the floating right panel, for widths with no right column.
+ *
+ * The panel stays mounted with `note === null` so focus returns to the card that opened it and a
+ * second card replaces the contents rather than closing and reopening.
  */
 export function NotePanel({
   note,
   source,
+  session,
   identities = NO_IDENTITIES,
   repo,
   onResolved,
   onClose,
-}: {
-  note: NoteRef | null;
-  source: LedgerSource;
-  identities?: IdentityMap;
-  repo?: Repo;
-  onResolved: () => void;
-  onClose: () => void;
-}) {
+  focusSignal,
+}: Omit<NoteViewProps, "note"> & { note: NoteRef | null; repo?: Repo; onClose: () => void }) {
   return (
     <Panel
       open={note !== null}
@@ -51,39 +100,98 @@ export function NotePanel({
       }
     >
       {note === null ? null : (
-        <NoteBody
-          note={note}
-          source={source}
-          identities={identities}
-          onResolved={() => {
-            onResolved();
-            onClose();
-          }}
-        />
+        <div className="flex flex-col gap-4">
+          <NoteReadings note={note} session={session} identities={identities} framed={false} />
+          <NoteForm
+            note={note}
+            source={source}
+            focusSignal={focusSignal}
+            framed={false}
+            onResolved={() => {
+              onResolved();
+              onClose();
+            }}
+          />
+        </div>
       )}
     </Panel>
   );
 }
 
-function NoteBody({
+/** One labelled reading: a module section when docked, a plain block inside the panel. */
+function Reading({ label, framed, children }: { label: string; framed: boolean; children: ReactNode }) {
+  if (framed) return <ModuleSection label={label}>{children}</ModuleSection>;
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <p className="text-xs font-medium leading-tight text-muted-foreground">{label}</p>
+      <div className="min-w-0 break-words text-base leading-body tracking-body text-foreground">{children}</div>
+    </div>
+  );
+}
+
+/** "Raised in", "Where", and why the agent stopped or asked (`10:126`–`10:134`). */
+function NoteReadings({
+  note,
+  session,
+  identities,
+  framed,
+}: {
+  note: NoteRef;
+  session: ParsedSession | undefined;
+  identities: IdentityMap;
+  framed: boolean;
+}) {
+  const at = checkpointAt(note, session);
+  const author = session?.frontmatter.author;
+  return (
+    <>
+      <Reading label="Raised in" framed={framed}>
+        {/* The goal keeps an element of its own so the author under it is a sibling rather than
+            text spliced into the middle of it. */}
+        <p>{session?.goal ?? `session ${note.session}`}</p>
+        {author === undefined ? null : (
+          <p className="text-xs leading-tight text-subtle-foreground">
+            <ActorName actor={author} identities={identities} />
+          </p>
+        )}
+      </Reading>
+      <Reading label="Where" framed={framed}>
+        <p className="break-words font-mono text-xs leading-tight">
+          {[note.session, `cp ${String(note.cp)}`, ...(at === undefined ? [] : [formatDayMonthYear(at)])].join(" · ")}
+        </p>
+      </Reading>
+      {note.reason === undefined || note.reason === "" ? null : (
+        <Reading label={note.type === "blocker" ? "Why it stopped work" : "Why it is asked"} framed={framed}>
+          {note.reason}
+        </Reading>
+      )}
+    </>
+  );
+}
+
+/**
+ * "Your answer" — recorded through `resolveNote` as a decision note on the session the note came
+ * from. A read-only source rejects every write, so the field and the button are disabled rather
+ * than hidden, and the line beside the button says why.
+ */
+function NoteForm({
   note,
   source,
-  identities,
   onResolved,
+  focusSignal,
+  framed,
 }: {
   note: NoteRef;
   source: LedgerSource;
-  identities: IdentityMap;
   onResolved: () => void;
+  focusSignal?: number;
+  framed: boolean;
 }) {
-  const { goal, author } = useSessionContext(source, note.session);
   const fieldId = useId();
+  const field = useRef<HTMLTextAreaElement>(null);
   const [decision, setDecision] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // A read-only source rejects every write. The control is disabled rather than hidden, so the
-  // reason it cannot be used stays visible.
   const resolvable = source.capabilities.write;
 
   useEffect(() => {
@@ -91,16 +199,21 @@ function NoteBody({
     setError(null);
   }, [note.session, note.cp, note.index]);
 
+  // A tick later than the render that asked, so a panel opening in the same render (whose dialog
+  // moves focus into itself on mount) does not take the focus straight back.
+  useEffect(() => {
+    if (focusSignal === undefined || focusSignal === 0) return;
+    const timer = setTimeout(() => field.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [focusSignal]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (decision.trim() === "") return;
     setBusy(true);
     setError(null);
     try {
-      await source.resolveNote(
-        { session: note.session, cp: note.cp, index: note.index },
-        decision.trim(),
-      );
+      await source.resolveNote({ session: note.session, cp: note.cp, index: note.index }, decision.trim());
       setDecision("");
       onResolved();
     } catch (cause) {
@@ -111,103 +224,35 @@ function NoteBody({
   }
 
   return (
-    <div className="flex flex-col gap-4 text-sm">
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-medium uppercase tracking-wide text-subtle-foreground">Session</p>
-        {/* The goal keeps an element of its own so the author beside it is a sibling rather than
-            text spliced into the middle of it. */}
-        <p className="text-xs text-muted-foreground">
-          <span>{goal ?? `session ${note.session}`}</span>
-          {author ? (
-            <>
-              {" — "}
-              <ActorName actor={author} identities={identities} />
-            </>
-          ) : null}
+    <form
+      className={framed ? "flex min-w-0 flex-col gap-2 border-t border-hairline px-4 pb-3.5 pt-3" : "flex min-w-0 flex-col gap-2"}
+      onSubmit={submit}
+    >
+      <label htmlFor={fieldId} className="text-xs font-medium leading-tight text-muted-foreground">
+        Your answer
+      </label>
+      <TextareaField
+        ref={field}
+        id={fieldId}
+        rows={2}
+        value={decision}
+        onChange={(event) => setDecision(event.target.value)}
+        placeholder="What should happen, and why."
+        disabled={busy || !resolvable}
+      />
+      <div className="flex min-w-0 items-center gap-2">
+        <p className="min-w-0 flex-1 text-xs leading-tight text-subtle-foreground">
+          {resolvable ? "Recorded as a decision note on the session" : "This source is read-only."}
         </p>
-        <p className="font-mono text-xs text-subtle-foreground">{note.session}</p>
+        <Button type="submit" size="sm" disabled={busy || !resolvable || decision.trim() === ""}>
+          {busy ? "Saving…" : "Answer"}
+        </Button>
       </div>
-
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-medium uppercase tracking-wide text-subtle-foreground">Note</p>
-        <p className="flex flex-wrap items-center gap-2">
-          <Badge variant={note.type === "blocker" ? "destructive" : "accent"}>{note.type}</Badge>
-          <span className="min-w-0">{note.text}</span>
-        </p>
-      </div>
-
-      <form className="flex flex-col gap-2" onSubmit={submit}>
-        <label htmlFor={fieldId} className="text-xs font-medium uppercase tracking-wide text-subtle-foreground">
-          Your decision
-        </label>
-        <TextareaField
-          id={fieldId}
-          rows={4}
-          value={decision}
-          onChange={(event) => setDecision(event.target.value)}
-          placeholder="What should happen, and why."
-          disabled={busy || !resolvable}
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="submit"
-            size="sm"
-            variant="outline"
-            disabled={busy || !resolvable || decision.trim() === ""}
-          >
-            {busy ? "Saving…" : "Resolve"}
-          </Button>
-          {resolvable ? null : (
-            <span className="text-xs text-muted-foreground">This source is read-only.</span>
-          )}
-        </div>
-      </form>
-
       {error === null ? null : (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-xs leading-tight text-destructive">
           Could not resolve this note: {error}
         </p>
       )}
-    </div>
+    </form>
   );
-}
-
-/** What a note's own session contributes to its panel: what it was for, and whose it was. */
-interface SessionContext {
-  goal: string | null;
-  /** The session's `author`, the one email a `NoteRef` can be attributed to. */
-  author: Actor | null;
-}
-
-const NO_CONTEXT: SessionContext = { goal: null, author: null };
-
-/**
- * The goal and author of the session a note came from, read when the panel opens.
- *
- * It is context, not the note: a panel that cannot get it falls back to the session ulid, which
- * still identifies the session and still resolves. Reading it here rather than joining a
- * `listSessions()` page is what keeps that page's `limit` out of whether a note is resolvable —
- * and reading it per *open panel* rather than per row is one request instead of one per note.
- */
-function useSessionContext(source: LedgerSource, ulid: string): SessionContext {
-  const [context, setContext] = useState<SessionContext>(NO_CONTEXT);
-
-  useEffect(() => {
-    let live = true;
-    setContext(NO_CONTEXT);
-    source.getSession(ulid).then(
-      (session) => {
-        if (live) setContext({ goal: session.goal, author: session.frontmatter.author });
-      },
-      () => {
-        // Rendered as the ulid fallback above rather than swallowed: the panel stays usable.
-        if (live) setContext(NO_CONTEXT);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [source, ulid]);
-
-  return context;
 }

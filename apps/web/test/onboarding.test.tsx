@@ -666,7 +666,7 @@ describe("Home", () => {
   it("stays on Home when repos exist", async () => {
     window.location.hash = "#/";
     render(<App source={machine(FIXTURE_REPOS)} />);
-    await screen.findByRole("list", { name: "Projects" });
+    await screen.findByRole("list", { name: "Active this week" });
     expect(window.location.hash).toBe("#/");
   });
 
@@ -722,7 +722,7 @@ describe("Home", () => {
     );
     const banner = await screen.findByRole("status");
     expect(banner.textContent).toBe("Backfilled 2 of 3 sessions; 1 failed — see Jobs.Dismiss");
-    expect(banner.className).toContain("bg-warning");
+    expect(banner.className).toContain("border-warning");
     expect(within(banner).getByRole("link", { name: "see Jobs" }).getAttribute("href")).toBe("#/jobs");
   });
 });

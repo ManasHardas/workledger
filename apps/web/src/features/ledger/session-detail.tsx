@@ -1,269 +1,409 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AsyncPanel } from "../../components/async-panel.js";
-import { RepairSheet } from "../jobs/repair-sheet.js";
-import { useRepoId, useSource } from "../../lib/source-context.js";
+import { Aside, useAsideDocked } from "../../components/aside.js";
 import { Badge } from "../../components/ui/badge.js";
+import { PageBody, PageHeader, PageSection } from "../../components/ui/page.js";
 import { Panel } from "../../components/ui/panel.js";
-import { commitHref, editorHref, fileHref } from "../../lib/ledger-source.js";
-import type {
-  EditorScheme,
-  Line as DoneLine,
-  NoteLine,
-  ParsedSession,
-  RepoRemote,
-  Verified,
-} from "../../lib/ledger-source.js";
 import { cn } from "../../lib/cn.js";
+import type { Line as DoneLine, NoteLine, ParsedSession } from "../../lib/ledger-source.js";
+import { useRepoId, useSource } from "../../lib/source-context.js";
+import { RepairSheet } from "../jobs/repair-sheet.js";
 import { ledgerListHref } from "./detail-route.js";
-import { cpMarker, formatInstant } from "./format.js";
-import { checkpointLabel, recap, type RecapPoint } from "./recap.js";
+import { cpMarker, formatDayMonth, formatInstant, sessionSpan } from "./format.js";
 import { useLiveSession } from "./live.js";
-import { ProvenancePanel } from "./provenance-panel.js";
+import { ProvenanceModule } from "./provenance-panel.js";
+import { checkpointLabel, recap, type RecapPoint } from "./recap.js";
+import { OutcomeFields, outcomeContext, type OutcomeContext } from "./session-outcome.js";
 
 /**
- * One session in full: the four body sections the CLI writes — Goal, Done, Remaining, Notes — then
- * Memory when the session committed anything to a memory file, anything the parser could not
- * classify, and where each line came from.
+ * One session, as the Session frame draws it (`plans/feature-p9-figma-screens.md` §Session): the
+ * goal and what the session was, a recap of what happened grouped by evidence, what it left open,
+ * and — in the right column — the Provenance module that says where each of those came from.
  *
- * Every line carries its `[cp n]` marker, because the checkpoint is what makes a ledger line
- * checkable against the transcript; without it a line is just a claim.
+ * What the frame omits stays reachable below it, in the same style (operator decision 1): notes,
+ * memory, lines the parser kept verbatim, where the session ran, and Repair.
  *
- * Amendment 11 (docs/contracts/p8/daemon-and-api.md): the page is for the human. Done shows the
- * gist of each item and nothing else; the specifics — detail, commit, files, verified — wait in a
- * side drawer until an item is opened. Discovery notes are written for the next agent, so they sit
- * behind a disclosure; blocker, question and decision are the ones a person acts on.
+ * Amendment 11 (docs/contracts/p8/daemon-and-api.md): the page is for the human. An outcome shows
+ * its gist and nothing else; its detail, files, commit and verification wait until it is opened —
+ * in the Provenance module when the right column is on screen, in a floating panel when it is not.
+ * Discovery notes are written for the next agent, so they sit behind a disclosure.
  */
 export function SessionDetail({ ulid }: { ulid: string }) {
   const session = useLiveSession(ulid);
   const repo = useRepoId();
 
   return (
-    <section
-      aria-labelledby="ledger-heading"
-      className="flex w-full max-w-[var(--wl-spacing-reading)] flex-col gap-4"
-    >
-      <div className="flex flex-col gap-2">
-        <a
-          href={ledgerListHref(repo)}
-          className="w-fit rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          ← All sessions
-        </a>
-        <h2 id="ledger-heading" className="text-xl font-extrabold">
-          Session
-        </h2>
-      </div>
-      <AsyncPanel result={session} empty="This session is no longer in the ledger.">
-        {(value) => <SessionBody session={value} />}
-      </AsyncPanel>
-    </section>
+    <>
+      <SessionHeader repo={repo} name={session.state === "ready" ? sessionRepoName(session.value) : null} />
+      <PageBody rhythm="session">
+        <AsyncPanel result={session} empty="This session is no longer in the ledger.">
+          {(value) => <SessionBody session={value} />}
+        </AsyncPanel>
+      </PageBody>
+    </>
+  );
+}
+
+/** The Session header: a way back to the Ledger, then the repo the session belongs to. */
+export function SessionHeader({ repo, name }: { repo: string; name: string | null }) {
+  return (
+    <PageHeader>
+      <a
+        href={ledgerListHref(repo)}
+        className="shrink-0 whitespace-nowrap rounded-sm text-base leading-body tracking-body text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        ← Ledger
+      </a>
+      <p className="min-w-0 flex-1 truncate text-base font-medium leading-body tracking-body text-foreground">
+        {name ?? ""}
+      </p>
+    </PageHeader>
   );
 }
 
 /** The last path segment: a session is about `card-shopify_store`, not about a whole absolute path. */
-function repoName(root: string): string {
-  return root.split("/").filter((part) => part !== "").at(-1) ?? root;
+function lastSegment(path: string): string {
+  return path.split("/").filter((part) => part !== "").at(-1) ?? path;
 }
+
+/** The repo's short name: its local root when the daemon sent one, else the frontmatter's `host/path`. */
+function sessionRepoName(session: ParsedSession): string {
+  return lastSegment(session.repoPath ?? session.frontmatter.repo);
+}
+
+const plural = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
 
 /** The note types a person reads by default; everything else is `For agents`. */
 const HUMAN_NOTE_TYPES: ReadonlySet<NoteLine["type"]> = new Set(["blocker", "question", "decision"]);
 
-function SessionBody({ session }: { session: ParsedSession }) {
-  const { frontmatter } = session;
-  const source = useSource();
-  /** The Done item whose drawer is open, by position — two items may share a gist. */
-  const [openDone, setOpenDone] = useState<number | null>(null);
+const STATUS_VARIANT = {
+  open: "default",
+  ended: "secondary",
+  crashed: "destructive",
+  repaired: "warning",
+} as const;
 
+/** How many recap points show before "Show all". */
+const FIRST_POINTS = 4;
+
+const BODY = "text-base leading-body tracking-body";
+const META = "text-xs leading-tight text-subtle-foreground";
+const LINK =
+  "rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function SessionBody({ session }: { session: ParsedSession }) {
+  const source = useSource();
+  const docked = useAsideDocked();
+  /** The outcome that is open, by position — two outcomes may share a gist. */
+  const [openDone, setOpenDone] = useState<number | null>(null);
+  const opened = openDone === null ? null : (session.done[openDone] ?? null);
+  const open = (line: DoneLine) => setOpenDone(session.done.indexOf(line));
+
+  const memory = session.memory ?? [];
   const humanNotes = session.notes.filter((line) => HUMAN_NOTE_TYPES.has(line.type));
   const agentNotes = session.notes.filter((line) => !HUMAN_NOTE_TYPES.has(line.type));
-  const memory = session.memory ?? [];
-  const opened = openDone === null ? null : (session.done[openDone] ?? null);
   // Derived at render, never stored: the outcomes already carry the evidence that groups them.
   const points = recap(session.done);
 
   return (
-    <div className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-2 pb-4">
-        <Badge variant={frontmatter.status === "open" ? "default" : "outline"}>
-          {frontmatter.status}
-        </Badge>
-        <Badge variant="secondary">{frontmatter.harness}</Badge>
-        {/*
-          `break-all` and a minimum of nothing: `started in` and `about` are absolute paths, which
-          have no space to wrap at, and rule 5 says nothing in the middle pane scrolls sideways at
-          375 px.
-        */}
-        <span className="min-w-0 break-all text-xs text-muted-foreground">
-          {frontmatter.author.name} · started {formatInstant(frontmatter.started)}
-          {/*
-            Two facts the ledger keeps apart (P8 amendment 10): where the harness was launched,
-            which only says where the transcript lives, and which repos the session is about,
-            which is why it is in this ledger. Older sessions recorded neither.
-          */}
-          {session.startedIn !== null ? ` · started in ${session.startedIn}` : ""}
-          {session.about.length > 0 ? ` · about ${session.about.map(repoName).join(", ")}` : ""}
-        </span>
-        {/*
-          Repair is a write, so it is absent — not disabled — on a source that cannot write: a
-          Dome card has no queue to put the job in, and a control that could only ever refuse is
-          worse than no control (design spec §14.2).
-        */}
-        {source.capabilities.write ? (
-          <span className="ml-auto">
-            <RepairSheet session={frontmatter.id} />
-          </span>
-        ) : null}
-      </div>
+    <>
+      <Goal session={session} />
 
-      {/*
-        The goal carries no `[cp n]` marker: the wire's `goal` is the single current string
-        (api.md §Read models), not the list of lines core parses, so there is no checkpoint to
-        attribute it to.
-      */}
-      <Section title="Goal">
-        {session.goal === null ? <Empty>No goal recorded.</Empty> : <p className="text-sm">{session.goal}</p>}
-      </Section>
-
-      <Section
+      <PageSection
+        id="what-happened"
         title="What happened"
         aside={
           session.done.length === 0
             ? undefined
-            : `${String(session.done.length)} ${session.done.length === 1 ? "outcome" : "outcomes"}, grouped by evidence`
+            : `${plural(session.done.length, "outcome", "outcomes")}, grouped by evidence`
         }
+        className="gap-3.5"
       >
         {session.done.length === 0 ? (
           <Empty>Nothing recorded as done yet.</Empty>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {points.map((point) => (
-              <RecapCard
-                key={point.key}
-                point={point}
-                onOpen={(line) => setOpenDone(session.done.indexOf(line))}
-              />
-            ))}
-          </ul>
+          <Recap points={points} total={session.done.length} onOpen={open} opensPanel={!docked} />
         )}
-      </Section>
+      </PageSection>
 
-      <Section title="Remaining">
+      <PageSection id="left-open" title="Left open">
         {session.remaining.length === 0 ? (
           <Empty>Nothing left open.</Empty>
         ) : (
-          <Lines>
+          <ul className="flex flex-col">
             {session.remaining.map((line, index) => (
-              <Line key={`${line.cp}-${index}`} cp={line.cp}>
-                {line.text}
-                <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                  <Badge variant="outline" className="font-mono">{`→ ${line.ref} (${line.rel})`}</Badge>
-                  {line.why ? <span className="min-w-0">{line.why}</span> : null}
-                  {line.blocked_by?.length ? (
-                    <span>blocked by {line.blocked_by.join(", ")}</span>
-                  ) : null}
+              <li key={`${String(line.cp)}-${String(index)}`} className="flex items-center gap-2.5 py-1.5">
+                <span className={cn(BODY, "min-w-0 flex-1 break-words text-foreground")}>{line.text}</span>
+                <span title={line.ref} className="shrink-0 whitespace-nowrap font-mono text-xs leading-tight text-subtle-foreground">
+                  {shortRef(line.ref)}
                 </span>
-              </Line>
+              </li>
             ))}
-          </Lines>
+          </ul>
         )}
-      </Section>
+      </PageSection>
 
-      <Section title="Notes">
+      {/* Below the frame (operator decision 1): what it omits, in the same style. */}
+      <PageSection id="notes" title="Notes">
         {session.notes.length === 0 ? (
           <Empty>No notes on this session.</Empty>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2.5">
             {humanNotes.length === 0 ? (
               <Empty>Nothing here needs a person.</Empty>
             ) : (
-              <Lines>
-                {humanNotes.map((line, index) => (
-                  <Note key={`${line.cp}-${index}`} line={line} />
-                ))}
-              </Lines>
+              <Notes notes={humanNotes} />
             )}
             {agentNotes.length > 0 ? <ForAgents notes={agentNotes} /> : null}
           </div>
         )}
-      </Section>
+      </PageSection>
 
       {memory.length > 0 ? (
-        <Section title="Memory">
-          <p className="mb-2 text-xs text-muted-foreground">
-            Facts this session committed to a memory file.
-          </p>
-          <ul className="flex flex-col gap-2">
+        <PageSection id="memory" title="Memory" aside="Facts this session committed to a memory file">
+          <ul className="flex flex-col">
             {memory.map((entry, index) => (
-              <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-                <span className="min-w-0">{entry.text}</span>
+              <li key={index} className="flex items-center gap-2.5 py-1.5">
+                <span className={cn(BODY, "min-w-0 flex-1 break-words text-foreground")}>{entry.text}</span>
                 {entry.file ? (
-                  <Badge variant="outline" className="font-mono">
-                    {entry.file}
-                  </Badge>
+                  <span className="shrink-0 font-mono text-xs leading-tight text-subtle-foreground">{entry.file}</span>
                 ) : null}
               </li>
             ))}
           </ul>
-        </Section>
+        </PageSection>
       ) : null}
 
       {session.unparsed.length > 0 ? (
-        <Section title="Unparsed">
-          <p className="mb-2 text-xs text-muted-foreground">
-            Lines the parser did not recognise. They are kept verbatim and re-emitted on the next
-            write, so a hand edit is never deleted.
+        <PageSection id="unparsed" title="Unparsed">
+          <p className={META}>
+            Lines the parser did not recognise. They are kept verbatim and re-emitted on the next write, so a hand
+            edit is never deleted.
           </p>
-          <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs text-muted-foreground">
+          <pre className="overflow-x-auto rounded-lg border border-hairline bg-card p-3 font-mono text-xs leading-tight text-muted-foreground">
             {session.unparsed.map((line) => `${line.section}: ${line.line}`).join("\n")}
           </pre>
-        </Section>
+        </PageSection>
       ) : null}
 
-      <ProvenancePanel session={session} />
+      {/*
+        Two facts the ledger keeps apart (P8 amendment 10): where the harness was launched, which
+        only says where the transcript lives, and which repos the session is about, which is why it
+        is in this ledger. Older sessions recorded neither. `break-all`: both are absolute paths,
+        which have no space to wrap at.
+      */}
+      {session.startedIn !== null || session.about.length > 0 ? (
+        <PageSection id="where-it-ran" title="Where it ran">
+          <p className={cn(META, "break-all")}>
+            {[
+              ...(session.startedIn === null ? [] : [`This session started in ${session.startedIn}`]),
+              ...(session.about.length === 0
+                ? []
+                : [`${session.startedIn === null ? "This session is about" : "about"} ${session.about.map(lastSegment).join(", ")}`]),
+            ].join(" · ")}
+          </p>
+        </PageSection>
+      ) : null}
 
-      <DoneDrawer
-        line={opened}
-        checkpointAt={opened ? frontmatter.checkpoints.find((c) => c.n === opened.cp)?.at : undefined}
-        remote={session.remote ?? null}
-        editor={session.editor}
-        repoPath={session.repoPath}
-        onClose={() => setOpenDone(null)}
-      />
+      {/*
+        Repair is a write, so it is absent — not disabled — on a source that cannot write: a Dome
+        card has no queue to put the job in, and a control that could only ever refuse is worse than
+        no control (design spec §14.2).
+      */}
+      {source.capabilities.write ? (
+        <PageSection id="repair" title="Repair">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className={cn(META, "min-w-0 flex-1")}>
+              Resume the session headlessly and ask it for a checkpoint.
+            </p>
+            <RepairSheet session={session.frontmatter.id} />
+          </div>
+        </PageSection>
+      ) : null}
+
+      <Aside narrow="inline">
+        <ProvenanceModule session={session} selected={docked ? opened : null} />
+      </Aside>
+
+      {docked ? null : (
+        <OutcomePanel
+          line={opened}
+          checkpointAt={opened ? session.frontmatter.checkpoints.find((c) => c.n === opened.cp)?.at : undefined}
+          context={outcomeContext(session)}
+          onClose={() => setOpenDone(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * `WL-01M29EKZ…`, as the frame prints it: the prefix and the ULID's first eight characters — its
+ * millisecond timestamp, enough to tell two items apart at a glance. The full ref is the title.
+ */
+const REF_CHARS = 11;
+function shortRef(ref: string): string {
+  return ref.length > REF_CHARS ? `${ref.slice(0, REF_CHARS)}…` : ref;
+}
+
+/**
+ * The goal, then what the session was: its status, its harness, who ran it, when and for how
+ * long, and how many checkpoints it recorded — including any stamped after it ended, which a
+ * repair or a late hook writes and a reader should not mistake for the session still running.
+ *
+ * The goal carries no `[cp n]` marker: the wire's `goal` is the single current string (api.md
+ * §Read models), not the list of lines core parses, so there is no checkpoint to attribute it to.
+ */
+function Goal({ session }: { session: ParsedSession }) {
+  const { frontmatter } = session;
+  const { checkpoints, ended } = frontmatter;
+  const span = sessionSpan(frontmatter);
+  const late = ended ? checkpoints.filter((checkpoint) => Date.parse(checkpoint.at) > Date.parse(ended)).length : 0;
+
+  // `span.clocks` is the start alone when there is no end, or the end falls on another UTC day.
+  const when = `${formatDayMonth(frontmatter.started)} ${span.clocks} UTC`;
+  const meta = [
+    frontmatter.author.name,
+    when,
+    ...(span.end === null ? [] : [span.duration]),
+    `${plural(checkpoints.length, "checkpoint", "checkpoints")}${late > 0 ? `, ${String(late)} recorded after it ended` : ""}`,
+  ].join(" · ");
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2.5">
+      <h1 className="break-words text-xl font-semibold leading-title tracking-title text-foreground">
+        {session.goal ?? "No goal recorded."}
+      </h1>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <Badge variant={STATUS_VARIANT[frontmatter.status]}>{frontmatter.status}</Badge>
+        <Badge variant="secondary">{frontmatter.harness}</Badge>
+        <p className={cn(META, "min-w-0")}>{meta}</p>
+      </div>
     </div>
   );
 }
 
 /**
- * The floating right panel behind a Done item: everything the gist leaves out
+ * The recap: the first four points, each headed by its newest outcome's gist over the mono
+ * evidence line (operator decision 4: no summary line). "Show all" reveals every point and, under
+ * each, the rest of its outcomes; every gist, headline or not, opens that outcome. The recap
+ * summarises; it does not replace what it summarises (rule 3: evidence is never inline).
+ */
+function Recap({
+  points,
+  total,
+  onOpen,
+  opensPanel,
+}: {
+  points: RecapPoint[];
+  total: number;
+  onOpen: (line: DoneLine) => void;
+  opensPanel: boolean;
+}) {
+  const [all, setAll] = useState(false);
+  // Something is hidden when there are more points than show, or a point holds more than its headline.
+  const folded = points.length > FIRST_POINTS || total > points.length;
+  const shown = all ? points : points.slice(0, FIRST_POINTS);
+
+  return (
+    <>
+      <ul className="flex flex-col gap-3.5">
+        {shown.map((point) => (
+          <RecapCard key={point.key} point={point} expanded={all} onOpen={onOpen} opensPanel={opensPanel} />
+        ))}
+      </ul>
+      {folded ? (
+        <button
+          type="button"
+          aria-expanded={all}
+          onClick={() => setAll((prior) => !prior)}
+          className={cn(LINK, BODY, "w-fit text-primary hover:underline")}
+        >
+          {all ? "Show fewer" : `Show all ${plural(total, "outcome", "outcomes")}`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function RecapCard({
+  point,
+  expanded,
+  onOpen,
+  opensPanel,
+}: {
+  point: RecapPoint;
+  expanded: boolean;
+  onOpen: (line: DoneLine) => void;
+  opensPanel: boolean;
+}) {
+  const [headline, ...rest] = point.lines;
+  if (headline === undefined) return null;
+
+  const tone =
+    point.verified === "tests-passed"
+      ? "bg-success"
+      : point.verified === "tests-failed"
+        ? "bg-destructive"
+        : "bg-subtle-foreground";
+  const popup = opensPanel ? ({ "aria-haspopup": "dialog" } as const) : {};
+
+  return (
+    <li className="flex items-start gap-3.5 rounded-lg border border-hairline bg-card p-3">
+      <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", tone)} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => onOpen(headline)}
+          {...popup}
+          className={cn(LINK, BODY, "break-words font-semibold text-foreground hover:underline")}
+        >
+          {headline.text}
+        </button>
+        {expanded && rest.length > 0 ? (
+          <ul className="flex flex-col">
+            {rest.map((line, index) => (
+              <li key={`${String(line.cp)}-${String(index)}`}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(line)}
+                  {...popup}
+                  className={cn(LINK, BODY, "break-words text-muted-foreground hover:text-foreground")}
+                >
+                  {line.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="break-words font-mono text-xs leading-tight text-subtle-foreground">
+          {checkpointLabel(point.checkpoints)} · {point.commit ?? "no commit"} ·{" "}
+          {plural(point.lines.length, "outcome", "outcomes")}
+        </p>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The floating panel behind an outcome when the right column is not on screen
  * (`docs/design/direction.md` §Shell, rule 3 — "evidence is never inline").
  *
  * `components/ui/panel.tsx` underneath, so Escape closes it, focus moves into it on open and back
- * to the item that opened it on close, and it is a non-modal 380 px floating panel on desktop and
- * a modal bottom sheet below 768 px. It is not a full-height drawer in either form.
- *
- * `line` is null when closed; the panel stays mounted so the trigger's focus has somewhere to
- * return to and so a second item *replaces* the contents rather than closing and reopening.
- *
- * The commit and every file link out to the repo's forge when one resolved (P8 amendment 13), and
- * each file also offers the editor. Rule 3 is why they live in here and never on the gist.
+ * to the gist that opened it on close, and it is a non-modal floating panel on desktop and a modal
+ * bottom sheet below 768 px. `line` is null when closed; the panel stays mounted so the trigger's
+ * focus has somewhere to return to and so a second outcome *replaces* the contents.
  */
-function DoneDrawer({
+function OutcomePanel({
   line,
   checkpointAt,
-  remote,
-  editor,
-  repoPath,
+  context,
   onClose,
 }: {
   line: DoneLine | null;
   checkpointAt: string | undefined;
-  /** The repo's web base (amendment 13), or `null` — no remote, or a host the daemon skipped. */
-  remote: RepoRemote | null;
-  /** `editor:` from the repo config; `undefined` on a daemon from before the amendment. */
-  editor: EditorScheme | undefined;
-  /** The repo root the editor link builds its absolute path from. */
-  repoPath: string | undefined;
+  context: OutcomeContext;
   onClose: () => void;
 }) {
   return (
@@ -280,162 +420,28 @@ function DoneDrawer({
         )
       }
     >
-      {line === null ? null : (
-        <dl className="flex flex-col gap-4 text-sm">
-          <Field label="Detail">
-            {line.detail ? (
-              <span>{line.detail}</span>
-            ) : (
-              <span className="text-muted-foreground">No detail recorded.</span>
-            )}
-          </Field>
-          <Field label="Commit">
-            {line.commit ? (
-              <Identifier
-                value={line.commit}
-                href={remote === null ? null : commitHref(remote, line.commit)}
-              />
-            ) : (
-              <span className="text-muted-foreground">None</span>
-            )}
-          </Field>
-          <Field label="Files">
-            {line.files?.length ? (
-              <ul className="flex flex-col gap-1">
-                {line.files.map((file) => (
-                  <li key={file} className="flex flex-wrap items-baseline gap-x-2">
-                    {/*
-                      At the item's own commit when it recorded one, else at the default branch: a
-                      path is only meaningful at a revision, and the ledger line is the revision it
-                      was written about.
-                    */}
-                    <Identifier
-                      value={file}
-                      href={remote === null ? null : fileHref(remote, file, line.commit)}
-                    />
-                    <EditorLink file={file} editor={editor} repoPath={repoPath} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <span className="text-muted-foreground">None</span>
-            )}
-          </Field>
-          <Field label="Verified">
-            {line.verified ? (
-              <Badge variant={verifiedVariant(line.verified)}>{line.verified}</Badge>
-            ) : (
-              <span className="text-muted-foreground">Not stated</span>
-            )}
-          </Field>
-        </dl>
-      )}
+      {line === null ? null : <OutcomeFields line={line} context={context} />}
     </Panel>
   );
 }
 
-/**
- * A commit id or a file path: a link out to the repo's host when `origin` resolved to one
- * (amendment 13), and otherwise the identifier itself with a copy control — never a guessed URL,
- * because a link that 404s is worse than a string a person can paste.
- *
- * `rel="noreferrer noopener"` on every one of them: the ledger's contents are the operator's,
- * and a forge has no business learning which local page they were read from.
- */
-function Identifier({ value, href }: { value: string; href: string | null }) {
-  if (href === null) {
-    return (
-      <span className="inline-flex flex-wrap items-baseline gap-x-1">
-        <span className="break-all font-mono text-xs">{value}</span>
-        <CopyButton value={value} />
-      </span>
-    );
-  }
+/** Blocker, question and decision notes: the chip, the note, its reason, and its checkpoint. */
+function Notes({ notes }: { notes: NoteLine[] }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="break-all font-mono text-xs underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {value}
-    </a>
-  );
-}
-
-/** Puts one identifier on the clipboard. Silent where the API is absent (an insecure origin). */
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      aria-label={`Copy ${value}`}
-      onClick={() => {
-        navigator.clipboard?.writeText(value).then(
-          () => setCopied(true),
-          () => setCopied(false),
-        );
-      }}
-      className="rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {copied ? "Copied" : "Copy"}
-    </button>
-  );
-}
-
-/**
- * Opens the file in the operator's editor, from the absolute local path — independent of the
- * remote, since a repo with no `origin` is exactly the one where the local file is all there is.
- * Absent when the repo says `editor: none` or the daemon predates the field.
- */
-function EditorLink({
-  file,
-  editor,
-  repoPath,
-}: {
-  file: string;
-  editor: EditorScheme | undefined;
-  repoPath: string | undefined;
-}) {
-  // The builder vets the path itself, so a `files` entry that leaves the repo simply has no
-  // control here — the same string the web link refuses.
-  const href = editorHref(editor, repoPath, file);
-  if (href === null) return null;
-  return (
-    <a
-      href={href}
-      aria-label={`Open ${file} in the editor`}
-      className="rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      Open
-    </a>
-  );
-}
-
-function verifiedVariant(verified: Verified): "accent" | "destructive" | "outline" {
-  if (verified === "tests-passed") return "accent";
-  if (verified === "tests-failed") return "destructive";
-  return "outline";
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <dt className="text-sm font-bold text-foreground">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  );
-}
-
-function Note({ line }: { line: NoteLine }) {
-  return (
-    <Line cp={line.cp}>
-      <span className="mr-2 inline-flex">
-        <Badge variant={line.type === "blocker" ? "destructive" : "accent"}>{line.type}</Badge>
-      </span>
-      {line.text}
-      {line.reason ? <span className="mt-1 block text-xs text-muted-foreground">{line.reason}</span> : null}
-    </Line>
+    <ul className="flex flex-col">
+      {notes.map((line, index) => (
+        <li key={`${String(line.cp)}-${String(index)}`} className="flex items-start gap-2.5 py-1.5">
+          <Badge variant={line.type === "blocker" ? "destructive" : line.type === "question" ? "accent" : "secondary"}>
+            {line.type}
+          </Badge>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.75">
+            <span className={cn(BODY, "break-words text-foreground")}>{line.text}</span>
+            {line.reason ? <span className={META}>{line.reason}</span> : null}
+          </span>
+          <span className="mt-0.5 shrink-0 font-mono text-xs leading-tight text-subtle-foreground">{cpMarker(line.cp)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -447,141 +453,20 @@ function Note({ line }: { line: NoteLine }) {
 function ForAgents({ notes }: { notes: NoteLine[] }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="w-fit rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(LINK, "w-fit text-xs font-medium leading-tight text-muted-foreground hover:text-foreground")}
       >
         <span aria-hidden="true">{open ? "▾" : "▸"}</span> For agents ({notes.length})
       </button>
-      {open ? (
-        <Lines>
-          {notes.map((line, index) => (
-            <Note key={`${line.cp}-${index}`} line={line} />
-          ))}
-        </Lines>
-      ) : null}
+      {open ? <Notes notes={notes} /> : null}
     </div>
   );
 }
 
-/**
- * One body section, flat on the timeline column rather than boxed: a hairline bled to both edges
- * of the column above it, as X separates posts, and an extrabold heading.
- */
-function Section({
-  title,
-  aside,
-  children,
-}: {
-  title: string;
-  /** A quiet line to the right of the heading — a count, a span. */
-  aside?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="-mx-4 border-t border-hairline px-4 py-4">
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-3">
-        <h3 className="text-lg font-extrabold leading-title">{title}</h3>
-        {aside === undefined ? null : (
-          <span className="text-xs text-subtle-foreground">{aside}</span>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/**
- * One recap point: the newest outcome in it reads as the headline, the rest fold behind a
- * disclosure, and the evidence — the commit, the checkpoints it spans — sits underneath.
- *
- * Every outcome, headline or folded, still opens the drawer that holds its detail, files and
- * verification. The recap summarises; it does not replace what it summarises (rule 3: evidence
- * is never inline).
- */
-function RecapCard({ point, onOpen }: { point: RecapPoint; onOpen: (line: DoneLine) => void }) {
-  const [open, setOpen] = useState(false);
-  const [headline, ...rest] = point.lines;
-  if (headline === undefined) return null;
-
-  const tone =
-    point.verified === "tests-passed"
-      ? "bg-success"
-      : point.verified === "tests-failed"
-        ? "bg-destructive"
-        : "bg-subtle-foreground";
-
-  return (
-    <li className="flex gap-3 rounded-lg border border-hairline bg-card p-3">
-      <span aria-hidden="true" className={cn("mt-2 h-2 w-2 shrink-0 rounded-full", tone)} />
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => onOpen(headline)}
-          aria-haspopup="dialog"
-          className="rounded-sm text-left text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {headline.text}
-        </button>
-
-        {rest.length === 0 ? null : open ? (
-          <ul className="flex flex-col gap-1 border-l border-hairline pl-3">
-            {rest.map((line, index) => (
-              <li key={`${String(line.cp)}-${String(index)}`}>
-                <button
-                  type="button"
-                  onClick={() => onOpen(line)}
-                  aria-haspopup="dialog"
-                  className="rounded-sm text-left text-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {line.text}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-x-2 text-xs text-subtle-foreground">
-          <span className="font-mono">{checkpointLabel(point.checkpoints)}</span>
-          <span aria-hidden="true">·</span>
-          <span className="font-mono">{point.commit ?? "no commit"}</span>
-          {rest.length === 0 ? null : (
-            <>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                aria-expanded={open}
-                onClick={() => setOpen((prior) => !prior)}
-                className="rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {open ? "fewer" : `${String(rest.length)} more`}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function Lines({ children }: { children: React.ReactNode }) {
-  return <ul className="flex flex-col gap-3">{children}</ul>;
-}
-
-function Line({ cp, children }: { cp: number; children: React.ReactNode }) {
-  return (
-    <li className="flex gap-3 text-sm leading-body">
-      <span className="shrink-0 font-mono text-xs leading-body text-subtle-foreground">
-        {cpMarker(cp)}
-      </span>
-      <span className="min-w-0 flex-1">{children}</span>
-    </li>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-muted-foreground">{children}</p>;
+function Empty({ children }: { children: ReactNode }) {
+  return <p className={cn(BODY, "text-muted-foreground")}>{children}</p>;
 }

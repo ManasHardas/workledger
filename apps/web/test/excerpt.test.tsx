@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { TRANSCRIPT_GONE } from "../src/features/ledger/excerpt-viewer.js";
+import { NO_PROVENANCE } from "../src/features/ledger/provenance-panel.js";
 import { createSource } from "../src/lib/ledger-source.js";
 import { RepoIdProvider, SourceProvider } from "../src/lib/source-context.js";
 import { SessionView } from "../src/routes/session.js";
@@ -53,7 +54,7 @@ function renderDetail(source: LedgerSource) {
   );
 }
 
-/** The provenance row for checkpoint `cp` — each one owns its own disclosure control. */
+/** The provenance row for checkpoint `cp` — the row itself is its disclosure control. */
 async function checkpointRow(cp: number) {
   const list = await screen.findByRole("list", { name: "Checkpoints, oldest first" });
   const row = within(list).getAllByRole("listitem")[cp - 1];
@@ -73,7 +74,7 @@ describe("provenance excerpt viewer", () => {
     renderDetail(source);
 
     const row = await checkpointRow(2);
-    const toggle = within(row).getByRole("button", { name: "Show transcript span" });
+    const toggle = within(row).getByRole("button", { name: /show transcript span/ });
     // A session detail with eight checkpoints must not read eight transcript spans on mount.
     expect(calls).toEqual([]);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -87,7 +88,7 @@ describe("provenance excerpt viewer", () => {
     const { source } = provenanceSource(() => Promise.resolve(EXCERPT));
     renderDetail(source);
     const row = await checkpointRow(1);
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
 
     expect(await within(row).findByText(/bytes 0–41,233 \(41,233 read\)/)).toBeDefined();
     const turns = within(row).getByRole("list", { name: "Transcript span for checkpoint 1" });
@@ -106,15 +107,15 @@ describe("provenance excerpt viewer", () => {
     renderDetail(source);
     const row = await checkpointRow(1);
 
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
     await within(row).findByText(/bytes 0–41,233/);
 
-    fireEvent.click(within(row).getByRole("button", { name: "Hide transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /hide transcript span/ }));
     expect(within(row).queryByText(/bytes 0–41,233/)).toBeNull();
 
     // A repair or an extraction between two clicks moves this span's upper bound, so the second
     // expansion re-reads rather than replaying a cache.
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
     await waitFor(() => expect(calls).toHaveLength(2));
   });
 
@@ -124,7 +125,7 @@ describe("provenance excerpt viewer", () => {
     );
     renderDetail(source);
     const row = await checkpointRow(1);
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
 
     const state = await within(row).findByText(new RegExp(TRANSCRIPT_GONE));
     expect(state.getAttribute("role")).toBe("status");
@@ -137,7 +138,7 @@ describe("provenance excerpt viewer", () => {
     );
     renderDetail(source);
     const row = await checkpointRow(1);
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
     expect((await within(row).findByRole("alert")).textContent).toContain(
       "cp must be an integer >= 1",
     );
@@ -149,7 +150,7 @@ describe("provenance excerpt viewer", () => {
     );
     renderDetail(source);
     const row = await checkpointRow(1);
-    fireEvent.click(within(row).getByRole("button", { name: "Show transcript span" }));
+    fireEvent.click(within(row).getByRole("button", { name: /show transcript span/ }));
     expect(await within(row).findByText(/holds no user or assistant turns/)).toBeDefined();
   });
 
@@ -161,7 +162,9 @@ describe("provenance excerpt viewer", () => {
     });
     renderDetail(source);
     const row = await checkpointRow(1);
-    expect(within(row).queryByRole("button", { name: "Show transcript span" })).toBeNull();
-    expect(within(row).getByText(/cannot read transcripts/)).toBeDefined();
+    // The row is plain text, not a control that could only ever fail.
+    expect(within(row).queryByRole("button")).toBeNull();
+    // Said once, at the foot of the module, rather than once per checkpoint.
+    expect(screen.getAllByText(NO_PROVENANCE)).toHaveLength(1);
   });
 });

@@ -12,6 +12,7 @@ import {
   type LedgerSource,
   type Repo,
 } from "../src/lib/ledger-source.js";
+import { ASIDE_QUERY } from "../src/lib/media.js";
 import { repoHref } from "../src/lib/router.js";
 
 const [WORKLEDGER, DASHERO] = FIXTURE_REPOS as [Repo, Repo];
@@ -78,15 +79,21 @@ beforeEach(() => {
   window.location.hash = "";
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(window, "matchMedia");
+});
 
 describe("Review, machine-wide", () => {
   it("lists every open note with its repo, linking to that repo’s own Review", async () => {
     renderAt("#/review", machine().source);
-    await screen.findByRole("heading", { name: "Review", level: 2 });
+    await screen.findByRole("heading", { name: "Review", level: 1 });
+    expect(screen.getByText("Across every project on this machine")).toBeDefined();
     for (const note of FIXTURE_NOTES_ALL) {
       expect(await screen.findByText(note.text)).toBeDefined();
     }
+    // No proposals: there is no machine-wide backlog read.
+    expect(screen.queryByRole("heading", { name: "Proposed by agents" })).toBeNull();
     const first = screen.getByRole("link", { name: `${WORKLEDGER.name} — Review` });
     expect(first.getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
     expect(screen.getByRole("link", { name: `${DASHERO.name} — Review` }).getAttribute("href")).toBe(
@@ -102,12 +109,49 @@ describe("Review, machine-wide", () => {
     // The row's text opens the panel; the decision is written there (#134, rule 3).
     fireEvent.click(await screen.findByRole("button", { name: dashero.text }));
     const panel = await screen.findByRole("dialog");
-    fireEvent.change(within(panel).getByLabelText("Your decision"), { target: { value: "Merge it first." } });
-    fireEvent.click(within(panel).getByRole("button", { name: "Resolve" }));
+    fireEvent.change(within(panel).getByLabelText("Your answer"), { target: { value: "Merge it first." } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Answer" }));
 
     await waitFor(() => expect(live.writes).toHaveLength(1));
     expect(live.writes[0]).toBe(
       `${DASHERO.id}:resolveNote:${dashero.session}/${String(dashero.cp)}/${String(dashero.index)}:Merge it first.`,
+    );
+  });
+
+  it("appends the repo to each card's foot, and resolves the docked Selected note through its repo", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: query === ASIDE_QUERY,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
+    });
+    const live = machine();
+    renderAt("#/review", live.source);
+    const dashero = FIXTURE_NOTES_ALL.find((note) => note.repo.id === DASHERO.id)!;
+    const list = await screen.findByRole("list", { name: "Open questions and blockers" });
+    const card = within(list)
+      .getAllByRole("listitem")
+      .find((item) => within(item).queryByText(dashero.text) !== null)!;
+    const link = within(card).getByRole("link", { name: `${DASHERO.name} — Review` });
+    // The checkpoint date arrives with the session read, a tick after the list.
+    await waitFor(() =>
+      expect(link.closest("p")!.textContent).toMatch(
+        new RegExp(`^${dashero.session.slice(0, 11)} · cp ${String(dashero.cp)} · .+ · ${DASHERO.name}$`),
+      ),
+    );
+
+    fireEvent.click(within(card).getByRole("button", { name: "Answer" }));
+    const module = await screen.findByRole("region", { name: dashero.text });
+    fireEvent.change(within(module).getByLabelText("Your answer"), { target: { value: "Merge it first." } });
+    fireEvent.click(within(module).getByRole("button", { name: "Answer" }));
+    await waitFor(() =>
+      expect(live.writes).toEqual([
+        `${DASHERO.id}:resolveNote:${dashero.session}/${String(dashero.cp)}/${String(dashero.index)}:Merge it first.`,
+      ]),
     );
   });
 
@@ -145,7 +189,7 @@ describe("Review, machine-wide", () => {
 describe("Jobs, machine-wide", () => {
   it("lists every repo's jobs with the repo per row and no scan or backfill controls", async () => {
     renderAt("#/jobs", machine().source);
-    await screen.findByRole("heading", { name: "Jobs", level: 2 });
+    await screen.findByRole("heading", { name: "Jobs", level: 1 });
     const rows = within(await screen.findByRole("list", { name: "Jobs, newest first" })).getAllByRole("listitem");
     expect(rows).toHaveLength(FIXTURE_JOBS_ALL.length);
     const row = rows[0]!;

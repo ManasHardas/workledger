@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { AsideHost, AsideSlot } from "../src/components/aside.js";
+import { FOCUS_SEARCH_EVENT } from "../src/components/keyboard-help.js";
 import { TRANSCRIPT_NOTICE } from "../src/features/ledger/provenance-panel.js";
 import { FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
 import { createSource } from "../src/lib/ledger-source.js";
@@ -98,20 +100,43 @@ describe("ledger list", () => {
     );
   });
 
-  it("shows goal, author, harness, status, checkpoint count and done/remaining counts", async () => {
+  it("shows goal, status, span, checkpoint count and done/remaining counts on the card (frame 7:46)", async () => {
     renderLedger();
     const card = (await screen.findAllByRole("listitem"))[0]!;
     const { frontmatter } = OPEN_SESSION;
 
     expect(card.textContent).toContain(OPEN_SESSION.goal!);
-    expect(card.textContent).toContain(frontmatter.author.name);
-    expect(card.textContent).toContain(frontmatter.harness);
     expect(card.textContent).toContain(frontmatter.status);
-    expect(card.textContent).toContain(`${frontmatter.checkpoints.length} checkpoints`);
+    // Clocks in UTC, then the duration to the last checkpoint, then the checkpoint count.
+    expect(card.textContent).toContain(`08:02 · `);
+    expect(card.textContent).toMatch(new RegExp(`${frontmatter.checkpoints.length} checkpoints?`));
     // The row speaks the redesign's vocabulary: outcomes recorded, and what is still open.
     expect(card.textContent).toContain(`${OPEN_SESSION.done.length} outcome`);
     expect(card.textContent).toContain(`${OPEN_SESSION.remaining.length} open`);
-    expect(card.textContent).toContain("2026-09-09 08:02 UTC");
+    // Who ran it moved to the Selected session module; the card leads with the work.
+    expect(card.textContent).not.toContain(frontmatter.author.name);
+  });
+
+  it("heads the page with the counts over the sessions on screen, and groups them by UTC day", async () => {
+    renderLedger();
+    await screen.findByRole("list", { name: SESSION_LIST });
+    const done = FIXTURE_SESSIONS.reduce((n, s) => n + s.done.length, 0);
+    const remaining = FIXTURE_SESSIONS.reduce((n, s) => n + s.remaining.length, 0);
+    expect(screen.getByRole("heading", { name: "Ledger", level: 1 })).toBeDefined();
+    expect(
+      screen.getByText(`${FIXTURE_SESSIONS.length} sessions · ${done} outcomes · ${remaining} still open`),
+    ).toBeDefined();
+    expect(screen.getByRole("heading", { name: "9 September", level: 2 })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "8 September", level: 2 })).toBeDefined();
+  });
+
+  it("focuses the search box when the shell asks (`/`)", async () => {
+    renderLedger();
+    await screen.findByRole("list", { name: SESSION_LIST });
+    act(() => {
+      window.dispatchEvent(new CustomEvent(FOCUS_SEARCH_EVENT));
+    });
+    expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search sessions" }));
   });
 
   it("filters the list through listSessions({ q })", async () => {
@@ -243,19 +268,132 @@ describe("open sessions first, then the rest (amendment 11)", () => {
   });
 });
 
+/**
+ * With the right column on screen (from 1280 px the shell mounts the aside slot), a card is a
+ * selection and the "Selected session" module follows it (frame 7:98). The test mounts the slot
+ * itself, which is exactly what `useAsideDocked` reads.
+ */
+describe("ledger with the right column docked", () => {
+  function renderDocked(source: LedgerSource = createSource("fixture")) {
+    return render(
+      <RepoIdProvider id={REPO}>
+        <SourceProvider source={source}>
+          <AsideHost>
+            <LedgerView />
+            <aside aria-label="Details">
+              <AsideSlot />
+            </aside>
+          </AsideHost>
+        </SourceProvider>
+      </RepoIdProvider>,
+    );
+  }
+
+  const hrefOf = (session: ParsedSession) => `#/r/${REPO}/session/${session.frontmatter.id}`;
+  const cardFor = (session: ParsedSession) =>
+    screen.getAllByRole("link").find((link) => link.getAttribute("href") === hrefOf(session) && link.closest("li"))!;
+
+  it("selects the first card and summarises it in the module", async () => {
+    renderDocked();
+    const module = await screen.findByRole("region", { name: "Selected session" });
+    expect(cardFor(OPEN_SESSION).getAttribute("aria-current")).toBe("true");
+
+    const { frontmatter } = OPEN_SESSION;
+    expect(within(module).getByRole("heading", { name: OPEN_SESSION.goal! })).toBeDefined();
+    expect(within(module).getByText(`${frontmatter.author.name} · ${frontmatter.harness} · 9 Sep 08:02 UTC`)).toBeDefined();
+    expect(within(module).getByText("What happened")).toBeDefined();
+    const point = OPEN_SESSION.done[0]!;
+    expect(within(module).getByText(point.text)).toBeDefined();
+    expect(within(module).getByText(`cp ${point.cp} · ${point.commit}`)).toBeDefined();
+    expect(within(module).getByRole("link", { name: "Open the session" }).getAttribute("href")).toBe(
+      hrefOf(OPEN_SESSION),
+    );
+    expect(within(module).getByText(`${OPEN_SESSION.remaining.length} left open`)).toBeDefined();
+  });
+
+  it("selects on click without leaving the page, and opens on double-click or Enter", async () => {
+    renderDocked();
+    await screen.findByRole("region", { name: "Selected session" });
+
+    fireEvent.click(cardFor(ENDED_SESSION));
+    expect(window.location.hash).toBe(`#/r/${REPO}/ledger`);
+    expect(cardFor(ENDED_SESSION).getAttribute("aria-current")).toBe("true");
+    expect(cardFor(OPEN_SESSION).getAttribute("aria-current")).toBeNull();
+    const module = screen.getByRole("region", { name: "Selected session" });
+    // The goal is cut at its first ": " for the module's title.
+    expect(within(module).getByRole("heading", { name: "Freeze the P2 contracts" })).toBeDefined();
+    // Two outcomes with two commits: two points, each naming its own evidence, no-commit none here.
+    expect(within(module).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(module).getByText("cp 2 · 1ab90d5")).toBeDefined();
+
+    // Enter on another control is that control's: the module's link does not re-open via the list.
+    fireEvent.keyDown(within(module).getByRole("link", { name: "Open the session" }), { key: "Enter" });
+    expect(window.location.hash).toBe(`#/r/${REPO}/ledger`);
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(window.location.hash).toBe(hrefOf(ENDED_SESSION));
+
+    window.location.hash = `#/r/${REPO}/ledger`;
+    fireEvent.doubleClick(cardFor(OPEN_SESSION));
+    expect(window.location.hash).toBe(hrefOf(OPEN_SESSION));
+  });
+
+  it("moves the selection with j and k, starting from the first card", async () => {
+    renderDocked();
+    await screen.findByRole("region", { name: "Selected session" });
+
+    fireEvent.keyDown(window, { key: "j" });
+    expect(document.activeElement?.getAttribute("href")).toBe(hrefOf(ENDED_SESSION));
+    expect(cardFor(ENDED_SESSION).getAttribute("aria-current")).toBe("true");
+
+    fireEvent.keyDown(window, { key: "k" });
+    expect(document.activeElement?.getAttribute("href")).toBe(hrefOf(OPEN_SESSION));
+    expect(
+      within(screen.getByRole("region", { name: "Selected session" })).getByRole("heading", {
+        name: OPEN_SESSION.goal!,
+      }),
+    ).toBeDefined();
+  });
+
+  it("offers Repair in the module, not under the card, for a crashed session on a writable source", async () => {
+    const crashed: ParsedSession = {
+      ...ENDED_SESSION,
+      frontmatter: { ...ENDED_SESSION.frontmatter, status: "crashed" },
+    };
+    const base = createSource("fixture");
+    const source = Object.assign(Object.create(base) as LedgerSource, {
+      capabilities: { ...base.capabilities, write: true },
+      listSessions: () => Promise.resolve([crashed]),
+    });
+    renderDocked(source);
+
+    const module = await screen.findByRole("region", { name: "Selected session" });
+    expect(within(module).getByRole("button", { name: "Repair session…" })).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "Repair session…" })).toHaveLength(1);
+    cleanup();
+
+    // Undocked, the same session keeps its control under the card.
+    renderLedger(source);
+    const list = await screen.findByRole("list", { name: SESSION_LIST });
+    expect(within(list).getByRole("button", { name: "Repair session…" })).toBeDefined();
+    expect(screen.queryByRole("region", { name: "Selected session" })).toBeNull();
+  });
+});
+
 describe("session detail", () => {
   beforeEach(() => {
     window.location.hash = `#/r/${REPO}/ledger/${ENDED_SESSION.frontmatter.id}`;
   });
 
-  it("shows Goal, What happened, Remaining and Notes with their [cp n] markers", async () => {
+  it("leads with the goal, then What happened, Left open and Notes, with the notes' [cp n] markers", async () => {
     renderSession();
-    // The Done section became the recap (P9): a few points over the outcomes, not a flat list.
-    for (const heading of ["Goal", "What happened", "Remaining", "Notes"]) {
-      expect(await screen.findByRole("heading", { name: heading, level: 3 })).toBeDefined();
+    // Session frame `2:2`: the goal is the page's heading, then the recap, then what was left open;
+    // the notes the frame leaves out follow below in the same style.
+    expect(await screen.findByRole("heading", { name: ENDED_SESSION.goal!, level: 1 })).toBeDefined();
+    for (const heading of ["What happened", "Left open", "Notes"]) {
+      expect(await screen.findByRole("heading", { name: heading, level: 2 })).toBeDefined();
     }
 
-    expect(await screen.findByText(ENDED_SESSION.goal!)).toBeDefined();
     for (const line of ENDED_SESSION.done) {
       expect(screen.getByText(line.text)).toBeDefined();
     }
@@ -274,24 +412,25 @@ describe("session detail", () => {
     expect(header.textContent).toContain("about workledger, card-shopify_store");
   });
 
-  it("renders each Remaining line as → WL-id (rel)", async () => {
+  it("renders each Left open line with its ref cut as the frame prints it, the whole ref on hover", async () => {
     renderSession();
     for (const line of ENDED_SESSION.remaining) {
-      expect(await screen.findByText(`→ ${line.ref} (${line.rel})`)).toBeDefined();
+      expect(await screen.findByText(line.text)).toBeDefined();
+      const ref = screen.getByText(`${line.ref.slice(0, 11)}…`);
+      expect(ref.getAttribute("title")).toBe(line.ref);
     }
   });
 
   it("shows the provenance panel for every checkpoint plus the P3 notice", async () => {
     renderSession();
-    expect(await screen.findByRole("heading", { name: "Provenance", level: 3 })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Provenance", level: 2 })).toBeDefined();
 
-    for (const checkpoint of ENDED_SESSION.frontmatter.checkpoints) {
-      expect(screen.getByText(String(checkpoint.turns))).toBeDefined();
-      expect(screen.getByText(checkpoint.trigger)).toBeDefined();
-    }
-    expect(screen.getByText("2026-09-08 09:41 UTC")).toBeDefined();
-    expect(screen.getByText("0–41,233 bytes")).toBeDefined();
-    expect(screen.getByText("41,233–96,400 bytes")).toBeDefined();
+    const [first, second] = ENDED_SESSION.frontmatter.checkpoints;
+    expect(first!.at).toBe("2026-09-08T09:41:00Z");
+    expect(screen.getByText("8 Sep 09:41 UTC")).toBeDefined();
+    expect(screen.getByText(/18 turns · bytes · transcript 0 – 41,233 B/)).toBeDefined();
+    expect(second!.transcript_offset).toBe(96_400);
+    expect(screen.getByText(/37 turns · minutes · transcript 41,233 – 96,400 B/)).toBeDefined();
     expect(screen.getByText(TRANSCRIPT_NOTICE)).toBeDefined();
   });
 
@@ -390,13 +529,13 @@ describe("session detail — gists, drawer, notes split, memory", () => {
 
   it("omits the For agents disclosure when no note is a discovery", async () => {
     renderSession(sessionSource((session) => ({ notes: session.notes.filter((n) => n.type !== "discovery") })));
-    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Notes", level: 2 })).toBeDefined();
     expect(screen.queryByRole("button", { name: /For agents/ })).toBeNull();
   });
 
   it("shows a Memory section with each entry and its file badge", async () => {
     renderSession();
-    expect(await screen.findByRole("heading", { name: "Memory", level: 3 })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Memory", level: 2 })).toBeDefined();
     for (const entry of ENDED_SESSION.memory) {
       expect(screen.getByText(entry.text)).toBeDefined();
       if (entry.file) expect(screen.getByText(entry.file)).toBeDefined();
@@ -405,14 +544,14 @@ describe("session detail — gists, drawer, notes split, memory", () => {
 
   it("hides Memory when the session has no entries or predates the field", async () => {
     renderSession(sessionSource(() => ({ memory: [] })));
-    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
-    expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Notes", level: 2 })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Memory", level: 2 })).toBeNull();
     cleanup();
 
     // A daemon older than amendment 11 sends no `memory` key at all; the view must not throw.
     renderSession(sessionSource(() => ({ memory: undefined as unknown as [] })));
-    expect(await screen.findByRole("heading", { name: "Notes", level: 3 })).toBeDefined();
-    expect(screen.queryByRole("heading", { name: "Memory", level: 3 })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Notes", level: 2 })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Memory", level: 2 })).toBeNull();
   });
 });
 

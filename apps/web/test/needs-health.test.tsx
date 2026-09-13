@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { App } from "../src/app.js";
 import { FIXTURE_NOTES, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
+import { ASIDE_QUERY } from "../src/lib/media.js";
 import {
   createSource,
   type AppSource,
@@ -92,6 +93,7 @@ const SESSION: ParsedSession = {
     { cp: 1, type: "blocker", by: "agent", text: BLOCKER },
   ],
 };
+const REASON = "Renames arrive as two unrelated events, so a moved file vanishes from the index.";
 const NOTES: NoteRef[] = [
   {
     session: SESSION.frontmatter.id,
@@ -100,6 +102,7 @@ const NOTES: NoteRef[] = [
     type: "blocker",
     by: "agent",
     text: BLOCKER,
+    reason: REASON,
   },
 ];
 
@@ -107,7 +110,24 @@ beforeEach(() => {
   window.location.hash = "";
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(window, "matchMedia");
+});
+
+/** jsdom has no `matchMedia`; this says the viewport is 1280 px or wider, so the right column exists. */
+function wide(): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query === ASIDE_QUERY,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  });
+}
 
 /**
  * A note row's title is the note itself, and it opens the right panel — where the session that
@@ -119,28 +139,95 @@ async function openNote(text: string): Promise<HTMLElement> {
 }
 
 describe("Review", () => {
-  it("renders every open note as a row, with its type and checkpoint", async () => {
+  it("titles the page Review and heads the answers with how many are open", async () => {
+    renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+    expect(await screen.findByRole("heading", { name: "Review", level: 1 })).toBeDefined();
+    expect(screen.getByText("j k to move · a accept · x discard · enter to answer")).toBeDefined();
+    const section = await screen.findByRole("region", { name: "Waiting on an answer" });
+    expect(await within(section).findByText("1 open")).toBeDefined();
+  });
+
+  it("renders every open note as a card: chip, text, and where it was raised", async () => {
     renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
 
     const list = await screen.findByRole("list", { name: "Open questions and blockers" });
     const row = within(list).getByRole("listitem");
     expect(within(row).getByText(BLOCKER)).toBeDefined();
-    expect(within(row).getByText("blocker")).toBeDefined();
-    expect(within(row).getByText("cp 1")).toBeDefined();
-    // The session that raised it is context, not the note: it waits in the panel.
+    expect(within(row).getByText("blocker").className).toContain("bg-destructive");
+    // `{session first 11} · cp {n} · {D Mon}` — the day is the checkpoint's, once the session is read.
+    const ulid = SESSION.frontmatter.id;
+    expect(await within(row).findByText(`${ulid.slice(0, 11)} · cp 1 · 8 Sep`)).toBeDefined();
+    expect(within(row).getByRole("button", { name: "Answer" })).toBeDefined();
+    // The session's goal is context, not the note: it waits in the panel.
     expect(within(row).queryByText(SESSION.goal!)).toBeNull();
     expect(within(await openNote(BLOCKER)).getByText(SESSION.goal!)).toBeDefined();
   });
 
-  it("keeps the rows on the list rhythm and off the horizontal scroll at 375 px", async () => {
+  it("leaves the date off the foot when the session cannot be read", async () => {
+    renderAt(
+      `#/r/${REPO}/review`,
+      stubSource({ listNotes: async () => NOTES, getSession: () => Promise.reject(new Error("gone")) }),
+    );
+    const list = await screen.findByRole("list", { name: "Open questions and blockers" });
+    expect(within(list).getByText(`${SESSION.frontmatter.id.slice(0, 11)} · cp 1`)).toBeDefined();
+  });
+
+  it("wraps a card's text rather than scrolling sideways at 375 px", async () => {
     renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
     const list = await screen.findByRole("list", { name: "Open questions and blockers" });
     const row = within(list).getByRole("listitem");
-    expect(row.className).toContain("min-h-row");
-    expect(row.className).toContain("hover:bg-muted");
+    expect(row.className).toContain("rounded-lg");
+    expect(row.className).toContain("border-hairline");
     const title = within(row).getByRole("button", { name: BLOCKER });
     expect(title.className).toContain("min-w-0");
-    expect(title.className).toContain("truncate");
+    expect(title.className).toContain("break-words");
+  });
+
+  describe("from 1280 px, the Selected module", () => {
+    it("shows the first answer, its session, where it was raised and why", async () => {
+      wide();
+      renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+      const module = await screen.findByRole("region", { name: BLOCKER });
+      expect(within(module).getByText("blocker")).toBeDefined();
+      expect(await within(module).findByText(SESSION.goal!)).toBeDefined();
+      expect(within(module).getByText(`${SESSION.frontmatter.id} · cp 1 · 8 Sep 2026`)).toBeDefined();
+      expect(within(module).getByText("Why it stopped work")).toBeDefined();
+      expect(within(module).getByText(REASON)).toBeDefined();
+      // The first card is the selected one, and nothing floats: the module is the note's surface.
+      const card = within(await screen.findByRole("list", { name: "Open questions and blockers" })).getByRole("listitem");
+      expect(card.hasAttribute("data-selected")).toBe(true);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("moves the focus into the answer field when a card's Answer is pressed", async () => {
+      wide();
+      renderAt(`#/r/${REPO}/review`, stubSource({ listNotes: async () => NOTES, getSession: async () => SESSION }));
+      const list = await screen.findByRole("list", { name: "Open questions and blockers" });
+      fireEvent.click(within(within(list).getByRole("listitem")).getByRole("button", { name: "Answer" }));
+      const field = within(screen.getByRole("region", { name: BLOCKER })).getByLabelText("Your answer");
+      await waitFor(() => expect(document.activeElement).toBe(field));
+    });
+
+    it("resolves through the module's own Answer", async () => {
+      wide();
+      const calls: string[] = [];
+      renderAt(
+        `#/r/${REPO}/review`,
+        stubSource({
+          listNotes: async () => NOTES,
+          getSession: async () => SESSION,
+          resolveNote: async (ref, decision) => {
+            calls.push(`${ref.session}/${String(ref.cp)}/${String(ref.index)}:${decision}`);
+            return SESSION;
+          },
+        }),
+      );
+      const module = await screen.findByRole("region", { name: BLOCKER });
+      expect(within(module).getByText("Recorded as a decision note on the session")).toBeDefined();
+      fireEvent.change(within(module).getByLabelText("Your answer"), { target: { value: "Pair the events." } });
+      fireEvent.click(within(module).getByRole("button", { name: "Answer" }));
+      await waitFor(() => expect(calls).toEqual([`${SESSION.frontmatter.id}/1/1:Pair the events.`]));
+    });
   });
 
   it("resolves a note with the ref the NoteRef carries and the decision text", async () => {
@@ -156,10 +243,10 @@ describe("Review", () => {
     renderAt(`#/r/${REPO}/review`, source);
 
     const panel = await openNote(BLOCKER);
-    fireEvent.change(within(panel).getByLabelText("Your decision"), {
+    fireEvent.change(within(panel).getByLabelText("Your answer"), {
       target: { value: "Treat a rename as a delete plus a create." },
     });
-    fireEvent.click(within(panel).getByRole("button", { name: "Resolve" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Answer" }));
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({
@@ -244,7 +331,7 @@ describe("Review", () => {
     renderAt(`#/r/${REPO}/review`, createSource("fixture"));
 
     const panel = await openNote(FIXTURE_NOTES[0]!.text);
-    const resolve = within(panel).getByRole("button", { name: "Resolve" });
+    const resolve = within(panel).getByRole("button", { name: "Answer" });
     expect((resolve as HTMLButtonElement).disabled).toBe(true);
     expect(within(panel).getByText("This source is read-only.")).toBeDefined();
   });

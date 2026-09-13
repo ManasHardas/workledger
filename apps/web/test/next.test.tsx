@@ -205,8 +205,9 @@ afterEach(cleanup);
 describe("grouping and provenance", () => {
   it("groups by status in spec order and collapses discarded", async () => {
     await renderNext();
-    const labels = ["Proposed", "Accepted", "In progress", "Done", "Discarded"];
-    // Card titles are level-3 headings too, so the group headings are the ones named for a status.
+    // The proposed group is Review's own section (frame `10:71`); the rest sit below it.
+    expect(screen.getByRole("heading", { level: 2, name: "Proposed by agents" })).toBeDefined();
+    const labels = ["Accepted", "In progress", "Done", "Discarded"];
     const headings = screen
       .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent ?? "")
@@ -251,7 +252,25 @@ describe("grouping and provenance", () => {
     ).toBeDefined();
   });
 
-  it("keeps each row on the list rhythm, with the accent bar only on the selected one", async () => {
+  it("heads the proposals with what is waiting and what is accepted", async () => {
+    await renderNext();
+    const section = screen.getByRole("region", { name: "Proposed by agents" });
+    expect(within(section).getByText("1 waiting · 1 accepted")).toBeDefined();
+  });
+
+  it("gives a proposal card the frame's provenance line, Accept and Discard, and nothing else", async () => {
+    await renderNext();
+    const proposal = card(PROPOSED.frontmatter.title);
+    // `{id first 14} · {session first 11} · cp {n}` — short identifiers; the full ulid is the panel's.
+    expect(within(proposal).getByText("WL-01JBQ50R6TT · 01JBPX2M4H6 · cp 2")).toBeDefined();
+    expect(within(proposal).queryByText("agent")).toBeNull();
+    const accept = within(proposal).getByRole("button", { name: "Accept" });
+    expect(accept.className).toContain("bg-primary");
+    expect(accept.className).toContain("h-7");
+    expect(within(proposal).queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("keeps each row on the list rhythm, with the primary border only on the selected one", async () => {
     await renderNext();
     const row = card(PROPOSED.frontmatter.title);
     expect(row.className).toContain("min-h-row");
@@ -265,7 +284,8 @@ describe("grouping and provenance", () => {
     // Nothing hardcodes a colour: the bar is the primary token, the surface the selected one.
     const selected = card(PROPOSED.frontmatter.title);
     expect(selected.className).toContain("bg-selected");
-    expect(selected.querySelector("span[aria-hidden='true']")!.className).toContain("bg-primary");
+    expect(selected.className).toContain("border-primary");
+    expect(card(ACCEPTED.frontmatter.title).className).toContain("border-hairline");
   });
 
   it("never scrolls sideways at 375 px: the title gives up its width, nothing else does", async () => {
@@ -393,16 +413,25 @@ describe("identities", () => {
 describe("the agent-proposed marker", () => {
   it("marks an unconfirmed item and drops the marker once confirmed_by lands", async () => {
     const spy = await renderNext();
-    // At most three chips, and each one carries state (rule 2): the marker is one word now.
-    expect(within(card(PROPOSED.frontmatter.title)).getByText("agent")).toBeDefined();
+    // At most three chips, and each one carries state (rule 2): the marker is one word now. The
+    // proposal cards are the frame's and carry no chips, so the marker is read on the groups below.
+    expect(within(card(RUNNING.frontmatter.title)).getByText("agent")).toBeDefined();
     // ACCEPTED carries a confirmed_by stamp in the fixture, so it never shows the marker.
     expect(within(card(ACCEPTED.frontmatter.title)).queryByText("agent")).toBeNull();
 
+    press("Accept", RUNNING.frontmatter.title);
+    expect(spy.calls).toContainEqual(["accept", RUNNING.frontmatter.id]);
     press("Accept", PROPOSED.frontmatter.title);
     expect(spy.calls).toContainEqual(["accept", PROPOSED.frontmatter.id]);
+    // Accepted, it leaves the proposals for the Accepted group — confirmed, so unmarked.
     await waitFor(() =>
-      expect(within(card(PROPOSED.frontmatter.title)).queryByText("agent")).toBeNull(),
+      expect(
+        within(screen.getByRole("list", { name: "Accepted" })).getByRole("listitem", {
+          name: PROPOSED.frontmatter.title,
+        }),
+      ).toBeDefined(),
     );
+    expect(within(card(PROPOSED.frontmatter.title)).queryByText("agent")).toBeNull();
   });
 });
 
@@ -416,7 +445,8 @@ describe("the status machine", () => {
         .map((b) => b.textContent)
         .filter((name) => ["Accept", "Start", "Done", "Discard", "Restore"].includes(name ?? ""));
 
-    expect(names(PROPOSED.frontmatter.title)).toEqual(["Accept", "Done", "Discard"]);
+    // The proposal card is the frame's: Accept and Discard. Done is still `d`, and the panel's.
+    expect(names(PROPOSED.frontmatter.title)).toEqual(["Accept", "Discard"]);
     expect(names(ACCEPTED.frontmatter.title)).toEqual(["Start", "Done", "Discard"]);
     expect(names(RUNNING.frontmatter.title)).toEqual(["Accept", "Done", "Discard"]);
     expect(names(DONE.frontmatter.title)).toEqual(["Restore"]);
@@ -425,7 +455,7 @@ describe("the status machine", () => {
 
   it.each([
     ["Accept", "accept", PROPOSED],
-    ["Done", "done", PROPOSED],
+    ["Done", "done", RUNNING],
     ["Start", "start", ACCEPTED],
   ] as const)("«%s» calls source.%s", async (label, method, target) => {
     const spy = await renderNext();
@@ -434,17 +464,17 @@ describe("the status machine", () => {
   });
 
   /**
-   * The reviewer's complaint on #128: a solid red Discard sitting in the list. The control is
-   * quiet now, the destructive colour is on the confirming step only, and one click discards
-   * nothing (docs/design/direction.md via #134).
+   * The reviewer's complaint on #128 was a solid red Discard sitting in the list. The frame's
+   * Discard (`10:82`) is the destructive *outline*, never a fill, and it is still two steps: one
+   * click discards nothing (#134).
    */
-  it("«Discard» is a quiet two-step control, and one click discards nothing", async () => {
+  it("«Discard» is the destructive outline, two steps, and one click discards nothing", async () => {
     const spy = await renderNext();
     const title = PROPOSED.frontmatter.title;
 
-    const quiet = within(card(title)).getByRole("button", { name: "Discard" });
-    expect(quiet.className).not.toContain("bg-destructive");
-    expect(quiet.className).toContain("text-muted-foreground");
+    const outline = within(card(title)).getByRole("button", { name: "Discard" });
+    expect(outline.className).not.toContain(" bg-destructive");
+    expect(outline.className).toContain("border-destructive");
 
     press("Discard", title);
     expect(spy.calls.some(([name]) => name === "discard")).toBe(false);
@@ -479,17 +509,13 @@ describe("the status machine", () => {
 describe("editing", () => {
   it("renames in place, on the row, and sends only the title", async () => {
     const spy = await renderNext();
-    const title = PROPOSED.frontmatter.title;
+    const title = ACCEPTED.frontmatter.title;
     press("Edit", title);
     fireEvent.change(within(card(title)).getByLabelText("Title"), {
-      target: { value: "Reconnect the stream" },
+      target: { value: "Ship Review" },
     });
     press("Save", title);
-    expect(spy.calls).toContainEqual([
-      "edit",
-      PROPOSED.frontmatter.id,
-      { title: "Reconnect the stream" },
-    ]);
+    expect(spy.calls).toContainEqual(["edit", ACCEPTED.frontmatter.id, { title: "Ship Review" }]);
   });
 
   it("edits the body through the panel's textarea", async () => {
@@ -755,7 +781,7 @@ describe("keyboard", () => {
 
   it("leaves a keystroke inside a field alone", async () => {
     const spy = await renderNext();
-    const title = PROPOSED.frontmatter.title;
+    const title = ACCEPTED.frontmatter.title;
     press("Edit", title);
     const field = within(card(title)).getByLabelText("Title");
     fireEvent.keyDown(field, { key: "d" });
@@ -779,24 +805,24 @@ describe("optimistic writes", () => {
         <NextView />
       </SourceProvider>,
     );
-    await screen.findByText(PROPOSED.frontmatter.title);
-    press("Done", PROPOSED.frontmatter.title);
+    await screen.findByText(RUNNING.frontmatter.title);
+    press("Done", RUNNING.frontmatter.title);
     // The item has already moved into the Done group while the write is still in flight.
     await waitFor(() =>
       expect(
         within(screen.getByRole("list", { name: "Done" })).getByRole("listitem", {
-          name: PROPOSED.frontmatter.title,
+          name: RUNNING.frontmatter.title,
         }),
       ).toBeDefined(),
     );
     gate.release?.({
-      ...PROPOSED,
-      frontmatter: { ...PROPOSED.frontmatter, status: "done" },
+      ...RUNNING,
+      frontmatter: { ...RUNNING.frontmatter, status: "done" },
     });
 
     const reads = () => spy.calls.filter(([name]) => name === "listBacklog").length;
     const before = reads();
-    spy.emit({ type: "backlog.changed", id: PROPOSED.frontmatter.id });
+    spy.emit({ type: "backlog.changed", id: RUNNING.frontmatter.id });
     await waitFor(() => expect(reads()).toBe(before + 1));
   });
 
@@ -829,7 +855,7 @@ describe("a read-only source", () => {
       </SourceProvider>,
     );
     await screen.findByText(PROPOSED.frontmatter.title);
-    expect(screen.getByText("read-only source")).toBeDefined();
+    expect(screen.getByText(/^read-only source/)).toBeDefined();
     // The title still opens the panel — reading is not a write — but every control that changes
     // the ledger is disabled rather than hidden, so the reason it cannot be used stays visible.
     const buttons = within(card(PROPOSED.frontmatter.title))

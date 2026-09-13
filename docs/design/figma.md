@@ -7,7 +7,7 @@ The design system lives in Figma and is the source of design values; `packages/t
 | File | Key | Holds |
 | --- | --- | --- |
 | workledger — Design System | `O8nwIMP8e9zqqtOEJuCIyd` | variables, styles, Foundations, the seven component sets |
-| workledger — Product Designs | `GlA5fi6UzX90dU4N0WmFnC` | the screens: Session and Ledger built, Review and Home empty |
+| workledger — Product Designs | `GlA5fi6UzX90dU4N0WmFnC` | the screens: Session `2:2`, Ledger `7:2`, Review `10:2`, Home `11:2` — all four built, and implemented in the app on 2026-09-12 |
 
 The designs file carries its **own copy** of the colour and scale collections and the text styles,
 with identical names and values, because variables do not cross files until the system file is
@@ -25,7 +25,7 @@ column capped at 820 px, and a 352 px panel.
   checkpoint times, turns, triggers, transcript byte spans, commits, files and verified state.
 - **Ledger** — sessions grouped by day, each row the goal with its status, span and counts, and a
   right panel showing the selected session's recap.
-- **Needs you** — the two queues the current model already supports, and nothing it does not: open
+- **Review** (the frame's title still reads "Needs you"; the app says Review, per the P9 naming) — the two queues the current model already supports, and nothing it does not: open
   `blocker` and `question` notes awaiting an answer (the answer is recorded as a decision note on
   that session, which is what `resolveNote` already does), and the agent-proposed backlog awaiting
   accept or discard (`confirmed_by` is the trust tier). No review or verdict entity is implied.
@@ -69,7 +69,8 @@ variable has no token counterpart, so it would stop every sync. Two collections:
   line heights.
 
 **Not in Figma, on purpose:** `type/family/*` (a `FONT_FAMILY` variable holding a CSS stack cannot
-bind to text in Figma) and `shadow/panel` (Figma variables cannot hold a shadow recipe). Both stay
+bind to text in Figma), `type/tracking/*` (letter-spacing lives on the text styles, not in a
+variable) and `shadow/panel` (Figma variables cannot hold a shadow recipe). Both stay
 hand-maintained in `tokens.json`; the shadow exists in Figma as the effect style `shadow/panel`,
 whose colour is bound to `color/glow` so it themes itself.
 
@@ -99,8 +100,9 @@ converts px → rem). Equivalent in CSS — any radius past half the box is a pi
   Card (4), Panel (3 forms), Nav item (6). Every fill, stroke, padding and radius is bound to a
   variable: the last audit found zero unbound paints and zero default layer names.
 
-Still missing from the system file: an icon set (Nav item carries a placeholder slot), Code Connect
-mappings, and the Dome theme. The screens are no longer outstanding — they live in the designs
+Still missing from the system file: an icon set (Nav item carries a placeholder slot — the app
+draws its own line icons in that 16 px box, operator decision 2026-09-12), Code Connect mappings,
+and the Dome theme. The screens are no longer outstanding — they live in the designs
 file, listed above.
 
 ## Gotchas learned building it
