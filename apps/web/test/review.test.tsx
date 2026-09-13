@@ -298,3 +298,38 @@ describe("Review tabs — accessible names", () => {
     cleanup();
   });
 });
+
+describe("Review keys on the Blockers and Questions views", () => {
+  afterEach(() => Reflect.deleteProperty(window, "matchMedia"));
+
+  it("moves between answer cards with j and k, and the header lists only the keys that work", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({ matches: query === ASIDE_QUERY, media: query, addEventListener: () => {}, removeEventListener: () => {} }),
+    });
+    const repo = FIXTURE_REPOS[0]!;
+    window.location.hash = `${repoHref(repo.id, "review")}?view=question`;
+    const base = createSource("fixture");
+    const notes = [
+      { cp: 1, index: 0, session: FIXTURE_SESSIONS[0]!.frontmatter.id, type: "question" as const, text: "First question?" },
+      { cp: 1, index: 1, session: FIXTURE_SESSIONS[0]!.frontmatter.id, type: "question" as const, text: "Second question?" },
+    ];
+    const source = Object.assign(Object.create(base) as AppSource, {
+      forRepo: () => Object.assign(Object.create(base) as LedgerSource, { listNotes: () => Promise.resolve(notes) }),
+    });
+    render(<App source={source} />);
+    await screen.findByText("Second question?");
+    expect(screen.getByRole("banner").textContent).toContain("j k to move · enter to answer");
+    expect(screen.getByRole("banner").textContent).not.toContain("a accept");
+
+    // Docked, the first card starts selected, so `j` moves to the second.
+    expect(await screen.findByRole("region", { name: "First question?" })).toBeDefined();
+    fireEvent.keyDown(window, { key: "j" });
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Second question?"));
+    expect(await screen.findByRole("region", { name: "Second question?" })).toBeDefined();
+    fireEvent.keyDown(window, { key: "k" });
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("First question?"));
+    expect(await screen.findByRole("region", { name: "First question?" })).toBeDefined();
+  });
+});

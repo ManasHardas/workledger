@@ -66,6 +66,9 @@ export function AllNeedsPanel({
       title={copy.title}
       label={copy.label}
       empty={copy.emptyAcross}
+      // Across projects the proposals below take no keys (several backlogs, one page), so these
+      // cards own `j`/`k` on every view that shows them.
+      moveKeys
     />
   );
 }

@@ -9,7 +9,7 @@ import { useBacklog } from "../features/next/use-backlog.js";
 import { HistoryNotes } from "../features/review/history-notes.js";
 import { reviewCounts } from "../features/review/counts.js";
 import { REVIEW_PANEL_ID, ReviewToolbar, reviewTabId } from "../features/review/review-toolbar.js";
-import { useReviewView } from "../features/review/view.js";
+import { useReviewView, type ReviewViewId } from "../features/review/view.js";
 import { useMachine, useRepoId, useSource } from "../lib/source-context.js";
 
 /**
@@ -32,6 +32,19 @@ import { useMachine, useRepoId, useSource } from "../lib/source-context.js";
  * from (`resolveNote`), and accepting an item sets `confirmed_by`, which is the trust tier the
  * schema already carries. There is no verdict entity here, deliberately.
  */
+/**
+ * The keys each view actually answers to, and nothing more: the backlog owns `a` and `x`, the
+ * answer cards own Enter, and the history views are read-only.
+ */
+const REPO_HINTS: Record<ReviewViewId, string | undefined> = {
+  all: "j k to move · a accept · x discard · enter to answer",
+  blocker: "j k to move · enter to answer",
+  question: "j k to move · enter to answer",
+  proposal: "j k to move · a accept · x discard",
+  decision: undefined,
+  discovery: undefined,
+};
+
 export function ReviewView() {
   const machine = useMachine();
   const source = useSource();
@@ -59,7 +72,7 @@ export function ReviewView() {
 
   return (
     <>
-      <PageHeader title="Review" aside="j k to move · a accept · x discard · enter to answer" />
+      <PageHeader title="Review" aside={REPO_HINTS[view]} />
       <PageBody rhythm="review">
         <ReviewToolbar view={view} onView={setView} counts={counts} repo={repo} repos={repos} />
         <div

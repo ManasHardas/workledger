@@ -72,6 +72,8 @@ export function useNotesOfType<T extends NoteRef>(
  * `all-needs-panel.tsx`; both are {@link Answers}.
  */
 export function NeedsPanel({ live, section = "all" }: { live: LiveNotes; section?: AnswerSection }) {
+  // On the All view the backlog below owns `j`/`k`; on Blockers and Questions these cards are the list.
+  const moveKeys = section !== "all";
   const source = useSource();
   const result = useNotesOfType(live.result, section);
   // One read for the whole list rather than one per card: the map is the same for every note.
@@ -86,6 +88,7 @@ export function NeedsPanel({ live, section = "all" }: { live: LiveNotes; section
       title={copy.title}
       label={copy.label}
       empty={copy.empty}
+      moveKeys={moveKeys}
     />
   );
 }
@@ -106,6 +109,7 @@ export function Answers({
   title = ANSWER_SECTIONS.all.title,
   label = ANSWER_SECTIONS.all.label,
   empty,
+  moveKeys = false,
 }: {
   result: Async<AnswerNote[]>;
   /** The source a note resolves through; `null` asks for the one to hold while nothing is open. */
@@ -116,6 +120,11 @@ export function Answers({
   title?: string;
   label?: string;
   empty: string;
+  /**
+   * `j`/`k` move between the cards. Off wherever the backlog below owns those keys (a repo's All
+   * view), on wherever these cards are the only list on the page.
+   */
+  moveKeys?: boolean;
 }) {
   const docked = useAsideDocked();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -153,6 +162,38 @@ export function Answers({
     return () => window.removeEventListener("keydown", onKey);
   }, [choose]);
 
+  // `j`/`k`: the next or previous card becomes the selection (docked) and takes the focus, so Enter
+  // or the Answer button acts on the card the eye is on in either layout.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const cursor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!moveKeys) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "j" && event.key !== "k") return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      const list = notesRef.current;
+      if (list.length === 0) return;
+      const current = docked ? (selectedRef.current === null ? null : keyOf(selectedRef.current)) : cursor.current;
+      const at = list.findIndex((note) => keyOf(note) === current);
+      const next = at < 0 ? 0 : Math.max(0, Math.min(list.length - 1, at + (event.key === "j" ? 1 : -1)));
+      const note = list[next]!;
+      event.preventDefault();
+      cursor.current = keyOf(note);
+      if (docked) setSelectedKey(keyOf(note));
+      // Matched by attribute value rather than a selector string: a key is ids and numbers joined
+      // by dashes, but nothing here should depend on it staying selector-safe.
+      const card = [...document.querySelectorAll<HTMLElement>("[data-note-key]")].find(
+        (node) => node.dataset.noteKey === keyOf(note),
+      );
+      card?.querySelector<HTMLElement>("button")?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moveKeys, docked]);
+
   return (
     <PageSection
       id="review-answers-heading"
@@ -167,6 +208,7 @@ export function Answers({
               return (
                 <NoteCard
                   key={keyOf(note)}
+                  noteKey={keyOf(note)}
                   note={note}
                   repo={note.repo}
                   at={checkpointAt(note, session)}
