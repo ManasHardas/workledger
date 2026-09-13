@@ -3,7 +3,8 @@ import { Button } from "../../components/ui/button.js";
 import { ConfirmAction } from "../../components/ui/confirm.js";
 import { ListRow, RowActions, RowMeta, RowTitle } from "../../components/ui/list-row.js";
 import { repoHref } from "../../lib/router.js";
-import { canCancel, canRetry, elapsed, shortId, statusVariant, waitingUntil } from "./format.js";
+import { canCancel, canRetry, elapsed, shortId, waitingUntil } from "./format.js";
+import { JobStatusChip } from "./job-status-chip.js";
 
 import type { Job, Repo } from "../../lib/ledger-source.js";
 
@@ -11,8 +12,8 @@ import type { Job, Repo } from "../../lib/ledger-source.js";
  * One `jobs` row (`docs/design/direction.md` §Density): what it is, what it is doing, and how long
  * it has been at it.
  *
- * At most three chips, and each of them carries state and nothing else (rule 2): the status, the
- * kind, and — for a queued job whose `retry_after` is still ahead — that it is waiting for the
+ * At most three chips, and each of them carries state and nothing else (rule 2): the status — the
+ * only coloured one (`JobStatusChip`) — the neutral kind, and — for a queued job whose `retry_after` is still ahead — that it is waiting for the
  * harness's usage window (#100). The attempt count is a number, so it sits with the other numbers
  * on the right rather than becoming a fourth chip.
  *
@@ -50,9 +51,7 @@ export function JobRow({
   const waitUntil = waitingUntil(job, now);
   return (
     <ListRow selected={selected} aria-label={`${job.kind} ${shortId(job.id)}`}>
-      <Badge variant={statusVariant(job.status)} className="shrink-0">
-        {job.status}
-      </Badge>
+      <JobStatusChip status={job.status} />
       <Badge variant="secondary" className="shrink-0">
         {job.kind}
       </Badge>
@@ -68,7 +67,7 @@ export function JobRow({
         <a
           href={repoHref(repo.id, "jobs")}
           aria-label={`${repo.name} — Jobs`}
-          className="shrink-0 rounded-sm text-xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="shrink-0 rounded-sm text-xs leading-tight text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {repo.name}
         </a>
@@ -92,7 +91,7 @@ export function JobRow({
         />
       </RowActions>
       {error === undefined ? null : (
-        <p role="alert" className="basis-full text-xs text-destructive">
+        <p role="alert" className="basis-full text-xs leading-tight text-destructive">
           {error}
         </p>
       )}

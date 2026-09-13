@@ -363,11 +363,11 @@ describe("Home", () => {
     expect(await screen.findByRole("region", { name: `Selected project: ${WORKLEDGER.name}` })).toBeDefined();
   });
 
-  it("links the wizard and the recovery queue from the groups below the frame", async () => {
+  it("links the recovery queue from the groups below the frame, and leaves Add projects to the nav", async () => {
     renderHome();
     await screen.findByRole("list", { name: "Active this week" });
     const main = within(screen.getByRole("main"));
-    expect(main.getByRole("link", { name: "Add projects" }).getAttribute("href")).toBe("#/onboarding");
+    expect(main.queryByRole("link", { name: "Add projects" })).toBeNull();
     expect(
       main.getByRole("link", { name: /jobs running, queued or failed — Jobs$/ }).getAttribute("href"),
     ).toBe("#/jobs");

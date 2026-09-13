@@ -5,6 +5,7 @@ import type { Repo } from "../lib/ledger-source.js";
 import { useHasAside, useNavIsSheet } from "../lib/media.js";
 import {
   HOME_HREF,
+  ONBOARDING_HREF,
   machineHref,
   repoHref,
   useRoute,
@@ -20,9 +21,13 @@ import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger 
 
 /**
  * The app shell, as every Product Designs frame draws it (`plans/feature-p9-figma-screens.md`
- * §Shell): full width, left-aligned — a 232 px nav with a hairline on its right, the reading column
- * taking what is left, and from 1280 px a 352 px right column holding the view's module
+ * §Shell): a 232 px nav pinned to the left edge with a hairline on its right, then the reading
+ * column and — from 1280 px — the 352 px right column holding the view's module
  * (`components/aside.tsx`) above any opened panel (`components/ui/panel.tsx`).
+ *
+ * The frames are 1440 px wide. Past that, the reading and right columns stay together at their
+ * frame width and centre in the space the nav leaves (operator, 2026-09-13): stretching the middle
+ * left the text at one edge and its details at the other.
  *
  * The shell draws no page header: each view renders its own `PageHeader` and `PageBody`, because
  * the header's copy and the body's rhythm are the screen's.
@@ -177,7 +182,14 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   }
 
   const sidebar = (inSheet: boolean) => (
-    <Sidebar nav={nav} repos={repos} repoId={repoId} onSwitch={switchTo} inSheet={inSheet} />
+    <Sidebar
+      nav={nav}
+      repos={repos}
+      repoId={repoId}
+      onSwitch={switchTo}
+      inSheet={inSheet}
+      onboarding={route.kind === "onboarding"}
+    />
   );
 
   return (
@@ -185,25 +197,23 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
       <PanelHost>
         {(panelOpen) => (
           <div className="min-h-screen bg-background text-foreground">
-            <div
-              className={cn(
-                // Full width and left-aligned, as every Product Designs frame is: the nav, the
-                // reading column taking what is left, and the right column from 1280 px.
-                "flex min-h-screen",
-                // Between 900 and 1279 px there is no right column, so an opened panel floats at
-                // the right edge, non-modal; the reading column makes room for it rather than being
-                // covered: the panel's width plus its inset on either side.
-                panelOpen && !asSheet && !hasAside
-                  ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]"
-                  : "",
-              )}
-            >
+            <div className="flex min-h-screen">
               {asSheet ? null : (
                 <div className="w-nav shrink-0 border-r border-hairline">
                   <div className="sticky top-0 h-screen">{sidebar(false)}</div>
                 </div>
               )}
-              <div className="flex min-w-0 flex-1 flex-col">
+              <div
+                className={cn(
+                  "flex min-w-0 flex-1 flex-col",
+                  // Between 900 and 1279 px there is no right column, so an opened panel floats at
+                  // the right edge, non-modal; the content makes room for it rather than being
+                  // covered: the panel's width plus its inset on either side.
+                  panelOpen && !asSheet && !hasAside
+                    ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]"
+                    : "",
+                )}
+              >
                 {asSheet ? (
                   <div className="flex h-13 shrink-0 items-center gap-2 border-b border-hairline px-4">
                     <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
@@ -220,21 +230,36 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
                       </SheetContent>
                     </Sheet>
                   </div>
-                ) : null}
-                {/* The view draws its own header and body (`components/ui/page.tsx`): the copy
-                    and the rhythm differ per screen. */}
-                <main id="main" className="flex min-w-0 flex-1 flex-col">
-                  {children}
-                </main>
+                ) : (
+                  // The header's hairline, carried edge to edge. The view's own header draws the
+                  // same 52 px band inside the centred block; this one continues its line through
+                  // the margins either side, so a wide window reads as one page, not a floating
+                  // card. Sticky, and pulled back up by its own height, so it takes no space.
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none sticky top-0 z-10 -mb-13 h-13 shrink-0 border-b border-hairline bg-background"
+                  />
+                )}
+                {/* The reading column and the right column travel together, capped at the width
+                    the frames draw them at (856 + 352 px at a 1440 px window) and centred in
+                    whatever the nav leaves. At 1440 px that is exactly the frame; wider windows get
+                    even margins rather than a gap between the text and its details. */}
+                <div className="mx-auto flex w-full min-w-0 max-w-[calc(var(--wl-spacing-reading)_+_2.25rem_+_var(--wl-spacing-panel))] flex-1">
+                  {/* The view draws its own header and body (`components/ui/page.tsx`): the copy
+                      and the rhythm differ per screen. */}
+                  <main id="main" className="flex min-w-0 flex-1 flex-col">
+                    {children}
+                  </main>
+                  {hasAside ? (
+                    <aside aria-label="Details" className="relative z-20 w-panel shrink-0">
+                      <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-4 pr-4">
+                        <AsideSlot />
+                        <PanelSlot />
+                      </div>
+                    </aside>
+                  ) : null}
+                </div>
               </div>
-              {hasAside ? (
-                <aside aria-label="Details" className="w-panel shrink-0">
-                  <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-4 pr-4">
-                    <AsideSlot />
-                    <PanelSlot />
-                  </div>
-                </aside>
-              ) : null}
             </div>
             <KeyboardHelp />
           </div>
@@ -261,12 +286,15 @@ function Sidebar({
   repoId,
   onSwitch,
   inSheet,
+  onboarding,
 }: {
   nav: NavItem[];
   repos: Repo[];
   repoId: string;
   onSwitch: (id: string) => void;
   inSheet: boolean;
+  /** True on `#/onboarding`, which the Add projects row marks as the current page. */
+  onboarding: boolean;
 }) {
   return (
     <div className="flex h-full flex-col gap-0.5 overflow-y-auto px-3 py-4">
@@ -312,7 +340,49 @@ function Sidebar({
           </Dismissing>
         ))}
       </nav>
+
+      {/* Adding projects is the nav's (operator, 2026-09-13): pinned to the foot of the column,
+          a row like the views above it, so it is always one click away without competing with
+          them. */}
+      <div className="mt-auto pt-3">
+        <Dismissing inSheet={inSheet}>
+          <a
+            href={ONBOARDING_HREF}
+            aria-current={onboarding ? "page" : undefined}
+            className={cn(
+              "flex h-7 w-full items-center gap-2.5 rounded-lg px-2 text-base leading-body tracking-body transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              onboarding
+                ? "bg-selected font-medium text-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <PlusIcon current={onboarding} />
+            <span className="min-w-0 flex-1 truncate">Add projects</span>
+          </a>
+        </Dismissing>
+      </div>
     </div>
+  );
+}
+
+/** The Add projects row's icon, drawn like the view icons: 16 px, 1.25 px stroke. */
+function PlusIcon({ current }: { current: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.25}
+      strokeLinecap="round"
+      aria-hidden="true"
+      className={cn("shrink-0", current ? "text-primary" : "text-subtle-foreground")}
+    >
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" />
+      <path d="M8 5.5v5M5.5 8h5" />
+    </svg>
   );
 }
 

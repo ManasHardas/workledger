@@ -4,6 +4,7 @@ import { Panel } from "../../components/ui/panel.js";
 import { messageOf } from "../../lib/errors.js";
 import { detailHref } from "../ledger/detail-route.js";
 import { elapsed, formatWhen, shortId, waitingSentence, waitingUntil } from "./format.js";
+import { JobStatusChip } from "./job-status-chip.js";
 
 import type { Job } from "../../lib/ledger-source.js";
 
@@ -43,7 +44,7 @@ export function JobPanel({
       description={
         job === null ? undefined : (
           <>
-            <span>{job.status}</span>
+            <JobStatusChip status={job.status} />
             <span className="font-mono">{job.id}</span>
           </>
         )
@@ -67,18 +68,18 @@ function Body({
 }) {
   const waitUntil = waitingUntil(job, now);
   return (
-    <div className="flex flex-col gap-4 text-sm">
+    <div className="flex flex-col gap-4 text-base leading-body tracking-body">
       <Field label="Session">
         <a
           href={detailHref(repoId, job.session_ulid)}
-          className="w-fit rounded-sm font-mono text-xs hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-fit rounded-sm font-mono text-xs leading-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {job.session_ulid}
         </a>
       </Field>
 
       <Field label="Timing">
-        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-xs">
+        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-xs leading-tight">
           <Row label="created" value={formatWhen(job.created_at)} />
           <Row label="started" value={formatWhen(job.started_at)} />
           <Row label="finished" value={formatWhen(job.finished_at)} />
@@ -88,12 +89,12 @@ function Body({
       </Field>
 
       {waitUntil !== undefined ? (
-        <p role="status" className="text-xs text-muted-foreground">
+        <p role="status" className="text-base leading-body tracking-body text-muted-foreground">
           {waitingSentence(waitUntil, now)}
         </p>
       ) : job.error === null || job.error === "" ? null : (
         <Field label="Error">
-          <p className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs text-destructive">
+          <p className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs leading-tight text-destructive">
             {job.error}
           </p>
         </Field>
@@ -134,20 +135,20 @@ function JobLog({ readLog }: { readLog: () => Promise<string> }) {
 
   if (result.state === "loading") {
     return (
-      <p role="status" className="text-xs text-muted-foreground">
+      <p role="status" className="text-xs leading-tight text-muted-foreground">
         Loading…
       </p>
     );
   }
   if (result.state === "error") {
     return (
-      <p role="alert" className="text-xs text-destructive">
+      <p role="alert" className="text-xs leading-tight text-destructive">
         Could not read the log: {result.message}
       </p>
     );
   }
   return (
-    <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs">
+    <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 font-mono text-xs leading-tight">
       {result.text === "" ? "(empty)" : result.text}
     </pre>
   );
@@ -156,7 +157,7 @@ function JobLog({ readLog }: { readLog: () => Promise<string> }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="text-xs font-medium uppercase tracking-wide text-subtle-foreground">{label}</p>
+      <p className="text-xs font-medium leading-tight text-muted-foreground">{label}</p>
       {children}
     </div>
   );

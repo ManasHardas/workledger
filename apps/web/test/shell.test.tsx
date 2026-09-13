@@ -284,12 +284,22 @@ describe("app shell", () => {
     expect(document.querySelectorAll("[aria-hidden='true'][data-aria-hidden]").length).toBe(0);
   });
 
-  it("offers Add projects from the project switcher, since the nav has no button for it", async () => {
+  it("puts Add projects at the foot of the nav, and marks it current on the wizard", async () => {
     renderAt(repoHref(FIRST.id, "ledger"));
+    const add = await screen.findByRole("link", { name: "Add projects" });
+    expect(add.getAttribute("href")).toBe("#/onboarding");
+    // Below the views, not one of them: the nav list itself holds only the views.
     const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
     expect(within(nav).queryByRole("link", { name: "Add projects" })).toBeNull();
+    expect(nav.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The switcher no longer carries a second copy of it.
     fireEvent.click(await screen.findByRole("button", { name: `Project: ${FIRST.name}` }));
-    expect((await screen.findByRole("link", { name: "Add projects" })).getAttribute("href")).toBe("#/onboarding");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("link", { name: "Add projects" })).toBeNull();
+    cleanup();
+
+    renderAt("#/onboarding");
+    expect((await screen.findByRole("link", { name: "Add projects" })).getAttribute("aria-current")).toBe("page");
   });
 
   it("draws the right column only from 1280 px, and no page header of its own", async () => {

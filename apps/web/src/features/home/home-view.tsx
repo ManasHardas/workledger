@@ -18,6 +18,7 @@ import { ONBOARDING_HREF, machineHref, repoHref } from "../../lib/router.js";
 import { useMachine } from "../../lib/source-context.js";
 import type { Async } from "../../lib/use-async.js";
 import { elapsed, shortId } from "../jobs/format.js";
+import { JobStatusChip } from "../jobs/job-status-chip.js";
 import { useJobList, useNow } from "../jobs/use-jobs.js";
 import { BackfillBanner } from "../onboarding/banner.js";
 import { plural } from "./format.js";
@@ -41,7 +42,8 @@ function isLive(job: Job): boolean {
  * projects did something this week and what each is carrying (Active this week), and which have
  * gone quiet (Quiet) — with the selected project's detail in the right column. Below the frame's
  * content, and in the same style, sit the groups it leaves out (operator, 2026-09-12): the recovery
- * queue, the folders sessions were started from, and the way to add projects.
+ * queue and the folders sessions were started from. Adding projects is the left nav's (operator,
+ * 2026-09-13).
  *
  * The repo list is the app's, not this view's: the shell needs the same repos for its switcher and
  * the legacy redirects need them to pick a target, so `App` reads them once and hands them down.
@@ -154,13 +156,6 @@ export function HomeView({ repos, now = Date.now() }: { repos: Async<Repo[]>; no
         )}
 
         <FoldersWithSessions workspaces={workspaces} source={source} now={now} onInstalled={reload} />
-        {empty ? null : (
-          <div className="flex">
-            <a href={ONBOARDING_HREF} className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Add projects
-            </a>
-          </div>
-        )}
       </PageBody>
       {selected === null ? null : (
         <Aside narrow="none">
@@ -280,9 +275,7 @@ function RunningGroup({ jobs, now }: { jobs: JobAcrossRepos[]; now: number }) {
         <RowList aria-label="Running">
           {shown.map((job) => (
             <ListRow key={`${job.repo.id}-${job.id}`} aria-label={`${job.kind} ${shortId(job.id)}`}>
-              <Badge variant={job.status === "failed" ? "destructive" : "default"} className="shrink-0">
-                {job.status}
-              </Badge>
+              <JobStatusChip status={job.status} />
               <Badge variant="secondary" className="shrink-0">
                 {job.kind}
               </Badge>

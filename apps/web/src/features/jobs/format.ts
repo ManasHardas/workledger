@@ -22,12 +22,75 @@ export const SINCE_OPTIONS: readonly { value: string; label: string }[] = [
 
 export const DEFAULT_SINCE = "14d";
 
-/** Which badge a status gets. `running` is the only one that is neither good news nor bad. */
-export function statusVariant(status: string): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "running") return "default";
+/**
+ * The one colour code for a job's status, wherever a status appears (Jobs, machine-wide Jobs,
+ * Home's Running group, the job panel). Colour means status and nothing else, so the kind chip
+ * beside it is always neutral.
+ *
+ * `queued` is amber — waiting in line; `running` is the accent tint — in flight; `done` is green,
+ * `failed` red, and `cancelled` neutral, because nobody has to do anything about it.
+ */
+export function statusVariant(status: string): "warning" | "accent" | "success" | "destructive" | "secondary" {
+  if (status === "queued") return "warning";
+  if (status === "running") return "accent";
+  if (status === "done") return "success";
   if (status === "failed") return "destructive";
-  if (status === "done") return "secondary";
-  return "outline";
+  return "secondary";
+}
+
+/** The filter tabs: everything, what is in flight, then each way a job can finish. */
+export const JOB_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "in-flight", label: "In flight" },
+  { value: "done", label: "Done" },
+  { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
+
+export type JobFilter = (typeof JOB_FILTERS)[number]["value"];
+
+/** `done`, `failed`, `in flight` — a tab's label as it reads mid-sentence. */
+export function filterLabel(filter: JobFilter): string {
+  return (JOB_FILTERS.find((tab) => tab.value === filter)?.label ?? filter).toLowerCase();
+}
+
+/** In flight: the queue has not finished with it — it is running, or waiting to. */
+export function isInFlight(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+/** Whether a job belongs under a filter tab. */
+export function matchesFilter(status: string, filter: JobFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "in-flight") return isInFlight(status);
+  return status === filter;
+}
+
+/** Each tab's count, from the whole list, so a tab says what it holds before it is opened. */
+export function countByFilter(jobs: readonly Pick<Job, "status">[]): Record<JobFilter, number> {
+  const counts: Record<JobFilter, number> = { all: 0, "in-flight": 0, done: 0, failed: 0, cancelled: 0 };
+  for (const job of jobs) {
+    for (const { value } of JOB_FILTERS) if (matchesFilter(job.status, value)) counts[value] += 1;
+  }
+  return counts;
+}
+
+/** In flight, in the order it matters: running first, then queued, each newest first. */
+export function inFlightOrder<J extends Job>(jobs: readonly J[]): J[] {
+  return jobs
+    .filter((job) => isInFlight(job.status))
+    .sort(
+      (a, b) =>
+        Number(b.status === "running") - Number(a.status === "running") ||
+        b.created_at.localeCompare(a.created_at),
+    );
+}
+
+/** Finished (done, failed, cancelled), most recently finished first. */
+export function finishedOrder<J extends Job>(jobs: readonly J[]): J[] {
+  return jobs
+    .filter((job) => !isInFlight(job.status))
+    .sort((a, b) => (b.finished_at ?? b.created_at).localeCompare(a.finished_at ?? a.created_at));
 }
 
 /** Cancel is offered only where the queue accepts it: a job that has not finished. */

@@ -8,7 +8,7 @@ import type { LedgerSource, NoteRef, ParsedSession, Repo } from "../../lib/ledge
 import { useSource } from "../../lib/source-context.js";
 import type { Async } from "../../lib/use-async.js";
 import { useIdentities, type IdentityMap } from "../identity/live.js";
-import { useLiveOpenNotes } from "./live.js";
+import type { LiveNotes } from "./live.js";
 import { NoteCard } from "./note-card.js";
 import { checkpointAt, NoteModule, NotePanel } from "./note-panel.js";
 
@@ -16,7 +16,7 @@ import { checkpointAt, NoteModule, NotePanel } from "./note-panel.js";
 export type AnswerNote = NoteRef & { repo?: Repo };
 
 /** A note's identity: its repo (machine-wide), then the three fields `resolveNote` takes. */
-function keyOf(note: AnswerNote): string {
+export function keyOf(note: AnswerNote): string {
   return `${note.repo?.id ?? ""}-${note.session}-${String(note.cp)}-${String(note.index)}`;
 }
 
@@ -27,22 +27,68 @@ function isOnControl(target: EventTarget | null): boolean {
   return ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(target.tagName);
 }
 
+/** How Review heads the answers on each of the views that shows them. */
+export const ANSWER_SECTIONS = {
+  all: {
+    title: "Waiting on an answer",
+    label: "Open questions and blockers",
+    empty: "Nothing is waiting on you. Open questions and blockers appear here.",
+    emptyAcross: "Nothing is waiting on you in any project. Open questions and blockers appear here.",
+  },
+  blocker: {
+    title: "Blockers",
+    label: "Open blockers",
+    empty: "No open blockers.",
+    emptyAcross: "No open blockers in any project.",
+  },
+  question: {
+    title: "Questions",
+    label: "Open questions",
+    empty: "No open questions.",
+    emptyAcross: "No open questions in any project.",
+  },
+} as const;
+
+export type AnswerSection = keyof typeof ANSWER_SECTIONS;
+
+/** `result` narrowed to one note type, or left whole for `all`; identity-stable while `result` is. */
+export function useNotesOfType<T extends NoteRef>(
+  result: Async<T[]>,
+  type: NoteRef["type"] | "all",
+): Async<T[]> {
+  return useMemo(
+    () =>
+      result.state !== "ready" || type === "all"
+        ? result
+        : { state: "ready", value: result.value.filter((note) => note.type === type) },
+    [result, type],
+  );
+}
+
 /**
- * Every open `blocker` and `question` in one repo, newest first — Review's "Waiting on an answer"
- * (frame `10:31`). The machine-wide version is `all-needs-panel.tsx`; both are {@link Answers}.
+ * The open `blocker` and `question` notes in one repo, newest first — Review's "Waiting on an
+ * answer" (frame `10:31`), or one kind of them on the Blockers and Questions views. The read is
+ * the page's (`live`), because the toolbar counts the same notes. The machine-wide version is
+ * `all-needs-panel.tsx`; both are {@link Answers}.
  */
-export function NeedsPanel() {
+export function NeedsPanel({ live, section = "all" }: { live: LiveNotes; section?: AnswerSection }) {
+  // On the All view the backlog below owns `j`/`k`; on Blockers and Questions these cards are the list.
+  const moveKeys = section !== "all";
   const source = useSource();
-  const { result, refresh } = useLiveOpenNotes();
+  const result = useNotesOfType(live.result, section);
   // One read for the whole list rather than one per card: the map is the same for every note.
   const identities = useIdentities();
+  const copy = ANSWER_SECTIONS[section];
   return (
     <Answers
       result={result}
       sourceOf={() => source}
       identitiesOf={() => identities}
-      onResolved={refresh}
-      empty="Nothing is waiting on you. Open questions and blockers appear here."
+      onResolved={live.refresh}
+      title={copy.title}
+      label={copy.label}
+      empty={copy.empty}
+      moveKeys={moveKeys}
     />
   );
 }
@@ -60,14 +106,25 @@ export function Answers({
   sourceOf,
   identitiesOf,
   onResolved,
+  title = ANSWER_SECTIONS.all.title,
+  label = ANSWER_SECTIONS.all.label,
   empty,
+  moveKeys = false,
 }: {
   result: Async<AnswerNote[]>;
   /** The source a note resolves through; `null` asks for the one to hold while nothing is open. */
   sourceOf: (note: AnswerNote | null) => LedgerSource;
   identitiesOf: (note: AnswerNote) => IdentityMap;
   onResolved: () => void;
+  /** The section head, and the list's accessible name. */
+  title?: string;
+  label?: string;
   empty: string;
+  /**
+   * `j`/`k` move between the cards. Off wherever the backlog below owns those keys (a repo's All
+   * view), on wherever these cards are the only list on the page.
+   */
+  moveKeys?: boolean;
 }) {
   const docked = useAsideDocked();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -105,20 +162,53 @@ export function Answers({
     return () => window.removeEventListener("keydown", onKey);
   }, [choose]);
 
+  // `j`/`k`: the next or previous card becomes the selection (docked) and takes the focus, so Enter
+  // or the Answer button acts on the card the eye is on in either layout.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const cursor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!moveKeys) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "j" && event.key !== "k") return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      const list = notesRef.current;
+      if (list.length === 0) return;
+      const current = docked ? (selectedRef.current === null ? null : keyOf(selectedRef.current)) : cursor.current;
+      const at = list.findIndex((note) => keyOf(note) === current);
+      const next = at < 0 ? 0 : Math.max(0, Math.min(list.length - 1, at + (event.key === "j" ? 1 : -1)));
+      const note = list[next]!;
+      event.preventDefault();
+      cursor.current = keyOf(note);
+      if (docked) setSelectedKey(keyOf(note));
+      // Matched by attribute value rather than a selector string: a key is ids and numbers joined
+      // by dashes, but nothing here should depend on it staying selector-safe.
+      const card = [...document.querySelectorAll<HTMLElement>("[data-note-key]")].find(
+        (node) => node.dataset.noteKey === keyOf(note),
+      );
+      card?.querySelector<HTMLElement>("button")?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moveKeys, docked]);
+
   return (
     <PageSection
       id="review-answers-heading"
-      title="Waiting on an answer"
+      title={title}
       aside={result.state === "ready" ? `${String(notes.length)} open` : undefined}
     >
       <AsyncPanel result={result} isEmpty={(list) => list.length === 0} empty={empty}>
         {(list) => (
-          <RowList aria-label="Open questions and blockers">
+          <RowList aria-label={label}>
             {list.map((note) => {
               const session = sessions.get(sessionKey(note));
               return (
                 <NoteCard
                   key={keyOf(note)}
+                  noteKey={keyOf(note)}
                   note={note}
                   repo={note.repo}
                   at={checkpointAt(note, session)}
@@ -160,7 +250,7 @@ export function Answers({
 }
 
 /** A session is only unique within its repo. */
-function sessionKey(note: AnswerNote): string {
+export function sessionKey(note: AnswerNote): string {
   return `${note.repo?.id ?? ""}:${note.session}`;
 }
 
@@ -172,7 +262,7 @@ function sessionKey(note: AnswerNote): string {
  * fall back to what the `NoteRef` carries. A session already read is not read again when the list
  * re-reads; its goal and checkpoint times do not change under an open note.
  */
-function useSessionsOf(
+export function useSessionsOf(
   notes: readonly AnswerNote[],
   sourceOf: (note: AnswerNote) => LedgerSource,
 ): ReadonlyMap<string, ParsedSession> {

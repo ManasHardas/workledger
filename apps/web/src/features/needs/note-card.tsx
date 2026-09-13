@@ -24,6 +24,7 @@ export function NoteCard({
   opensDialog,
   onSelect,
   onAnswer,
+  noteKey,
 }: {
   note: NoteRef;
   repo?: Repo;
@@ -34,10 +35,13 @@ export function NoteCard({
   opensDialog: boolean;
   onSelect: () => void;
   onAnswer: () => void;
+  /** The card's identity in its list, for the `j`/`k` handler to find it by. */
+  noteKey?: string;
 }) {
   const where = [note.session.slice(0, 11), `cp ${String(note.cp)}`, ...(at === undefined ? [] : [formatDayMonth(at)])];
   return (
     <li
+      data-note-key={noteKey}
       data-selected={selected ? "" : undefined}
       onClick={onSelect}
       className={cn(

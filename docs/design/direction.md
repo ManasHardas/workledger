@@ -16,7 +16,10 @@ memory.
 
 ## Shell
 
-Full width and left-aligned, three columns. Nothing is centred.
+Three columns, as the frames draw them at 1440 px. The nav is pinned to the left edge; the reading
+column and the right column travel together at their frame widths (856 + 352 px) and centre in the
+space the nav leaves, so a window wider than the frame gets even margins instead of a gap between
+the text and its details (operator, 2026-09-13). The header's hairline runs edge to edge.
 
 - **Nav, 232 px**, a hairline on its right, 12 px sides, 16 px top, rows 2 px apart. First the
   project row — a 20 px green mark, the project in Body/Strong, a ▾ on All projects — which opens
@@ -24,7 +27,8 @@ Full width and left-aligned, three columns. Nothing is centred.
   line icon (1.25 px stroke, green on the current row, grey elsewhere), the label (Body/Medium on
   the current row, Body/Regular muted elsewhere), a Meta count where one exists. The current row
   sits on the `selected` surface. Order: Home, Ledger, Sessions, Review, a hairline, Jobs, Health.
-  Below 900 px the nav is a sheet behind a hamburger.
+  Add projects is a row of the same shape pinned to the foot of the nav. Below 900 px the nav is a
+  sheet behind a hamburger.
 - **Reading column**, taking the rest. Each view draws its own 52 px header — Title/Page on the
   left, a Meta summary or keyboard hint on the right, a hairline under it — and its own body, 32 px
   from both edges, capped at 820 px (780 px on a session).
