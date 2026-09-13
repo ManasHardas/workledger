@@ -380,3 +380,25 @@ describe("routes render fixture data", () => {
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
 });
+
+describe("the centred block (operator, 2026-09-13)", () => {
+  afterEach(() => Reflect.deleteProperty(window, "matchMedia"));
+
+  it("keeps nav, reading and right columns in one centred block, and starts the module on the body's first line", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({ matches: query === ASIDE_QUERY, media: query, addEventListener: () => {}, removeEventListener: () => {} }),
+    });
+    renderAt(repoHref(FIRST.id, "ledger"));
+    await screen.findByRole("heading", { name: "Ledger", level: 1 });
+    const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
+    const aside = screen.getByRole("complementary", { name: "Details" });
+    const block = nav.closest(".mx-auto")!;
+    expect(block).not.toBeNull();
+    expect(block.contains(screen.getByRole("main"))).toBe(true);
+    expect(block.contains(aside)).toBe(true);
+    // The Ledger body starts 20 px under its header; so does the right column's content.
+    await waitFor(() => expect(aside.querySelector(".pt-5")).not.toBeNull());
+  });
+});

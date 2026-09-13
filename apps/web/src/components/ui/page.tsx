@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "../../lib/cn.js";
+import { useAsideRhythm } from "../aside.js";
 
 /**
  * The reading column's frame, as every Product Designs screen draws it: a 52 px header with a
@@ -55,6 +56,7 @@ export function PageBody({
   className,
   ...props
 }: ComponentProps<"div"> & { rhythm: keyof typeof BODY }) {
+  useAsideRhythm(rhythm);
   return <div className={cn("flex w-full min-w-0 flex-col px-8 pb-10", BODY[rhythm], className)} {...props} />;
 }
 
