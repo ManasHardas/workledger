@@ -12,7 +12,7 @@ import {
   type Route,
   type ViewId,
 } from "../lib/router.js";
-import { AsideHost, AsideSlot } from "./aside.js";
+import { AsideColumn, AsideHost, AsideSlot } from "./aside.js";
 import { KeyboardHelp } from "./keyboard-help.js";
 import { ALL_PROJECTS, ProjectSwitcher } from "./project-switcher.js";
 import { Button } from "./ui/button.js";
@@ -21,13 +21,14 @@ import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger 
 
 /**
  * The app shell, as every Product Designs frame draws it (`plans/feature-p9-figma-screens.md`
- * §Shell): a 232 px nav pinned to the left edge with a hairline on its right, then the reading
+ * §Shell): a 232 px nav with a hairline on its right, then the reading
  * column and — from 1280 px — the 352 px right column holding the view's module
  * (`components/aside.tsx`) above any opened panel (`components/ui/panel.tsx`).
  *
- * The frames are 1440 px wide. Past that, the reading and right columns stay together at their
- * frame width and centre in the space the nav leaves (operator, 2026-09-13): stretching the middle
- * left the text at one edge and its details at the other.
+ * The frames are 1440 px wide. Past that, the whole app — nav included — stays at the frame's
+ * width and centres, so extra space becomes equal margins on both sides (operator, 2026-09-13).
+ * The right column's module starts on the reading column's first line, under a band that carries
+ * the page header's hairline across it.
  *
  * The shell draws no page header: each view renders its own `PageHeader` and `PageBody`, because
  * the header's copy and the body's rhythm are the screen's.
@@ -197,7 +198,11 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
       <PanelHost>
         {(panelOpen) => (
           <div className="min-h-screen bg-background text-foreground">
-            <div className="flex min-h-screen">
+            {/* The whole app is one block — nav, reading column, right column — at most the width
+                the frames are drawn at (232 + 856 + 352 = 1440 px), centred in the window. A wider
+                window adds margin on both sides equally (operator, 2026-09-13); past 1440 px a
+                hairline closes each side so the block reads as a page, not as columns adrift. */}
+            <div className="mx-auto flex min-h-screen w-full max-w-[calc(var(--wl-spacing-nav)_+_var(--wl-spacing-reading)_+_2.25rem_+_var(--wl-spacing-panel))] min-[90.0625rem]:border-x min-[90.0625rem]:border-hairline">
               {asSheet ? null : (
                 <div className="w-nav shrink-0 border-r border-hairline">
                   <div className="sticky top-0 h-screen">{sidebar(false)}</div>
@@ -230,33 +235,18 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
                       </SheetContent>
                     </Sheet>
                   </div>
-                ) : (
-                  // The header's hairline, carried edge to edge. The view's own header draws the
-                  // same 52 px band inside the centred block; this one continues its line through
-                  // the margins either side, so a wide window reads as one page, not a floating
-                  // card. Sticky, and pulled back up by its own height, so it takes no space.
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none sticky top-0 z-10 -mb-13 h-13 shrink-0 border-b border-hairline bg-background"
-                  />
-                )}
-                {/* The reading column and the right column travel together, capped at the width
-                    the frames draw them at (856 + 352 px at a 1440 px window) and centred in
-                    whatever the nav leaves. At 1440 px that is exactly the frame; wider windows get
-                    even margins rather than a gap between the text and its details. */}
-                <div className="mx-auto flex w-full min-w-0 max-w-[calc(var(--wl-spacing-reading)_+_2.25rem_+_var(--wl-spacing-panel))] flex-1">
+                ) : null}
+                <div className="flex w-full min-w-0 flex-1">
                   {/* The view draws its own header and body (`components/ui/page.tsx`): the copy
                       and the rhythm differ per screen. */}
                   <main id="main" className="flex min-w-0 flex-1 flex-col">
                     {children}
                   </main>
                   {hasAside ? (
-                    <aside aria-label="Details" className="relative z-20 w-panel shrink-0">
-                      <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-4 pr-4">
-                        <AsideSlot />
-                        <PanelSlot />
-                      </div>
-                    </aside>
+                    <AsideColumn>
+                      <AsideSlot />
+                      <PanelSlot />
+                    </AsideColumn>
                   ) : null}
                 </div>
               </div>

@@ -16,10 +16,12 @@ memory.
 
 ## Shell
 
-Three columns, as the frames draw them at 1440 px. The nav is pinned to the left edge; the reading
-column and the right column travel together at their frame widths (856 + 352 px) and centre in the
-space the nav leaves, so a window wider than the frame gets even margins instead of a gap between
-the text and its details (operator, 2026-09-13). The header's hairline runs edge to edge.
+Three columns, as the frames draw them at 1440 px, and the whole app is that block: nav, reading
+column and right column together, at most 1440 px wide, centred in the window. A wider window adds
+equal margin on both sides, and past 1440 px a hairline closes each side of the block (operator,
+2026-09-13, after pinning the nav to the left edge left it stranded on a 2000 px screen). The right
+column's first module starts on the same line as the reading column's first card, under a band
+that carries the header's hairline across the column.
 
 - **Nav, 232 px**, a hairline on its right, 12 px sides, 16 px top, rows 2 px apart. First the
   project row — a 20 px green mark, the project in Body/Strong, a ▾ on All projects — which opens
@@ -32,7 +34,8 @@ the text and its details (operator, 2026-09-13). The header's hairline runs edge
 - **Reading column**, taking the rest. Each view draws its own 52 px header — Title/Page on the
   left, a Meta summary or keyboard hint on the right, a hairline under it — and its own body, 32 px
   from both edges, capped at 820 px (780 px on a session).
-- **Right column, 352 px, from 1280 px**, 16 px of padding right, top and bottom. It holds the
+- **Right column, 352 px, from 1280 px**, 16 px of padding on the right, starting under the header at
+  the body's own top padding. It holds the
   view's module (Selected project, Selected session, Provenance, Selected) and under it any panel a
   person opened. Below 1280 px a view either appends its module to the reading column (a session's
   provenance) or drops it and opens items directly (the selection summaries); an opened panel floats
