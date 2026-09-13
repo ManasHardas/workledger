@@ -148,6 +148,7 @@ function Body({
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           <span className="sr-only">Body</span>
           <TextareaField
+            rows={4}
             value={body}
             disabled={disabled}
             onChange={(event) => setBody(event.target.value)}

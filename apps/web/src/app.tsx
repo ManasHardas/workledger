@@ -2,7 +2,7 @@ import { useEffect, useMemo } from "react";
 
 import { AppShell } from "./components/app-shell.js";
 import { useLiveRepos } from "./features/home/live.js";
-import { BackfillBanner, EmptyMachineRedirect } from "./features/onboarding/index.js";
+import { EmptyMachineRedirect } from "./features/onboarding/index.js";
 import type { AppSource, Repo } from "./lib/ledger-source.js";
 import { HOME_HREF, legacyTarget, replaceHash, useRoute, type Route, type ViewId } from "./lib/router.js";
 import { MachineProvider, RepoIdProvider, SourceProvider } from "./lib/source-context.js";
@@ -53,12 +53,11 @@ export function App({ source }: { source: AppSource }) {
 function Screen({ route, source, repos }: { route: Route; source: AppSource; repos: Async<Repo[]> }) {
   switch (route.kind) {
     case "home":
-      // A daemon with nothing enabled sends Home to the wizard; a finished backfill is announced
-      // above the cards (both features/onboarding, issue #79).
+      // A daemon with nothing enabled sends Home to the wizard (features/onboarding, issue #79);
+      // Home announces a finished backfill at the top of its own body.
       return (
         <>
           <EmptyMachineRedirect repos={repos} />
-          <BackfillBanner />
           <HomeView repos={repos} />
         </>
       );
@@ -102,13 +101,13 @@ function LegacyRedirect({ route, repos }: { route: Extract<Route, { kind: "legac
 
   if (repos.state === "error") {
     return (
-      <p role="alert" className="p-4 text-sm text-destructive">
+      <p role="alert" className="px-8 py-5 text-base leading-body tracking-body text-destructive">
         Could not list projects: {repos.message}
       </p>
     );
   }
   return (
-    <p role="status" className="p-4 text-sm text-muted-foreground">
+    <p role="status" className="px-8 py-5 text-base leading-body tracking-body text-muted-foreground">
       Loading…
     </p>
   );

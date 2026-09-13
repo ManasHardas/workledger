@@ -6,7 +6,7 @@ import { ListRow, RowMeta } from "../../components/ui/list-row.js";
 import { messageOf } from "../../lib/errors.js";
 import type { AppSource, InitResult, Workspace } from "../../lib/ledger-source.js";
 import { announceReposChanged } from "./live.js";
-import { formatRelative } from "./format.js";
+import { formatAgo } from "./format.js";
 
 /**
  * One folder from `GET /api/workspaces` (amendment 12) — Home's second group, as a row.
@@ -57,7 +57,7 @@ export function WorkspaceCard({
       </div>
       <RowMeta>{`${String(workspace.sessions)} sessions`}</RowMeta>
       <RowMeta>{`${String(workspace.repos.length)} tracked repos`}</RowMeta>
-      <RowMeta className="hidden sm:inline">{formatRelative(workspace.lastSessionAt, now)}</RowMeta>
+      <RowMeta className="hidden sm:inline">{formatAgo(workspace.lastSessionAt, now)}</RowMeta>
       {workspace.hooksInstalled ? null : (
         <InstallHooks path={workspace.path} source={source} onInstalled={onInstalled} />
       )}

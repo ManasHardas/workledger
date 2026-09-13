@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
-import { formatRelative } from "../src/features/home/format.js";
+import { formatAgo, formatRelative } from "../src/features/home/format.js";
+import { showMoreLabel, splitByWeek } from "../src/features/home/home-view.js";
+import { homePath } from "../src/features/home/repo-card.js";
+import { ASIDE_QUERY } from "../src/lib/media.js";
 import { REPOS_REFRESH_MS, announceReposChanged } from "../src/features/home/live.js";
-import { FIXTURE_JOBS_ALL, FIXTURE_NOTES_ALL, FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
+import { FIXTURE_JOBS_ALL, FIXTURE_REPOS, FIXTURE_WORKSPACES } from "../src/lib/fixtures.js";
 import { createSource, type AppSource, type InitInput, type InitResult, type LedgerEvent, type Repo, type Workspace } from "../src/lib/ledger-source.js";
 import { repoHref } from "../src/lib/router.js";
 
@@ -86,14 +89,17 @@ describe("Home — folders with sessions (amendment 11)", () => {
 
   it("puts the status groups first and the non-repo folders in a group below", async () => {
     renderHome();
-    // Home has one title of its own now; the groups under it are sections (#134).
-    const title = await screen.findByRole("heading", { level: 2 });
-    expect(title.textContent).toBe("Overview");
-    const groups = within(screen.getByRole("main")).getAllByRole("heading", { level: 3 });
-    expect(groups.map((h) => h.textContent)).toEqual([
-      "Review",
+    // The frame's groups first (P9, Home frame `11:2`), then the groups it leaves out, below.
+    const title = await screen.findByRole("heading", { level: 1 });
+    expect(title.textContent).toBe("Home");
+    await screen.findByRole("list", { name: "Folders with sessions" });
+    const main = within(screen.getByRole("main"));
+    expect(main.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "Active this week",
+      "Quiet",
+    ]);
+    expect(main.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Running",
-      "Projects",
       "Folders with sessions",
     ]);
 
@@ -108,7 +114,7 @@ describe("Home — folders with sessions (amendment 11)", () => {
     // repo"): it belongs here, never in Projects.
     expect(rows[1]!.textContent).toContain(NOTES.path);
     expect(within(rows[1]!).getByText("0 tracked repos")).toBeDefined();
-    expect(within(screen.getByRole("list", { name: "Projects" })).queryByText(NOTES.path)).toBeNull();
+    expect(within(screen.getByRole("list", { name: "Active this week" })).queryByText(NOTES.path)).toBeNull();
   });
 
   it("states each folder's hooks, sessions and last session", async () => {
@@ -121,7 +127,7 @@ describe("Home — folders with sessions (amendment 11)", () => {
     expect(within(first).getByText("no hooks")).toBeDefined();
     expect(within(first).getByText(`${String(DOME.sessions)} sessions`)).toBeDefined();
     expect(within(first).getByText("2 tracked repos")).toBeDefined();
-    expect(within(first).getByText(formatRelative(DOME.lastSessionAt, NOW))).toBeDefined();
+    expect(within(first).getByText(formatAgo(DOME.lastSessionAt, NOW))).toBeDefined();
 
     const hooked = within(folders).getAllByRole("listitem")[2]!;
     expect(hooked.textContent).toContain(HARD_TALKS.name);
@@ -202,13 +208,13 @@ describe("Home — folders with sessions (amendment 11)", () => {
     });
 
     expect((await screen.findByRole("alert")).textContent).toContain("hook file is read-only");
-    expect(screen.getByRole("list", { name: "Projects" })).toBeDefined();
+    expect(screen.getByRole("list", { name: "Active this week" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Install hooks" })).toBeDefined();
   });
 
   it("drops the whole group on a machine whose sessions all start inside repos", async () => {
     renderHome(withWorkspaces([]));
-    await screen.findByRole("list", { name: "Projects" });
+    await screen.findByRole("list", { name: "Active this week" });
     expect(screen.queryByRole("heading", { name: "Folders with sessions" })).toBeNull();
     expect(screen.queryByRole("list", { name: "Folders with sessions" })).toBeNull();
   });
@@ -225,86 +231,162 @@ describe("Home — folders with sessions (amendment 11)", () => {
   it("renders Home against a source from before amendment 12 with no folder group", async () => {
     const older = Object.assign(Object.create(createSource("fixture")) as AppSource, { workspaces: undefined });
     renderHome(older);
-    await screen.findByRole("list", { name: "Projects" });
+    await screen.findByRole("list", { name: "Active this week" });
     expect(screen.queryByRole("heading", { name: "Folders with sessions" })).toBeNull();
   });
 });
 
+/** Stubs `matchMedia` so the right column exists (1280 px and up): the docked, selecting form. */
+function docked(): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query === ASIDE_QUERY,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  });
+}
+
 describe("Home", () => {
-  it("renders one status row per repo, every count a link to the view that counts it", async () => {
-    renderHome();
-    const list = await screen.findByRole("list", { name: "Projects" });
-
-    const first = within(list).getByRole("listitem", { name: WORKLEDGER.name });
-    expect(within(first).getByRole("link", { name: WORKLEDGER.name }).getAttribute("href")).toBe(
-      repoHref(WORKLEDGER.id, "ledger"),
-    );
-    expect(within(first).getByText(WORKLEDGER.path)).toBeDefined();
-    expect(within(first).getByText("ok")).toBeDefined();
-    expect(within(first).getByText("1 h ago")).toBeDefined();
-
-    // Rule 4: every count is a link to the thing it counts, and its name says what it counts.
-    const count = (noun: string, value: number) =>
-      within(first).getByRole("link", { name: `${WORKLEDGER.name} — ${String(value)} ${noun}` });
-    expect(count("open backlog", 4).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
-    expect(count("open notes", 2).getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "review"));
-    expect(count("sessions in the last 7 days", 3).getAttribute("href")).toBe(
-      repoHref(WORKLEDGER.id, "ledger"),
-    );
-
-    const second = within(list).getByRole("listitem", { name: DASHERO.name });
-    expect(within(second).getByText("warn")).toBeDefined();
-    expect(within(second).getByText("never")).toBeDefined();
+  afterEach(() => {
+    Reflect.deleteProperty(window, "matchMedia");
   });
 
-  it("orders the projects by what changed most recently", async () => {
+  it("heads the page with the machine's totals", async () => {
     renderHome();
-    const list = await screen.findByRole("list", { name: "Projects" });
-    const names = within(list)
-      .getAllByRole("listitem")
-      .map((row) => row.getAttribute("aria-label"));
-    // `dashero` has never fired a hook, so it is last however many repos there are.
-    expect(names).toEqual([WORKLEDGER.name, DASHERO.name]);
+    await screen.findByRole("list", { name: "Active this week" });
+    const header = screen.getByRole("banner");
+    expect(within(header).getByRole("heading", { level: 1 }).textContent).toBe("Home");
+    // Two projects, three sessions this week, and the open blockers and questions of both.
+    expect(header.textContent).toContain("2 projects · 3 sessions this week · 3 waiting on you");
   });
 
-  it("links the wizard, and each group's count to the list it is the top of", async () => {
+  it("splits the projects into active this week and quiet, most recent first", async () => {
     renderHome();
-    await screen.findByRole("list", { name: "Projects" });
-    // Scoped to the middle pane: the left nav carries its own "Add projects" at the bottom
-    // (docs/design/direction.md §Shell), so the unscoped name is two links now.
+    const active = await screen.findByRole("list", { name: "Active this week" });
+    expect(within(active).getAllByRole("listitem").map((row) => row.getAttribute("aria-label"))).toEqual([
+      WORKLEDGER.name,
+    ]);
+    const quiet = screen.getByRole("list", { name: "Quiet" });
+    expect(within(quiet).getAllByRole("listitem").map((row) => row.getAttribute("aria-label"))).toEqual([
+      DASHERO.name,
+    ]);
+    expect(within(screen.getByRole("main")).getByText("1 of 2")).toBeDefined();
+    expect(within(screen.getByRole("main")).getByText("1 project · nothing this week")).toBeDefined();
+
+    const splits = splitByWeek([DASHERO, { ...DASHERO, id: "x", name: "late", lastHookAt: "2026-09-10T00:00:00Z" }, WORKLEDGER]);
+    expect(splits.active.map((repo) => repo.name)).toEqual(["workledger"]);
+    // Never-run projects sort after every project that has run.
+    expect(splits.quiet.map((repo) => repo.name)).toEqual(["late", "dashero"]);
+  });
+
+  it("carries the frame's card: name, home-relative path, three stats and when it last ran", async () => {
+    renderHome();
+    const active = await screen.findByRole("list", { name: "Active this week" });
+    const card = within(active).getByRole("listitem", { name: WORKLEDGER.name });
+    // Without the right column there is nowhere to show a selection, so the card opens the Ledger.
+    const link = within(card).getByRole("link");
+    expect(link.getAttribute("href")).toBe(repoHref(WORKLEDGER.id, "ledger"));
+    expect(link.getAttribute("aria-label")).toBe("workledger — 3 sessions this week, 4 open, 2 need you");
+    expect(within(card).getByText("~/Projects/workledger")).toBeDefined();
+    expect(within(card).getByText("sessions")).toBeDefined();
+    expect(within(card).getByText("need you")).toBeDefined();
+    expect(within(card).getByText("1 hour ago")).toBeDefined();
+
+    const quiet = screen.getByRole("list", { name: "Quiet" });
+    const row = within(quiet).getByRole("listitem", { name: DASHERO.name });
+    expect(row.textContent).toContain("1 open");
+    expect(row.textContent).toContain("1 need you");
+    expect(row.textContent).toContain("never");
+
+    expect(homePath("/Users/someone/Projects/x")).toBe("~/Projects/x");
+    expect(homePath("/home/someone")).toBe("~");
+    expect(homePath("/srv/repos/x")).toBe("/srv/repos/x");
+  });
+
+  it("shows three quiet projects, then names a never-run one in the way to the rest", () => {
+    const hidden = [
+      { ...DASHERO, id: "a", name: "alpha", lastHookAt: "2026-09-01T00:00:00Z" },
+      { ...DASHERO, id: "b", name: "splitfire", lastHookAt: null },
+    ];
+    expect(showMoreLabel(hidden)).toBe("Show 2 more, including splitfire, which has never run");
+    expect(showMoreLabel(hidden.slice(0, 1))).toBe("Show 1 more");
+  });
+
+  it("flags a tracked folder that holds other projects, with the frame’s headline only while it is true", async () => {
+    const folder: Repo = { ...WORKLEDGER, id: "folder", name: "Projects", path: "/Users/manas/Projects", openBacklog: 9, openNotes: 5 };
+    renderHome(machine(() => [folder, WORKLEDGER, DASHERO]).source);
+    const flag = await screen.findByRole("note");
+    expect(within(flag).getByText("check this")).toBeDefined();
+    expect(flag.textContent).toContain(
+      "Projects holds 9 open items and 5 questions — more than every real project combined",
+    );
+    cleanup();
+
+    // Holding less than the projects under it, it is still a folder, but the headline would be
+    // false, so the flag states the counts alone.
+    renderHome(machine(() => [{ ...folder, openBacklog: 2 }, WORKLEDGER, DASHERO]).source);
+    const plain = await screen.findByRole("note");
+    expect(within(plain).getByText("Projects holds 2 open items and 5 questions")).toBeDefined();
+    cleanup();
+
+    // No folder among the tracked repos: no flag.
+    renderHome(machine(() => [WORKLEDGER, DASHERO]).source);
+    await screen.findByRole("list", { name: "Active this week" });
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("selects a project into the right column when there is one, and opens it from there", async () => {
+    docked();
+    renderHome();
+    const module = await screen.findByRole("region", { name: `Selected project: ${WORKLEDGER.name}` });
+    expect(within(module).getByText("ok")).toBeDefined();
+    expect(within(module).getByText("claude-code")).toBeDefined();
+    expect(within(module).getByText("Last activity")).toBeDefined();
+    await waitFor(() => expect(module.textContent).toContain("3 sessions · "));
+    expect(module.textContent).toContain("2 answers");
+    expect(within(module).getByRole("link", { name: "Open the ledger" }).getAttribute("href")).toBe(
+      repoHref(WORKLEDGER.id, "ledger"),
+    );
+
+    const card = within(screen.getByRole("list", { name: "Active this week" })).getByRole("button");
+    expect(card.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(within(screen.getByRole("list", { name: "Quiet" })).getByRole("button"));
+    expect(await screen.findByRole("region", { name: `Selected project: ${DASHERO.name}` })).toBeDefined();
+
+    // `j`/`k` walk the same order the page shows: active, then quiet.
+    fireEvent.keyDown(window, { key: "k" });
+    expect(await screen.findByRole("region", { name: `Selected project: ${WORKLEDGER.name}` })).toBeDefined();
+  });
+
+  it("links the wizard and the recovery queue from the groups below the frame", async () => {
+    renderHome();
+    await screen.findByRole("list", { name: "Active this week" });
     const main = within(screen.getByRole("main"));
     expect(main.getByRole("link", { name: "Add projects" }).getAttribute("href")).toBe("#/onboarding");
-    // Home no longer carries a second copy of the nav's tabs: the counts are the links (rule 4).
-    expect(screen.queryByRole("navigation", { name: "Across projects" })).toBeNull();
-    expect(
-      main.getByRole("link", { name: /open questions and blockers — Review$/ }).getAttribute("href"),
-    ).toBe("#/review");
     expect(
       main.getByRole("link", { name: /jobs running, queued or failed — Jobs$/ }).getAttribute("href"),
     ).toBe("#/jobs");
   });
 
   /**
-   * #138, rule 4: the three groups whose list is already on the page carried a bare number. The
-   * count is a link there too — to the list beneath it, which it moves focus to.
+   * #138, rule 4: a group whose list is already on the page carries a count that links to the list
+   * beneath it, which it moves focus to.
    */
-  it.each(["Projects", "Folders with sessions"] as const)(
-    "makes the «%s» count a link to the list it counts",
-    async (group) => {
-      renderHome();
-      const list = await screen.findByRole("list", { name: group });
-      const main = within(screen.getByRole("main"));
-      const count = main.getByRole("link", { name: new RegExp(`— ${group}$`) });
-      expect(count.textContent).toBe(String(within(list).getAllByRole("listitem").length));
-      fireEvent.click(count);
-      expect(document.activeElement).toBe(list.parentElement);
-    },
-  );
+  it("makes the «Folders with sessions» count a link to the list it counts", async () => {
+    renderHome();
+    const list = await screen.findByRole("list", { name: "Folders with sessions" });
+    const main = within(screen.getByRole("main"));
+    const count = main.getByRole("link", { name: /— Folders with sessions$/ });
+    expect(count.textContent).toBe(String(within(list).getAllByRole("listitem").length));
+    fireEvent.click(count);
+    expect(document.activeElement).toBe(list.parentElement);
+  });
 
-  /**
-   * #138: "Running 1" used to head a list that also carried the failed rows, so the number and the
-   * rows under it counted different things.
-   */
   it("counts the failed rows the Running group shows beneath it", async () => {
     renderHome();
     const running = await screen.findByRole("list", { name: "Running" });
@@ -317,14 +399,8 @@ describe("Home", () => {
     expect(count.textContent).toBe(String(rows.length));
   });
 
-  it("shows what needs the operator and what is running, across projects", async () => {
+  it("shows what is running and what failed, across projects", async () => {
     renderHome();
-    const needs = await screen.findByRole("list", { name: "Review" });
-    for (const note of FIXTURE_NOTES_ALL) {
-      const row = within(needs).getByRole("link", { name: note.text });
-      expect(row.getAttribute("href")).toBe(repoHref(note.repo.id, "review"));
-    }
-    // The fixture queue has one failed repair and nothing running: the group says both.
     const running = await screen.findByRole("list", { name: "Running" });
     const job = FIXTURE_JOBS_ALL[0]!;
     expect(within(running).getByText("failed")).toBeDefined();
@@ -343,9 +419,9 @@ describe("Home", () => {
     // Coming back to Home on purpose (the wizard's own Home link) is not bounced again.
     renderHome(empty);
     expect(await screen.findByText(/No projects are tracked yet/)).toBeDefined();
-    expect(screen.queryByRole("list", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Active this week" })).toBeNull();
     const links = within(screen.getByRole("main")).getAllByRole("link", { name: "Add projects" });
-    expect(links.length).toBe(2);
+    expect(links.length).toBe(1);
     expect(links.every((link) => link.getAttribute("href") === "#/onboarding")).toBe(true);
   });
 
@@ -366,10 +442,10 @@ describe("Home", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    const list = screen.getByRole("list", { name: "Projects" });
+    const list = screen.getByRole("list", { name: "Active this week" });
     const sessions = (n: number) =>
       within(list).getByRole("link", {
-        name: `${WORKLEDGER.name} — ${String(n)} sessions in the last 7 days`,
+        name: `${WORKLEDGER.name} — ${String(n)} sessions this week, 4 open, 2 need you`,
       });
     expect(sessions(3)).toBeDefined();
     expect(live.reads).toBe(1);
@@ -398,8 +474,8 @@ describe("Home", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    const list = () => screen.getByRole("list", { name: "Projects" });
-    expect(within(list()).queryByRole("listitem", { name: DASHERO.name })).toBeNull();
+    const list = () => screen.getByRole("list", { name: "Quiet" });
+    expect(screen.queryByRole("list", { name: "Quiet" })).toBeNull();
     expect(live.reads).toBe(1);
 
     // The daemon's frame for a repo `init` just enabled: the new card appears without a reload.

@@ -1,61 +1,71 @@
-# Design direction (2026-09-11, operator: "lets make the ui pretty ... center it to look more like X interface ... Also match font and style from X")
+# Design direction (2026-09-12: the app is the Figma Product Designs file)
 
-Supersedes the Linear direction of 2026-09-10 (DL-22). **Provisional:** the operator said the
-same day that X was meant as inspiration, not a template to copy wholesale, and that the design
-will be revisited; treat this document as the current state, not a settled choice. Designed in code, not in Figma; these tokens
-are the source of truth. Every value below lives in `packages/tokens` and is consumed through the
-Tailwind preset. No component hardcodes a colour, radius, or shadow.
+**The Figma files are the source of design.** The screens are the four frames in *workledger —
+Product Designs* (`GlA5fi6UzX90dU4N0WmFnC`): Home `11:2`, Ledger `7:2`, Session `2:2`, Review
+`10:2`, each 1440 × 1040 in dark mode. The values are the variables and text styles of *workledger
+— Design System* (`O8nwIMP8e9zqqtOEJuCIyd`), synced into `packages/tokens` by `from-figma.mjs`
+(`docs/design/figma.md`). Linear is the inspiration behind both (density with air, quiet chrome,
+one accent used sparingly); the green accent, the status colours and the vocabulary are
+workledger's own (DL-22).
+
+This supersedes the X direction of 2026-09-11, which the operator judged a clone. The build that
+followed it synced the Figma colours but kept X's shell; `plans/feature-p9-figma-screens.md`
+records why and is the measured spec the screens were rebuilt from. When this document and a
+frame disagree, the frame wins — read it with the Figma MCP (`get_design_context`) rather than from
+memory.
 
 ## Shell
 
-X's shape: one centred group of three columns, with black on either side of it.
+Full width and left-aligned, three columns. Nothing is centred.
 
-- **Left nav, 275 px, sticky, full height.** Top: the mark, monochrome, linking Home, and under
-  it the project switcher (an avatar initial, the name in bold, a quiet second line). Then the
-  views for the current project as pills: 26 px icon, 20 px label, the current one in bold with a
-  heavier icon, a count after the label in grey where one exists. Then "Add projects" as the one
-  big inverted pill. Below 900 px the nav is a sheet behind a hamburger.
-- **Middle column, 600 px**, with a hairline down either side from 640 px. A sticky 48 px header,
-  translucent over the content with a blur, carries the 20 px extrabold title and the health chip.
-  Content is flat: sections and list items are separated by hairlines bled to both edges of the
-  column, not boxed in cards. The session list reads as a timeline: author and harness on the first
-  line, the goal as the body, the counts along the foot.
-- **Right column, 350 px, from 1280 px, sticky.** The evidence panel docks at its top as a module
-  (radius 16, hairline border, 17 px extrabold title, a round close control): X's "Today's News"
-  slot. Under it, a one-line keyboard hint. Folders with sessions are listed on Home only, never in
-  the shell (operator, 2026-09-11: "remove the folders with sessions box").
-- **The panel without a right column.** From 768 to 1279 px it floats at the right edge, inset
-  12 px, radius 16, the glow shadow, non-modal; the centred group moves left to make room. Below
-  768 px it is a modal bottom sheet at 85 vh with a drag handle, Escape and swipe-down to close.
-  Focus moves into the panel on open and back to the opener on close in every form.
+- **Nav, 232 px**, a hairline on its right, 12 px sides, 16 px top, rows 2 px apart. First the
+  project row — a 20 px green mark, the project in Body/Strong, a ▾ on All projects — which opens
+  the switcher (filter, the projects, and "Add projects"). A 12 px gap, then 28 px rows: a 16 px
+  line icon (1.25 px stroke, green on the current row, grey elsewhere), the label (Body/Medium on
+  the current row, Body/Regular muted elsewhere), a Meta count where one exists. The current row
+  sits on the `selected` surface. Order: Home, Ledger, Sessions, Review, a hairline, Jobs, Health.
+  Below 900 px the nav is a sheet behind a hamburger.
+- **Reading column**, taking the rest. Each view draws its own 52 px header — Title/Page on the
+  left, a Meta summary or keyboard hint on the right, a hairline under it — and its own body, 32 px
+  from both edges, capped at 820 px (780 px on a session).
+- **Right column, 352 px, from 1280 px**, 16 px of padding right, top and bottom. It holds the
+  view's module (Selected project, Selected session, Provenance, Selected) and under it any panel a
+  person opened. Below 1280 px a view either appends its module to the reading column (a session's
+  provenance) or drops it and opens items directly (the selection summaries); an opened panel floats
+  at the right edge from 768 to 1279 px and is a bottom sheet below 768 px.
+
+## Components
+
+- **Card** — the reading column's unit: 8 px corners, a hairline, the `card` surface, 14 px sides.
+  Selected: the primary border on the `selected` surface. Sessions, recap points, projects,
+  answers, proposals and every list row are cards, 10 px apart.
+- **Module** — the right column's unit: 12 px corners, a hairline, the `card` surface; a head, then
+  sections separated by hairlines, each a Meta/Strong label over a Body/Regular value; a foot with a
+  green Body/Medium link.
+- **Chip** — 22 px pill, Meta/Strong. Solid status fills (`destructive`, `warning`, `success`),
+  the accent tint for open and question, and the neutral chip (muted fill, hairline) for labels such
+  as `ended` or a harness.
+- **Button** — 28 px, 8 px corners, Meta/Strong. Primary is the green fill; a destructive action is
+  the red outline and arms before it runs.
+- **Section head** — Title/Section on the left, a Meta aside on the right.
 
 ## Tokens
 
-Dark first, light kept complete, both X's. Dark: background `#000000`, text `#e7e9ea`, secondary
-text `#8b9197`, tertiary `#7e848a` (both a step above X's `#71767b` so they clear AA on the hover
-and selected surfaces), hairline `#2f3336`, hover and selected `#16181c`. Light: `#ffffff`,
-`#0f1419`, `#536471`, hairline `#eff3f4`. One blue, `#1d9bf0`, for selection, focus and links
-only; chips that need a colour take its tint. Status colours stay reserved for status: X's red,
-yellow and green, at chip weight, never as a whole-row fill.
+Colour, radius, spacing, type size and line height come from the Figma variables; tracking and the
+two families are hand-maintained in `tokens.json` (Figma text styles carry them, not variables).
 
-Shapes: every button, nav item and chip is a pill; modules and the panel are 16 px; rows inside a
-list are 8 px. One shadow, X's soft glow, on things that float over the page only.
-
-Type: X's own fallback stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-Arial`), which is SF Pro on a Mac. Chirp itself is X's licensed face and the app never fetches a
-web font (design spec §14). Sizes are X's: 13 meta, 15 body, 17 module heading, 20 nav and page
-title. Weights: 400 body, 700 names, the current view and buttons, 800 headings. Line height 20 px
-on the body. Tabular numerals for every count and duration. Monospace only for identifiers: paths,
-commits, ids.
-
-Density: 8 px grid. List rows 44 px, nav pills 52 px. A list row shows a hover background, a focus
-ring on keyboard focus, and a left accent bar when selected.
+Type is Inter (bundled, `"Inter Variable"`) with Roboto Mono (bundled) for identifiers. The ramp:
+Title/Page 20/26 semibold −1.2 %, Title/Section 15/20 semibold −1.2 %, Body 13/20 at 400, 500 and
+600 −0.6 %, Meta 12/16 at 400 and 500, Mono/Meta 12/16. Text colours step foreground →
+muted-foreground → subtle-foreground; the accent green is for the current view, selection, links
+and the "need you" count.
 
 ## Rules that outlive this document
 
-1. A gist is prose; identifiers are monospace. Never mix the two weights in one line.
+1. A gist is prose; identifiers are monospace. Never mix the two in one run of text.
 2. Chips carry state, not decoration: harness, status, kind. At most three per row.
-3. Evidence is never inline. It lives in the right panel.
-4. Every count is a link to the thing it counts.
-5. Nothing in the middle column may scroll horizontally at 375 px.
-6. Three radii only: a pill for anything you press, 16 px for a module, 8 px for a row.
+3. Evidence is never inline in the reading column. It lives in the right column.
+4. Every number shown is derived from the ledger or the daemon; copy the data cannot back is
+   replaced, never invented.
+5. Nothing in the reading column may scroll horizontally at 375 px.
+6. Radii: pills for chips, 6 px for inputs, 8 px for cards, buttons and nav rows, 12 px for modules.

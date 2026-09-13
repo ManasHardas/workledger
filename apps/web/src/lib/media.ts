@@ -12,8 +12,9 @@ import { useCallback, useSyncExternalStore } from "react";
 export const NAV_SHEET_QUERY = "(max-width: 899px)";
 export const PANEL_SHEET_QUERY = "(max-width: 767px)";
 /**
- * 1280 px and up: room for the whole X shape — 275 px nav, 600 px column, 350 px right column —
- * so the right column exists and the panel docks in it rather than floating over the page.
+ * 1280 px and up: room for the frames' three columns — the 232 px nav, a reading column of at least
+ * 696 px, the 352 px right column — so the right column exists and the view's module and any opened
+ * panel dock in it rather than floating over the page.
  */
 export const ASIDE_QUERY = "(min-width: 1280px)";
 
@@ -48,7 +49,7 @@ export function usePanelIsSheet(): boolean {
   return useMediaQuery(PANEL_SHEET_QUERY);
 }
 
-/** 1280 px and up: the shell has a right column for the panel and the folders to live in. */
+/** 1280 px and up: the shell has a right column for the view's module and the panel. */
 export function useHasAside(): boolean {
   return useMediaQuery(ASIDE_QUERY);
 }

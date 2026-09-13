@@ -1,7 +1,9 @@
+import { PageBody } from "../components/ui/page.js";
 import { useDetailUlid } from "../features/ledger/detail-route.js";
 import { useLiveSessions } from "../features/ledger/live.js";
-import { SessionDetail } from "../features/ledger/session-detail.js";
+import { SessionDetail, SessionHeader } from "../features/ledger/session-detail.js";
 import { openFirst } from "../features/ledger/session-list.js";
+import { useRepoId } from "../lib/source-context.js";
 
 /**
  * Session — one session's activities (P9, operator: "Session is the view of per session
@@ -24,34 +26,34 @@ export function SessionView() {
 
 function LatestSession() {
   const sessions = useLiveSessions({});
+  const repo = useRepoId();
 
-  if (sessions.state === "loading") {
-    return (
-      <p role="status" className="p-4 text-sm text-muted-foreground">
-        Loading…
-      </p>
-    );
-  }
-  if (sessions.state === "error") {
-    return (
-      <p role="alert" className="p-4 text-sm text-destructive">
-        Could not read the sessions: {sessions.message}
-      </p>
-    );
+  if (sessions.state === "ready") {
+    const latest = openFirst(sessions.value)[0];
+    if (latest !== undefined) return <SessionDetail ulid={latest.frontmatter.id} />;
   }
 
-  const latest = openFirst(sessions.value)[0];
-  if (latest === undefined) {
-    return (
-      <section aria-labelledby="session-heading" className="flex flex-col gap-4">
-        <h2 id="session-heading" className="text-xl font-extrabold">
-          Session
-        </h2>
-        <p className="p-4 text-sm text-muted-foreground">
-          No sessions yet. Run an agent in this project and its first checkpoint lands here.
-        </p>
-      </section>
-    );
-  }
-  return <SessionDetail ulid={latest.frontmatter.id} />;
+  return (
+    <>
+      <SessionHeader repo={repo} name={null} />
+      <PageBody rhythm="session">
+        {sessions.state === "loading" ? (
+          <p role="status" className="text-base leading-body tracking-body text-muted-foreground">
+            Loading…
+          </p>
+        ) : sessions.state === "error" ? (
+          <p role="alert" className="text-base leading-body tracking-body text-destructive">
+            Could not read the sessions: {sessions.message}
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            <h1 className="text-xl font-semibold leading-title tracking-title text-foreground">Session</h1>
+            <p className="text-base leading-body tracking-body text-muted-foreground">
+              No sessions yet. Run an agent in this project and its first checkpoint lands here.
+            </p>
+          </div>
+        )}
+      </PageBody>
+    </>
+  );
 }

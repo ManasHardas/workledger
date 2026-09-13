@@ -5,7 +5,7 @@ import { App } from "../src/app.js";
 import { resetEmptyMachineRedirect } from "../src/features/onboarding/index.js";
 import { detailUlidFromHash } from "../src/features/ledger/detail-route.js";
 import { FIXTURE_BACKLOG, FIXTURE_NOTES, FIXTURE_REPOS, FIXTURE_SESSIONS } from "../src/lib/fixtures.js";
-import { NAV_SHEET_QUERY } from "../src/lib/media.js";
+import { ASIDE_QUERY, NAV_SHEET_QUERY } from "../src/lib/media.js";
 import { createSource, type AppSource, type Repo } from "../src/lib/ledger-source.js";
 import { HOME_HREF, VIEW_IDS, legacyTarget, parseRoute, repoHref } from "../src/lib/router.js";
 
@@ -111,13 +111,13 @@ describe("legacy redirects", () => {
     const ulid = FIXTURE_SESSIONS[0]!.frontmatter.id;
     renderAt(`#/ledger/${ulid}`);
     await waitFor(() => expect(window.location.hash).toBe(repoHref(FIRST.id, "session", ulid)));
-    expect(await screen.findByRole("heading", { name: "Session", level: 2 })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: FIXTURE_SESSIONS[0]!.goal!, level: 1 })).toBeDefined();
   });
 
   it("sends #/health to the first repo, and #/needs-you and #/jobs stay machine-wide", async () => {
     // Needs you became the machine-wide Review, so it no longer redirects into a repo.
     renderAt("#/needs-you");
-    await screen.findByRole("heading", { name: "Review", level: 2 });
+    await screen.findByRole("heading", { name: "Review", level: 1 });
     expect(window.location.hash).toBe("#/needs-you");
     cleanup();
 
@@ -126,7 +126,7 @@ describe("legacy redirects", () => {
     cleanup();
 
     renderAt("#/jobs");
-    await screen.findByRole("heading", { name: "Jobs", level: 2 });
+    await screen.findByRole("heading", { name: "Jobs", level: 1 });
     expect(window.location.hash).toBe("#/jobs");
   });
 
@@ -150,9 +150,8 @@ describe("legacy redirects", () => {
 describe("app shell", () => {
   it("renders Home and the machine-wide tabs in the nav on Home", async () => {
     renderAt("#/");
-    // Home is a status overview now, not a second copy of the nav (#134): its own title is
-    // "Overview", and the project list and the machine-wide tabs are the nav's job.
-    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    // Every view draws its own page header now (P9): Home's title is the page's one h1.
+    await screen.findByRole("heading", { name: "Home", level: 1 });
     const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
     const hrefs = within(nav)
       .getAllByRole("link")
@@ -163,7 +162,7 @@ describe("app shell", () => {
 
   it("renders Home, the three views and the machinery below the separator, marking the active one", async () => {
     renderAt(repoHref(FIRST.id, "health"));
-    await screen.findByRole("heading", { name: "Health", level: 2 });
+    await screen.findByRole("heading", { name: "Health", level: 1 });
     const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
     const hrefs = within(nav)
       .getAllByRole("link")
@@ -285,10 +284,26 @@ describe("app shell", () => {
     expect(document.querySelectorAll("[aria-hidden='true'][data-aria-hidden]").length).toBe(0);
   });
 
-  it("links the brand to Home", async () => {
+  it("offers Add projects from the project switcher, since the nav has no button for it", async () => {
     renderAt(repoHref(FIRST.id, "ledger"));
-    const home = await screen.findByRole("link", { name: "workledger — Home" });
-    expect(home.getAttribute("href")).toBe("#/");
+    const nav = screen.getAllByRole("navigation", { name: "Views" })[0]!;
+    expect(within(nav).queryByRole("link", { name: "Add projects" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: `Project: ${FIRST.name}` }));
+    expect((await screen.findByRole("link", { name: "Add projects" })).getAttribute("href")).toBe("#/onboarding");
+  });
+
+  it("draws the right column only from 1280 px, and no page header of its own", async () => {
+    renderAt(repoHref(FIRST.id, "health"));
+    await screen.findByRole("heading", { name: "Health", level: 1 });
+    expect(screen.queryByRole("complementary", { name: "Details" })).toBeNull();
+    // One header, the view's.
+    expect(screen.getAllByRole("banner")).toHaveLength(1);
+    cleanup();
+
+    matchAll([ASIDE_QUERY]);
+    renderAt(repoHref(FIRST.id, "health"));
+    await screen.findByRole("heading", { name: "Health", level: 1 });
+    expect(screen.getByRole("complementary", { name: "Details" })).toBeDefined();
   });
 
   it("renders the onboarding wizard", async () => {
@@ -300,7 +315,7 @@ describe("app shell", () => {
 describe("routes render fixture data", () => {
   it("Ledger shows every session in one list, open ones first, with no scope tabs (amendment 11)", async () => {
     renderAt(repoHref(FIRST.id, "ledger"));
-    await screen.findByRole("heading", { name: "Ledger", level: 2 });
+    await screen.findByRole("heading", { name: "Ledger", level: 1 });
 
     const open = FIXTURE_SESSIONS.filter((s) => s.frontmatter.status === "open");
     const ended = FIXTURE_SESSIONS.filter((s) => s.frontmatter.status !== "open");
@@ -319,7 +334,7 @@ describe("routes render fixture data", () => {
 
   it("Review lists the fixture backlog grouped by status", async () => {
     renderAt(repoHref(FIRST.id, "review"));
-    await screen.findByRole("heading", { name: "Next", level: 2 });
+    await screen.findByRole("heading", { name: "Proposed by agents", level: 2 });
     for (const item of FIXTURE_BACKLOG) {
       expect(await screen.findByText(item.frontmatter.title)).toBeDefined();
     }

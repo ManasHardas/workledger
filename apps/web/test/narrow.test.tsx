@@ -121,7 +121,7 @@ function at375(): void {
 }
 
 const VIEWS: readonly { name: string; href: string; settled: string }[] = [
-  { name: "Home", href: "#/", settled: "Projects" },
+  { name: "Home", href: "#/", settled: "Active this week" },
   { name: "Ledger", href: repoHref(FIRST.id, "ledger"), settled: "Sessions, open first then newest first" },
   { name: "Review", href: repoHref(FIRST.id, "review"), settled: "Open questions and blockers" },
   { name: "Jobs", href: repoHref(FIRST.id, "jobs"), settled: "Jobs, newest first" },

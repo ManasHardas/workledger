@@ -8,35 +8,26 @@ export interface LedgerFilterOption {
 }
 
 export type LedgerFilterSelectProps = Omit<ComponentProps<"select">, "children"> & {
-  /** Rendered above the control; also the accessible name, so no `aria-label` is needed. */
+  /** The control's accessible name. Not drawn: the Ledger frame shows the option ("Any author"). */
   label: string;
   options: LedgerFilterOption[];
 };
 
 /**
- * The one native `<select>` the Ledger filters use.
+ * The one native `<select>` the Ledger filters use, drawn as the Ledger frame's filter (`7:34`):
+ * 128 px wide, 32 px tall, 6 px corners, the `input` border, the chosen option in Body/Regular
+ * muted and a `▾` in Meta subtle at the right edge.
  *
- * Named for its feature rather than `Select` because the P2 views are built in parallel and a bare
- * `Select` is the name a Radix-backed listbox will want later; this one is deliberately native, so
- * it costs no bundle and gets the platform's mobile picker for free (design spec §14: mobile-first,
- * nothing fetched from the network).
+ * It stays native — `appearance-none` only removes the platform arrow so the frame's glyph can sit
+ * in its place — so it costs no bundle, keeps the platform's mobile picker, and keeps every
+ * keyboard and assistive-technology behaviour a select promises (design spec §14).
  */
-export function LedgerFilterSelect({
-  className,
-  label,
-  options,
-  id,
-  ...props
-}: LedgerFilterSelectProps) {
+export function LedgerFilterSelect({ className, label, options, ...props }: LedgerFilterSelectProps) {
   return (
-    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-      <span>{label}</span>
+    <div className={cn("relative w-32 shrink-0", className)}>
       <select
-        id={id}
-        className={cn(
-          "h-10 w-full rounded-md border border-input bg-card px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
-          className,
-        )}
+        aria-label={label}
+        className="h-8 w-full min-w-0 cursor-pointer appearance-none truncate rounded-md border border-input bg-background pl-3 pr-7 text-base leading-body tracking-body text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         {...props}
       >
         {options.map((option) => (
@@ -45,6 +36,12 @@ export function LedgerFilterSelect({
           </option>
         ))}
       </select>
-    </label>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs leading-tight text-subtle-foreground"
+      >
+        ▾
+      </span>
+    </div>
   );
 }

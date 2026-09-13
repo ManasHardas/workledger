@@ -16,6 +16,7 @@ figma.connect(Badge, "https://www.figma.com/design/FIGMA_FILE_KEY?node-id=NODE_I
       Accent: "accent",
       Destructive: "destructive",
       Warning: "warning",
+      Success: "success",
     } as const),
     label: figma.textContent("Label"),
   },

@@ -60,9 +60,9 @@ export function BackfillBanner({ pollMs = PROGRESS_POLL_MS }: { pollMs?: number 
     <div
       role="status"
       className={cn(
-        "mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3 text-sm",
+        "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3.5 py-3 text-base leading-body tracking-body",
         // Same words as the Done step; a warning tone the moment anything failed.
-        failed > 0 ? "border-warning bg-warning/20 text-foreground" : "border-border bg-accent text-accent-foreground",
+        failed > 0 ? "border-warning bg-card text-foreground" : "border-hairline bg-card text-foreground",
       )}
     >
       <p className="m-0">

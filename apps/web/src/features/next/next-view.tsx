@@ -12,10 +12,10 @@ import {
   reorder,
 } from "./backlog-model.js";
 import { useBacklog } from "./use-backlog.js";
-import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { useArm } from "../../components/ui/confirm.js";
-import { RowList, RowSection } from "../../components/ui/list-row.js";
+import { RowEmpty, RowList, RowSection } from "../../components/ui/list-row.js";
+import { PageSection } from "../../components/ui/page.js";
 import { useSource } from "../../lib/source-context.js";
 import { useIdentities } from "../identity/live.js";
 import { BacklogItem } from "./backlog-item.js";
@@ -38,11 +38,13 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * Next — the repo's backlog, grouped by status, on the shell's list rhythm (#134).
+ * The backlog half of Review, grouped by status (#134; frame `10:71`).
  *
- * Each group is a section of 32 px rows; a row carries the title, at most three state chips and
- * the writes a person makes at a glance, and everything else — the body, the provenance, the
- * owner, the history, the merge target — is in the right panel, which the title opens (rule 3).
+ * The proposed group is the frame's "Proposed by agents" section: a card per item with its
+ * provenance line, Accept and Discard. The groups the frame leaves out — accepted, in progress,
+ * done, discarded — stay below it in the same cards (operator decision 1, 2026-09-12), with their
+ * chips, Edit and every move. The body, the owner, the history and the merge target are in the
+ * right panel, which a title opens (rule 3). The page header carries the keyboard hint.
  *
  * Every edit is a `LedgerSource` call, never a file write: the source is the local server, which
  * runs the same `backlog-ops` function `workledger backlog …` runs, so the CLI and this list can
@@ -196,18 +198,41 @@ export function NextView() {
     applyMove(ordered, dragged, at, ordered.length, GROUP_LABELS[status]);
   };
 
-  return (
-    <section aria-labelledby="next-heading" className="flex min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 id="next-heading" className="text-xl font-extrabold leading-title">
-          Next
-        </h2>
-        {canWrite ? null : <Badge variant="outline">read-only source</Badge>}
-        <p className="text-xs text-muted-foreground">
-          j/k move · e edit · a accept · d done · x discard (twice) · alt+↑/↓ re-rank
-        </p>
-      </div>
+  const renderItem = (item: BacklogView, variant: "proposal" | "row") => (
+    <BacklogItem
+      key={item.frontmatter.id}
+      variant={variant}
+      item={item}
+      actions={actions}
+      canWrite={canWrite}
+      selected={selectedId === item.frontmatter.id}
+      editing={editingId === item.frontmatter.id}
+      busy={item.frontmatter.id in backlog.pending}
+      error={backlog.errors[item.frontmatter.id]}
+      onSelect={() => setSelectedId(item.frontmatter.id)}
+      onOpen={() => {
+        setSelectedId(item.frontmatter.id);
+        setOpenId(item.frontmatter.id);
+      }}
+      onEditingChange={(editing) => setEditingId(editing ? item.frontmatter.id : null)}
+      arm={arm}
+      draggable={canWrite}
+      onDragStart={() => setDraggingId(item.frontmatter.id)}
+      onDragEnd={() => setDraggingId(null)}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop(item);
+      }}
+    />
+  );
 
+  const proposed = groups.find((group) => group.status === "proposed")?.items ?? [];
+  const accepted = items.filter((item) => item.frontmatter.status === "accepted").length;
+  const rest = groups.filter((group) => group.status !== "proposed");
+
+  return (
+    <div className="flex min-w-0 flex-col gap-6.5">
       {/*
         Mounted from the first paint, empty, so a screen reader is already watching it when a row
         moves — a live region inserted at the moment it has something to say is often missed.
@@ -216,80 +241,67 @@ export function NextView() {
         {moved}
       </p>
 
-      {backlog.result.state === "loading" ? (
-        <p role="status" className="p-4 text-sm text-muted-foreground">
-          Loading…
-        </p>
-      ) : backlog.result.state === "error" ? (
-        <p role="alert" className="p-4 text-sm text-destructive">
-          Could not read the backlog: {backlog.result.message}
-        </p>
-      ) : items.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">
-          The backlog is empty. Agent-proposed items appear here as checkpoints land.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-5">
-          {groups.map((group) => {
-            const collapsed = group.status === "discarded" && !showDiscarded;
-            return (
-              <RowSection
-                key={group.status}
-                id={`next-group-${group.status}`}
-                title={GROUP_LABELS[group.status]}
-                count={group.items.length}
-                countLabel={`${String(group.items.length)} — ${GROUP_LABELS[group.status]}`}
-                action={
-                  group.status === "discarded" ? (
-                    <Button
-                      variant="quiet"
-                      size="xs"
-                      aria-expanded={showDiscarded}
-                      onClick={() => setShowDiscarded((prior) => !prior)}
-                    >
-                      {showDiscarded ? "Hide discarded" : "Show discarded"}
-                    </Button>
-                  ) : undefined
-                }
-              >
-                {collapsed ? null : (
-                  <RowList aria-label={GROUP_LABELS[group.status]}>
-                    {group.items.map((item) => (
-                      <BacklogItem
-                        key={item.frontmatter.id}
-                        item={item}
-                        actions={actions}
-                        canWrite={canWrite}
-                        selected={selectedId === item.frontmatter.id}
-                        editing={editingId === item.frontmatter.id}
-                        busy={item.frontmatter.id in backlog.pending}
-                        error={backlog.errors[item.frontmatter.id]}
-                        onSelect={() => setSelectedId(item.frontmatter.id)}
-                        onOpen={() => {
-                          setSelectedId(item.frontmatter.id);
-                          setOpenId(item.frontmatter.id);
-                        }}
-                        onEditingChange={(editing) =>
-                          setEditingId(editing ? item.frontmatter.id : null)
-                        }
-                        arm={arm}
-                        draggable={canWrite}
-                        onDragStart={() => setDraggingId(item.frontmatter.id)}
-                        onDragEnd={() => setDraggingId(null)}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          onDrop(item);
-                        }}
-                      />
-                    ))}
-                  </RowList>
-                )}
-              </RowSection>
-            );
-          })}
-        </div>
-      )}
+      <PageSection
+        id="review-proposals-heading"
+        title="Proposed by agents"
+        aside={
+          backlog.result.state === "ready"
+            ? `${String(proposed.length)} waiting · ${String(accepted)} accepted`
+            : undefined
+        }
+      >
+        {canWrite ? null : (
+          <p className="text-xs leading-tight text-subtle-foreground">
+            read-only source · accepting, discarding and editing are disabled
+          </p>
+        )}
+        {backlog.result.state === "loading" ? (
+          <p role="status" className="px-3.5 py-2 text-base leading-body tracking-body text-muted-foreground">
+            Loading…
+          </p>
+        ) : backlog.result.state === "error" ? (
+          <p role="alert" className="px-3.5 py-2 text-base leading-body tracking-body text-destructive">
+            Could not read the backlog: {backlog.result.message}
+          </p>
+        ) : items.length === 0 ? (
+          <RowEmpty>The backlog is empty. Agent-proposed items appear here as checkpoints land.</RowEmpty>
+        ) : proposed.length === 0 ? (
+          <RowEmpty>Nothing an agent proposed is waiting.</RowEmpty>
+        ) : (
+          <RowList aria-label={GROUP_LABELS.proposed}>{proposed.map((item) => renderItem(item, "proposal"))}</RowList>
+        )}
+      </PageSection>
+
+      {rest.map((group) => {
+        const collapsed = group.status === "discarded" && !showDiscarded;
+        return (
+          <RowSection
+            key={group.status}
+            id={`next-group-${group.status}`}
+            title={GROUP_LABELS[group.status]}
+            count={group.items.length}
+            countLabel={`${String(group.items.length)} — ${GROUP_LABELS[group.status]}`}
+            action={
+              group.status === "discarded" ? (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  aria-expanded={showDiscarded}
+                  onClick={() => setShowDiscarded((prior) => !prior)}
+                >
+                  {showDiscarded ? "Hide discarded" : "Show discarded"}
+                </Button>
+              ) : undefined
+            }
+          >
+            {collapsed ? null : (
+              <RowList aria-label={GROUP_LABELS[group.status]}>
+                {group.items.map((item) => renderItem(item, "row"))}
+              </RowList>
+            )}
+          </RowSection>
+        );
+      })}
 
       <BacklogPanel
         item={opened}
@@ -301,6 +313,6 @@ export function NextView() {
         identities={identities}
         onClose={() => setOpenId(null)}
       />
-    </section>
+    </div>
   );
 }

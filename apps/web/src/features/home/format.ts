@@ -26,3 +26,28 @@ export function formatRelative(iso: string | null, now: number): string {
 export function plural(n: number, noun: string): string {
   return `${String(n)} ${noun}${n === 1 ? "" : "s"}`;
 }
+
+/**
+ * The Figma frames' relative time (P9): `just now`, `2 minutes ago`, `4 hours ago`, `yesterday`,
+ * `2 days ago`, `never`.
+ *
+ * Under twelve hours it counts hours, so an hour-old checkpoint that crossed midnight is still
+ * "1 hour ago"; past that it counts UTC calendar days, which is what makes last night's work
+ * "yesterday" rather than "23 hours ago". UTC because every other time on the page is UTC.
+ */
+export function formatAgo(iso: string | null, now: number): string {
+  if (iso === null || iso === "") return "never";
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  const ago = Math.max(0, now - at);
+  if (ago < MINUTE) return "just now";
+  if (ago < HOUR) return `${plural(Math.floor(ago / MINUTE), "minute")} ago`;
+  const days = Math.round((utcMidnight(now) - utcMidnight(at)) / DAY);
+  if (ago < 12 * HOUR || days === 0) return `${plural(Math.floor(ago / HOUR), "hour")} ago`;
+  return days === 1 ? "yesterday" : `${String(days)} days ago`;
+}
+
+function utcMidnight(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}

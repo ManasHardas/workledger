@@ -342,7 +342,7 @@ describe("jobs view", () => {
   it("is reachable from the shell's nav", async () => {
     window.location.hash = `#/r/${REPO}/jobs`;
     render(<App source={createSource("fixture")} />);
-    expect(await screen.findByRole("heading", { name: "Jobs", level: 2 })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "Jobs", level: 1 })).toBeDefined();
     const current = screen.getAllByRole("link", { current: "page" });
     expect(current.every((link) => link.getAttribute("href") === `#/r/${REPO}/jobs`)).toBe(true);
     window.location.hash = "";

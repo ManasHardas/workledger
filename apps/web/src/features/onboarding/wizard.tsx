@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { PageBody, PageHeader } from "../../components/ui/page.js";
 import { cn } from "../../lib/cn.js";
 import { HOME_HREF } from "../../lib/router.js";
 import { useMachine } from "../../lib/source-context.js";
@@ -24,21 +25,22 @@ export function OnboardingWizard() {
   const step = reachableStep(state);
 
   return (
-    <section aria-labelledby="onboarding-heading" className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="onboarding-heading" className="text-xl font-extrabold">
-          Add projects
-        </h2>
+    <>
+      <PageHeader title="Add projects">
         <a
           href={HOME_HREF}
-          className="rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="shrink-0 rounded-sm text-base leading-body tracking-body text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Home
         </a>
-      </div>
-      <Stepper current={step} />
-      <StepScreen step={step} state={state} source={source} />
-    </section>
+      </PageHeader>
+      <PageBody rhythm="home">
+        <section aria-label="Add projects" className="flex min-w-0 flex-col gap-5">
+          <Stepper current={step} />
+          <StepScreen step={step} state={state} source={source} />
+        </section>
+      </PageBody>
+    </>
   );
 }
 

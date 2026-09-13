@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { FOCUS_SEARCH_EVENT } from "../../components/keyboard-help.js";
 import { LedgerFilterSelect } from "../../components/ui/ledger-filter-select.js";
 import { Input } from "../../components/ui/input.js";
 import { useSource } from "../../lib/source-context.js";
@@ -77,10 +78,13 @@ function useAuthors(): string[] {
 }
 
 /**
- * The Ledger's filter row: author, harness, status and date, plus the full-text search box that
- * maps straight onto `listSessions({ q })` (design spec §8).
+ * The Ledger's filter row, as the frame draws it (`7:31`): the full-text search box that maps
+ * straight onto `listSessions({ q })` taking what is left, then author, harness and status. The
+ * Since window is {@link LedgerSinceFilter}, below the list. The row wraps rather than crushing the
+ * search box when the reading column is narrow.
  *
- * Mobile-first: one column stacked, four across from `sm` up.
+ * `/` focuses the search box: the shell fires {@link FOCUS_SEARCH_EVENT} and this view, the one
+ * with a search box, answers it.
  */
 export function LedgerFilterBar({
   filters,
@@ -94,47 +98,70 @@ export function LedgerFilterBar({
   onQChange: (next: string) => void;
 }) {
   const authors = useAuthors();
+  const search = useRef<HTMLInputElement>(null);
   const set = <K extends keyof LedgerFilters>(key: K, value: LedgerFilters[K]) =>
     onChange({ ...filters, [key]: value });
 
+  useEffect(() => {
+    const focus = () => search.current?.focus();
+    window.addEventListener(FOCUS_SEARCH_EVENT, focus);
+    return () => window.removeEventListener(FOCUS_SEARCH_EVENT, focus);
+  }, []);
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Input
+        ref={search}
         type="search"
         aria-label="Search sessions"
-        placeholder="Search goals, items and notes"
+        placeholder="Search goals, outcomes and notes"
+        className="min-w-48 flex-1"
         value={q}
         onChange={(event) => onQChange(event.target.value)}
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <LedgerFilterSelect
-          label="Author"
-          value={filters.author}
-          onChange={(event) => set("author", event.target.value)}
-          options={[
-            { value: "", label: "Any author" },
-            ...authors.map((name) => ({ value: name, label: name })),
-          ]}
-        />
-        <LedgerFilterSelect
-          label="Harness"
-          value={filters.harness}
-          onChange={(event) => set("harness", event.target.value)}
-          options={HARNESS_OPTIONS}
-        />
-        <LedgerFilterSelect
-          label="Status"
-          value={filters.status}
-          onChange={(event) => set("status", event.target.value)}
-          options={STATUS_OPTIONS}
-        />
-        <LedgerFilterSelect
-          label="Since"
-          value={filters.since}
-          onChange={(event) => set("since", event.target.value)}
-          options={SINCE_OPTIONS}
-        />
-      </div>
+      <LedgerFilterSelect
+        label="Author"
+        value={filters.author}
+        onChange={(event) => set("author", event.target.value)}
+        options={[{ value: "", label: "Any author" }, ...authors.map((name) => ({ value: name, label: name }))]}
+      />
+      <LedgerFilterSelect
+        label="Harness"
+        value={filters.harness}
+        onChange={(event) => set("harness", event.target.value)}
+        options={HARNESS_OPTIONS}
+      />
+      <LedgerFilterSelect
+        label="Status"
+        value={filters.status}
+        onChange={(event) => set("status", event.target.value)}
+        options={STATUS_OPTIONS}
+      />
+    </div>
+  );
+}
+
+/**
+ * The date window, kept off the frame's filter row (Ledger frame `7:31` has room for search and
+ * three selects, no more): the operator kept every control the frame leaves out *below* the
+ * designed content (2026-09-12), so the Ledger renders this under the list.
+ */
+export function LedgerSinceFilter({
+  filters,
+  onChange,
+}: {
+  filters: LedgerFilters;
+  onChange: (next: LedgerFilters) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="text-xs leading-tight text-subtle-foreground">Sessions from</span>
+      <LedgerFilterSelect
+        label="Since"
+        value={filters.since}
+        onChange={(event) => onChange({ ...filters, since: event.target.value })}
+        options={SINCE_OPTIONS}
+      />
     </div>
   );
 }

@@ -1,8 +1,9 @@
 /**
  * Code Connect mapping for `BacklogItem` — **skeleton**; see `apps/web/CODE_CONNECT.md`.
  *
- * The item and the five writes come from the Next view, not from Figma; what the canvas varies is
- * the row's three states — selected, renaming in place, and a write in flight.
+ * The item and the five writes come from Review's backlog half, not from Figma; what the canvas
+ * varies is the card's variant — Review's proposal card (`10:75`) or the card the groups below it
+ * use — and its three states: selected, renaming in place, and a write in flight.
  */
 import figma from "../../lib/code-connect.js";
 import { FIXTURE_BACKLOG } from "../../lib/fixtures.js";
@@ -26,12 +27,14 @@ figma.connect(
   "https://www.figma.com/design/FIGMA_FILE_KEY?node-id=NODE_ID_BACKLOG_ITEM",
   {
     props: {
+      variant: figma.enum("Variant", { Proposal: "proposal", Row: "row" } as const),
       selected: figma.boolean("Selected"),
       editing: figma.boolean("Editing"),
       busy: figma.boolean("Busy"),
     },
     example: (props) => (
       <BacklogItem
+        variant={props.variant}
         item={ITEM}
         actions={NO_WRITES}
         canWrite
