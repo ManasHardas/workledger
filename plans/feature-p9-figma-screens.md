@@ -171,8 +171,8 @@ current result set.
 1. **Filters** `flex gap-2 items-center`: search `flex-1 h-8 px-3 rounded-md border border-input`
    placeholder "Search goals, outcomes and notes" (Body/Regular, placeholder subtle); three selects
    `w-32 h-8 px-3 rounded-md border border-input` label Body/Regular muted + `▾` Meta subtle: "Any
-   author", "Any harness", "Any status". Since (decision 1) is a fourth select after the three, same
-   style.
+   author", "Any harness", "Any status". Since (decision 1) sits below the list in the same select
+   style: a fourth select in the row squeezed the search box below the frame's width.
 2. **Day groups** gap 24 between groups; group `flex flex-col gap-2.5`: head Meta/Strong subtle —
    `Today · 11 September` for today, otherwise `10 September` (UTC calendar days; year appended when
    not the current year).
