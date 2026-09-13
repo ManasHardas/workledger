@@ -5,31 +5,31 @@ import type { Repo } from "../lib/ledger-source.js";
 import { useHasAside, useNavIsSheet } from "../lib/media.js";
 import {
   HOME_HREF,
-  ONBOARDING_HREF,
   machineHref,
   repoHref,
   useRoute,
   type Route,
   type ViewId,
 } from "../lib/router.js";
+import { AsideHost, AsideSlot } from "./aside.js";
 import { KeyboardHelp } from "./keyboard-help.js";
 import { ALL_PROJECTS, ProjectSwitcher } from "./project-switcher.js";
-import { Button, buttonVariants } from "./ui/button.js";
+import { Button } from "./ui/button.js";
 import { PanelHost, PanelSlot } from "./ui/panel.js";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet.js";
 
 /**
- * The app shell (`docs/design/direction.md` §Shell): one centred group of a 275 px left nav (the
- * project switcher at the top, the views as pills, the one big "Add projects" pill), a 600 px
- * middle column with a hairline down either side under a translucent sticky header, and — from
- * 1280 px — a 350 px right column whose module is the evidence panel (`components/ui/panel.tsx`).
+ * The app shell, as every Product Designs frame draws it (`plans/feature-p9-figma-screens.md`
+ * §Shell): full width, left-aligned — a 232 px nav with a hairline on its right, the reading column
+ * taking what is left, and from 1280 px a 352 px right column holding the view's module
+ * (`components/aside.tsx`) above any opened panel (`components/ui/panel.tsx`).
+ *
+ * The shell draws no page header: each view renders its own `PageHeader` and `PageBody`, because
+ * the header's copy and the body's rhythm are the screen's.
  *
  * Below 900 px the nav is a sheet behind a hamburger — the whole nav, swapped rather than restyled,
  * so there is never a second copy of every link hiding under `display: none` for a screen reader or
  * a `getByRole` query to find.
- *
- * Folders with sessions are Home's alone: the operator had the shell's copy of them removed
- * (2026-09-11), so the nav carries no folder list at any width.
  *
  * Links are real `#/…` anchors, so the browser's back button and a card's `openDeepLink` both work
  * without JavaScript in the middle.
@@ -149,14 +149,6 @@ function routeKey(route: Route): string {
   return route.kind;
 }
 
-/** The sticky header's title: what the middle pane is *about*, not which view of it is showing. */
-function paneTitle(route: Route, repo: Repo | undefined, repoId: string): string {
-  if (route.kind === "onboarding") return "Add projects";
-  if (route.kind === "machine") return "All projects";
-  if (route.kind === "repo") return repo?.name ?? repoId;
-  return "Home";
-}
-
 export function AppShell({ repos, children }: { repos: Repo[]; children: React.ReactNode }) {
   const route = useRoute();
   const asSheet = useNavIsSheet();
@@ -165,7 +157,6 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   const [menuOpen, setMenuOpen] = useState(false);
 
   const repoId = route.kind === "repo" ? route.repo : ALL_PROJECTS;
-  const current = repos.find((repo) => repo.id === repoId);
   const nav = navFor(route, repos);
 
   // The sheet is a route-scoped thing: leaving the route it was opened from must never leave it
@@ -190,82 +181,79 @@ export function AppShell({ repos, children }: { repos: Repo[]; children: React.R
   );
 
   return (
-    <PanelHost>
-      {(panelOpen) => (
-        <div className="min-h-screen bg-background text-foreground">
-          <div
-            className={cn(
-              // No transition on the padding: the pane's width is measured the moment the panel
-              // opens (a screenshot, a layout read), and an animated reflow makes that a race.
-              "flex min-h-screen justify-center",
-              hasAside ? "gap-8" : "",
-              // Between 900 and 1279 px there is no right column, so the panel floats at the right
-              // edge, non-modal; the centred group makes room for it rather than being covered by
-              // it: 350 px of panel plus its 12 px inset on either side.
-              panelOpen && !asSheet && !hasAside
-                ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]"
-                : "",
-            )}
-          >
-            {asSheet ? null : (
-              <div className="w-nav shrink-0">
-                <div className="sticky top-0 h-screen">{sidebar(false)}</div>
-              </div>
-            )}
-            <div className="flex min-w-0 max-w-reading flex-1 flex-col border-hairline sm:border-x">
-              <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-background/65 px-4 backdrop-blur-md">
-                {asSheet ? (
-                  <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-                    <SheetTrigger asChild>
-                      <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8 shrink-0" aria-label="Open navigation">
-                        <MenuIcon />
-                      </Button>
-                    </SheetTrigger>
-                    <SheetContent side="left" aria-describedby={undefined} className="w-nav max-w-[85vw] p-0">
-                      <SheetHeader className="sr-only">
-                        <SheetTitle>Navigation</SheetTitle>
-                      </SheetHeader>
-                      {sidebar(true)}
-                    </SheetContent>
-                  </Sheet>
-                ) : null}
-                <h1 className="min-w-0 flex-1 truncate text-xl font-extrabold leading-title">
-                  {paneTitle(route, current, repoId)}
-                </h1>
-                {/*
-                  The status chips of direction.md §Shell. The primary action stays with the view
-                  that owns it — Home's "Add projects", a session's "Repair" — so the header does not
-                  grow a second copy of a control the middle pane already has.
-                */}
-                {current === undefined ? null : <HealthChip health={current.health} />}
-              </header>
-              <main id="main" className="min-w-0 flex-1 px-4 py-4">
-                {children}
-              </main>
-            </div>
-            {hasAside ? (
-              <aside aria-label="Details" className="w-panel shrink-0">
-                <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-inset">
-                  <PanelSlot />
-                  <p className="px-4 text-xs text-subtle-foreground">Press ? for keyboard shortcuts.</p>
+    <AsideHost>
+      <PanelHost>
+        {(panelOpen) => (
+          <div className="min-h-screen bg-background text-foreground">
+            <div
+              className={cn(
+                // Full width and left-aligned, as every Product Designs frame is: the nav, the
+                // reading column taking what is left, and the right column from 1280 px.
+                "flex min-h-screen",
+                // Between 900 and 1279 px there is no right column, so an opened panel floats at
+                // the right edge, non-modal; the reading column makes room for it rather than being
+                // covered: the panel's width plus its inset on either side.
+                panelOpen && !asSheet && !hasAside
+                  ? "pr-[calc(var(--wl-spacing-panel)_+_2_*_var(--wl-spacing-inset))]"
+                  : "",
+              )}
+            >
+              {asSheet ? null : (
+                <div className="w-nav shrink-0 border-r border-hairline">
+                  <div className="sticky top-0 h-screen">{sidebar(false)}</div>
                 </div>
-              </aside>
-            ) : null}
+              )}
+              <div className="flex min-w-0 flex-1 flex-col">
+                {asSheet ? (
+                  <div className="flex h-13 shrink-0 items-center gap-2 border-b border-hairline px-4">
+                    <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+                      <SheetTrigger asChild>
+                        <Button variant="ghost" size="icon" className="-ml-1 shrink-0" aria-label="Open navigation">
+                          <MenuIcon />
+                        </Button>
+                      </SheetTrigger>
+                      <SheetContent side="left" aria-describedby={undefined} className="w-nav max-w-[85vw] p-0">
+                        <SheetHeader className="sr-only">
+                          <SheetTitle>Navigation</SheetTitle>
+                        </SheetHeader>
+                        {sidebar(true)}
+                      </SheetContent>
+                    </Sheet>
+                  </div>
+                ) : null}
+                {/* The view draws its own header and body (`components/ui/page.tsx`): the copy
+                    and the rhythm differ per screen. */}
+                <main id="main" className="flex min-w-0 flex-1 flex-col">
+                  {children}
+                </main>
+              </div>
+              {hasAside ? (
+                <aside aria-label="Details" className="w-panel shrink-0">
+                  <div className="sticky top-0 flex max-h-screen flex-col gap-4 overflow-y-auto py-4 pr-4">
+                    <AsideSlot />
+                    <PanelSlot />
+                  </div>
+                </aside>
+              ) : null}
+            </div>
+            <KeyboardHelp />
           </div>
-          <KeyboardHelp />
-        </div>
-      )}
-    </PanelHost>
+        )}
+      </PanelHost>
+    </AsideHost>
   );
 }
 
 /**
  * The nav's contents — the same tree whether it is the fixed column or the sheet behind it.
  *
+ * Measured from the frames' `nav` node (`11:3`): 12 px sides, 16 px top, a 2 px gap between rows;
+ * the project row, a 12 px spacer, then 28 px rows with the separator above Jobs.
+ *
  * `inSheet` is the one difference, and it is about not trapping anybody: inside the sheet every
  * link also closes it, and the sheet carries a visible close control. The route effect in
  * {@link AppShell} closes it too; both exist because a modal sheet whose only exits are Escape and
- * a 57 px strip of overlay is a trap the moment either one misses (#132 review).
+ * a strip of overlay is a trap the moment either one misses (#132 review).
  */
 function Sidebar({
   nav,
@@ -281,50 +269,42 @@ function Sidebar({
   inSheet: boolean;
 }) {
   return (
-    <div className="flex h-full flex-col overflow-y-auto px-2 pb-3 pt-1">
-      <div className="flex items-center justify-between">
-        <Dismissing inSheet={inSheet}>
-          <a
-            href={HOME_HREF}
-            aria-label="workledger — Home"
-            className="flex h-row-nav w-row-nav items-center justify-center rounded-full transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <BrandMark />
-          </a>
-        </Dismissing>
+    <div className="flex h-full flex-col gap-0.5 overflow-y-auto px-3 py-4">
+      <div className="flex items-center gap-1">
+        {/* The project comes first: every view below it is a view of the project named here. */}
+        <div className="min-w-0 flex-1">
+          <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
+        </div>
         {inSheet ? (
           <SheetClose
             aria-label="Close navigation"
-            className="mr-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <CloseIcon />
           </SheetClose>
         ) : null}
       </div>
 
-      {/* The project comes first: every view below it is a view of the project named here. */}
-      <div className="pb-2">
-        <ProjectSwitcher repos={repos} value={repoId} onSelect={onSwitch} />
-      </div>
+      <span aria-hidden="true" className="h-3 w-2 shrink-0" />
 
-      {/* Pills as wide as their label; full width in the sheet, for the thumb. */}
-      <nav aria-label="Views" className={cn("flex flex-col gap-1", inSheet ? "items-stretch" : "items-start")}>
+      <nav aria-label="Views" className="flex flex-col gap-0.5">
         {nav.map((item, index) => (
           <Dismissing key={item.href} inSheet={inSheet} separated={isFirstSecondary(nav, index)}>
             <a
               href={item.href}
               aria-current={item.current ? "page" : undefined}
               className={cn(
-                "flex h-row-nav max-w-full items-center gap-5 rounded-full pl-3 pr-6 text-xl leading-title text-foreground transition-colors",
-                "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                // The current view is marked by weight and a heavier icon, not by a filled row.
-                item.current ? "font-bold" : "",
+                "flex h-7 w-full items-center gap-2.5 rounded-lg px-2 text-base leading-body tracking-body transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                item.current
+                  ? "bg-selected font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
             >
               <ViewIcon name={item.icon} current={item.current} />
-              <span className="min-w-0 truncate">{item.label}</span>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
               {item.count === undefined ? null : (
-                <span className="shrink-0 text-sm font-normal tabular-nums text-muted-foreground">
+                <span className="shrink-0 text-xs font-normal leading-tight tabular-nums text-subtle-foreground">
                   {item.count}
                 </span>
               )}
@@ -332,12 +312,6 @@ function Sidebar({
           </Dismissing>
         ))}
       </nav>
-
-      <Dismissing inSheet={inSheet}>
-        <a href={ONBOARDING_HREF} className={cn(buttonVariants({ size: "lg" }), "mt-4 w-[90%]")}>
-          Add projects
-        </a>
-      </Dismissing>
     </div>
   );
 }
@@ -352,7 +326,7 @@ function Dismissing({
   children,
 }: {
   inSheet: boolean;
-  /** Draws the hairline that divides the four reading views from the machinery below them. */
+  /** Draws the hairline that divides the reading views from the machinery below them. */
   separated?: boolean;
   children: React.ReactElement;
 }) {
@@ -360,7 +334,7 @@ function Dismissing({
   if (separated !== true) return link;
   return (
     <>
-      <span aria-hidden="true" className="my-2 h-px w-full bg-hairline" />
+      <span aria-hidden="true" className="h-px w-full shrink-0 bg-hairline" />
       {link}
     </>
   );
@@ -371,38 +345,6 @@ function isFirstSecondary(nav: NavItem[], index: number): boolean {
   const item = nav[index];
   if (item?.secondary !== true) return false;
   return nav[index - 1]?.secondary !== true;
-}
-
-/** The repo's own health, as a chip in the sticky header — status colour, never a row fill. */
-function HealthChip({ health }: { health: Repo["health"] }) {
-  const tone =
-    health === "broken"
-      ? "border-transparent bg-destructive text-destructive-foreground"
-      : health === "warn"
-        ? "border-transparent bg-warning text-warning-foreground"
-        : "border-border text-muted-foreground";
-  return (
-    <span className={cn("shrink-0 rounded-full border px-2 py-px text-xs font-medium", tone)}>
-      {health}
-    </span>
-  );
-}
-
-/**
- * The mark from `public/icon.svg`, drawn in the foreground colour so it reads in both themes.
- * Decorative: the link around it carries the name.
- */
-function BrandMark() {
-  return (
-    <svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true">
-      <rect width="64" height="64" rx="14" className="fill-foreground" />
-      <g className="stroke-background" strokeWidth="5" strokeLinecap="round">
-        <path d="M20 22h24" />
-        <path d="M20 32h24" />
-        <path d="M20 42h14" />
-      </g>
-    </svg>
-  );
 }
 
 /** Inlined so the bundle asks the network for nothing (design spec §14: no external assets). */
@@ -416,13 +358,17 @@ function MenuIcon() {
 
 function CloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
     </svg>
   );
 }
 
-/** The 26 px icon each nav pill carries. Decorative: the label beside it is the name. */
+/**
+ * The 16 px icon each nav row carries: the frame's icon box, with the app's own glyphs in it
+ * (operator, 2026-09-12 — the frame's squares are placeholders). 1.25 px strokes, in the primary
+ * colour on the current row and the subtle grey on the rest. Decorative: the label is the name.
+ */
 function ViewIcon({ name, current }: { name: ViewIconName; current: boolean }) {
   const paths: Record<ViewIconName, React.ReactNode> = {
     home: <path d="M2.5 7L8 2.5 13.5 7v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V7z" />,
@@ -437,15 +383,15 @@ function ViewIcon({ name, current }: { name: ViewIconName; current: boolean }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      width="26"
-      height="26"
+      width="16"
+      height="16"
       fill="none"
       stroke="currentColor"
-      strokeWidth={current ? 1.75 : 1.2}
+      strokeWidth={1.25}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className="shrink-0"
+      className={cn("shrink-0", current ? "text-primary" : "text-subtle-foreground")}
     >
       {paths[name]}
     </svg>

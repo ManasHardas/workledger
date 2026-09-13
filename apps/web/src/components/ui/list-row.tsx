@@ -3,22 +3,23 @@ import { useRef, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/cn.js";
 
 /**
- * The list row of `docs/design/direction.md` §Density, in one place so Next, Needs you, Jobs,
- * Health and Home cannot drift apart: 44 px tall on the 8 px grid, a hover background, a focus
- * ring on keyboard focus, and a left accent bar when it is the selected row.
+ * The list row, in one place so Review's backlog, Jobs, Health and Home's lower groups cannot
+ * drift apart. It is drawn as the Product Designs frames draw every row they show: a card — 8 px
+ * corners, a hairline, the `card` surface, 14 px sides — and when selected the primary border on
+ * the `selected` surface.
  *
  * A row never scrolls sideways at 375 px (rule 5). That is what the `min-w-0 truncate` on
  * {@link RowTitle} and the `shrink-0` on the chips and the trailing controls are for: the title
  * gives up its width, nothing else does, and the long form of anything lives in the right panel.
  */
 
-/** Rows are separated by a hairline rather than by a gap: one list, not a stack of cards. */
+/** Cards 10 px apart, as the frames stack them. */
 export function RowList({ className, ...props }: ComponentProps<"ul">) {
-  return <ul className={cn("flex flex-col divide-y divide-hairline", className)} {...props} />;
+  return <ul className={cn("flex flex-col gap-2.5", className)} {...props} />;
 }
 
 export interface ListRowProps extends Omit<ComponentProps<"li">, "title"> {
-  /** Paints the selected surface and the left accent bar. */
+  /** Paints the selected surface and the primary border. */
   selected?: boolean;
 }
 
@@ -27,16 +28,12 @@ export function ListRow({ selected, className, children, ...props }: ListRowProp
     <li
       data-selected={selected === true ? "" : undefined}
       className={cn(
-        "group relative flex min-h-row flex-wrap items-center gap-2 rounded-md py-2 pl-3 pr-2 text-sm leading-body transition-colors",
-        "hover:bg-muted",
-        selected === true ? "bg-selected" : "",
+        "group relative flex min-h-row flex-wrap items-center gap-2 rounded-lg border px-3.5 py-2.5 text-base leading-body tracking-body transition-colors",
+        selected === true ? "border-primary bg-selected" : "border-hairline bg-card hover:bg-muted",
         className,
       )}
       {...props}
     >
-      {selected === true ? (
-        <span aria-hidden="true" className="absolute inset-y-1 left-0 w-px rounded-full bg-primary" />
-      ) : null}
       {children}
     </li>
   );
@@ -55,7 +52,7 @@ export function RowTitle({
   ...props
 }: ComponentProps<"button"> & { href?: string }) {
   const shared = cn(
-    "min-w-0 flex-1 truncate rounded-sm text-left text-sm text-foreground",
+    "min-w-0 flex-1 truncate rounded-sm text-left text-base leading-body tracking-body text-foreground",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
     className,
   );
@@ -74,7 +71,7 @@ export function RowTitle({
 export function RowMeta({ className, ...props }: ComponentProps<"span">) {
   return (
     <span
-      className={cn("shrink-0 text-xs tabular-nums text-subtle-foreground", className)}
+      className={cn("shrink-0 text-xs leading-tight tabular-nums text-subtle-foreground", className)}
       {...props}
     />
   );
@@ -83,7 +80,7 @@ export function RowMeta({ className, ...props }: ComponentProps<"span">) {
 /** An identifier on a row — a path, a commit, a ulid (rule 1: never mixed with prose). */
 export function RowId({ className, ...props }: ComponentProps<"span">) {
   return (
-    <span className={cn("shrink-0 font-mono text-xs text-subtle-foreground", className)} {...props} />
+    <span className={cn("shrink-0 font-mono text-xs leading-tight text-subtle-foreground", className)} {...props} />
   );
 }
 
@@ -122,12 +119,12 @@ export function RowSection({
   const list = useRef<HTMLDivElement>(null);
   const listId = `${id}-list`;
   const linkClass =
-    "rounded-sm text-xs tabular-nums text-subtle-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+    "shrink-0 rounded-sm text-xs leading-tight tabular-nums text-subtle-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
   return (
-    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
+    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2.5">
       <div className="flex min-w-0 items-center gap-2">
-        <h3 id={id} className="text-lg font-extrabold leading-title text-foreground">
+        <h3 id={id} className="min-w-0 flex-1 text-lg font-semibold leading-body tracking-title text-foreground">
           {title}
         </h3>
         {count === undefined ? null : (
@@ -149,11 +146,11 @@ export function RowSection({
             {count}
           </a>
         )}
-        {action === undefined ? null : <div className="ml-auto shrink-0">{action}</div>}
+        {action === undefined ? null : <div className="shrink-0">{action}</div>}
       </div>
       {/* `tabIndex={-1}`: the count's target has to be focusable to be a destination at all, but
           it is never a tab stop of its own. */}
-      <div ref={list} id={listId} tabIndex={-1} className="flex min-w-0 flex-col gap-2 outline-none">
+      <div ref={list} id={listId} tabIndex={-1} className="flex min-w-0 flex-col gap-2.5 outline-none">
         {children}
       </div>
     </section>
@@ -162,5 +159,5 @@ export function RowSection({
 
 /** The one empty line a section shows when it has nothing — never a whole empty card. */
 export function RowEmpty({ children }: { children: ReactNode }) {
-  return <p className="px-3 py-2 text-sm text-muted-foreground">{children}</p>;
+  return <p className="px-3.5 py-2 text-base leading-body tracking-body text-muted-foreground">{children}</p>;
 }

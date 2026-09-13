@@ -1,13 +1,14 @@
+import { PageBody, PageHeader } from "../components/ui/page.js";
 import { AllJobsQueue } from "../features/jobs/all-jobs-queue.js";
 
 /** Jobs, machine-wide — every repo's recovery queue in one list (P8). */
 export function AllJobsView() {
   return (
-    <section aria-labelledby="jobs-heading" className="flex flex-col gap-4">
-      <h2 id="jobs-heading" className="text-xl font-extrabold">
-        Jobs
-      </h2>
-      <AllJobsQueue />
-    </section>
+    <>
+      <PageHeader title="Jobs" aside="Across every project on this machine" />
+      <PageBody rhythm="home">
+        <AllJobsQueue />
+      </PageBody>
+    </>
   );
 }

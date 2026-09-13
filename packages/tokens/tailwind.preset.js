@@ -54,6 +54,7 @@ export default {
         "nav": "var(--wl-spacing-nav)",
         "panel": "var(--wl-spacing-panel)",
         "reading": "var(--wl-spacing-reading)",
+        "reading-narrow": "var(--wl-spacing-reading-narrow)",
       },
       borderRadius: {
         "none": "var(--wl-radius-none)",
@@ -78,6 +79,10 @@ export default {
         "tight": "var(--wl-leading-tight)",
         "body": "var(--wl-leading-body)",
         "title": "var(--wl-leading-title)",
+      },
+      letterSpacing: {
+        "body": "var(--wl-tracking-body)",
+        "title": "var(--wl-tracking-title)",
       },
       fontFamily: {
         "sans": "var(--wl-font-family-sans)",

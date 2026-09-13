@@ -15,11 +15,13 @@ X's shape: one centred group of three columns, with black on either side of it.
   views for the current project as pills: 26 px icon, 20 px label, the current one in bold with a
   heavier icon, a count after the label in grey where one exists. Then "Add projects" as the one
   big inverted pill. Below 900 px the nav is a sheet behind a hamburger.
-- **Middle column, 600 px**, with a hairline down either side from 640 px. A sticky 48 px header,
-  translucent over the content with a blur, carries the 20 px extrabold title and the health chip.
-  Content is flat: sections and list items are separated by hairlines bled to both edges of the
-  column, not boxed in cards. The session list reads as a timeline: author and harness on the first
-  line, the goal as the body, the counts along the foot.
+- **Middle column**, with a hairline down either side. A sticky header carries the page title and
+  the counts. Content is **carded**: a session in the list, and a point in a session's recap, is a
+  bordered card on the page's own surface (radius 8, hairline, `card` fill; the selected one takes
+  the accent border). The operator approved this treatment on 2026-09-11, superseding the earlier
+  "flat, hairline-separated" rule — a card here marks one session or one group of outcomes as a
+  separable object you can select, which is what the reading column is now for. Sections *within* a
+  record — Goal, Provenance — stay flat and hairline-separated.
 - **Right column, 350 px, from 1280 px, sticky.** The evidence panel docks at its top as a module
   (radius 16, hairline border, 17 px extrabold title, a round close control): X's "Today's News"
   slot. Under it, a one-line keyboard hint. Folders with sessions are listed on Home only, never in

@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/cn.js";
 
-/** X's module: a 16 px radius and a hairline, on the page's own black rather than a raised grey. */
+/** The Figma card: 8 px corners and a hairline on the `card` surface. */
 export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -17,7 +17,7 @@ export function CardHeader({ className, ...props }: ComponentProps<"div">) {
 }
 
 export function CardTitle({ className, ...props }: ComponentProps<"h3">) {
-  return <h3 className={cn("text-base font-bold leading-body", className)} {...props} />;
+  return <h3 className={cn("text-lg font-semibold leading-body tracking-title", className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }: ComponentProps<"p">) {

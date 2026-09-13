@@ -17,9 +17,9 @@ import { usePanelIsSheet } from "../../lib/media.js";
  * The right pane, and the one place the app is allowed to put evidence
  * (`docs/design/direction.md` §Shell, rule 3; P8 amendment 13).
  *
- * From 1280 px it **docks** as the first module of the shell's right column (X's "Today's News"
- * slot, see {@link PanelSlot}): 350 px, radius 16, a hairline border, its own scroll and its own
- * header with a round close control. Between 768 and 1279 px there is no right column, so it
+ * From 1280 px it **docks** in the shell's right column, under the view's own module (see
+ * {@link PanelSlot}), drawn as the frames draw a module: 12 px corners, a hairline border, the
+ * `card` surface, its own scroll and its own header with a close control. Between 768 and 1279 px there is no right column, so it
  * **floats** at the right edge instead — inset 12 px, the app's single shadow — never a
  * full-height drawer. Either way it is non-modal — the middle pane keeps its scroll and its
  * clicks, so opening a second item *replaces* the panel instead of closing and reopening it.
@@ -67,8 +67,7 @@ export function PanelHost({ children }: { children: (open: boolean) => ReactNode
 }
 
 /**
- * Where a desktop panel docks: the top of the shell's right column, the slot X gives its first
- * module. While one is mounted, an open panel renders in the column's flow as a module instead of
+ * Where a desktop panel docks: the shell's right column, under the view's module. While one is mounted, an open panel renders in the column's flow as a module instead of
  * floating over the page; `empty:hidden` keeps the column's gap from opening above nothing.
  */
 export function PanelSlot() {
@@ -193,14 +192,14 @@ export function Panel({ open, onOpenChange, title, description, children, classN
             if (target !== null && target.isConnected) target.focus();
           }}
           className={cn(
-            "flex flex-col overflow-hidden border border-hairline bg-raised text-foreground focus-visible:outline-none",
+            "flex flex-col overflow-hidden border border-hairline bg-card text-foreground focus-visible:outline-none",
             sheet
-              ? "fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-lg border-b-0 shadow-panel"
+              ? "fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-xl border-b-0 shadow-panel"
               : docked
                 ? // A module in the right column's flow: no shadow, as tall as the viewport allows
                   // under the column's own 12 px of padding, scrolling inside itself past that.
-                  "max-h-[calc(100vh_-_2_*_var(--wl-spacing-inset))] w-full rounded-lg"
-                : "fixed bottom-inset right-inset top-inset z-50 w-panel rounded-lg shadow-panel",
+                  "max-h-[calc(100vh_-_2_*_var(--wl-spacing-4))] w-full rounded-xl"
+                : "fixed bottom-inset right-inset top-inset z-50 w-panel rounded-xl shadow-panel",
             className,
           )}
         >
@@ -214,25 +213,25 @@ export function Panel({ open, onOpenChange, title, description, children, classN
               <span aria-hidden="true" className="h-1 w-10 rounded-full bg-input" />
             </div>
           ) : null}
-          <div className="flex shrink-0 items-start gap-3 px-4 pb-2 pt-3">
+          <div className="flex shrink-0 items-start gap-3 px-4 pb-3 pt-3.5">
             <div className="min-w-0 flex-1">
-              <DialogPrimitive.Title className="line-clamp-3 text-lg font-extrabold leading-body">
+              <DialogPrimitive.Title className="line-clamp-3 text-lg font-semibold leading-body tracking-title">
                 {title}
               </DialogPrimitive.Title>
               {description === undefined ? null : (
-                <DialogPrimitive.Description className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                <DialogPrimitive.Description className="mt-1.5 flex flex-wrap gap-x-2 text-xs leading-tight text-subtle-foreground">
                   {description}
                 </DialogPrimitive.Description>
               )}
             </div>
             <DialogPrimitive.Close
               aria-label="Close panel"
-              className="-mr-2 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="-mr-1.5 -mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <CloseIcon />
             </DialogPrimitive.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-hairline px-4 pb-4 pt-3">{children}</div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

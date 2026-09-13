@@ -3,19 +3,28 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/cn.js";
 
+/**
+ * The Figma chip (Design System `Badge`; every Product Designs frame): 22 px tall, 8 px of side
+ * padding, a pill, Meta/Strong type. Status is carried by a solid fill; the neutral chip — an
+ * `ended` session, a harness — is the one with a hairline border instead.
+ */
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2 py-px text-xs font-medium",
+  "inline-flex h-5.5 shrink-0 items-center whitespace-nowrap rounded-full px-2 text-xs font-medium leading-tight",
   {
     variants: {
       variant: {
-        // The blue tint X gives an active tab, not a solid blue block: the blue stays readable as
-        // text on it in both themes, where text on the solid blue would not be.
-        default: "border-transparent bg-accent text-accent-foreground",
-        secondary: "border-transparent bg-secondary text-secondary-foreground",
-        outline: "border-border text-muted-foreground",
-        accent: "border-transparent bg-accent text-accent-foreground",
-        destructive: "border-transparent bg-destructive text-destructive-foreground",
-        warning: "border-transparent bg-warning text-warning-foreground",
+        /** An open session, a `question`: the accent tint with the accent text on it. */
+        default: "bg-accent text-accent-foreground",
+        accent: "bg-accent text-accent-foreground",
+        /** `ended`, a harness name, anything that is a label rather than a state. */
+        secondary: "border border-border bg-muted text-muted-foreground",
+        outline: "border border-border bg-muted text-muted-foreground",
+        /** `crashed`, `blocker`, `broken`, `tests-failed`. */
+        destructive: "bg-destructive text-destructive-foreground",
+        /** `check this`, `folder`, `warn`, `repaired`. */
+        warning: "bg-warning text-warning-foreground",
+        /** `ok`, `tests-passed`, `hooks`. */
+        success: "bg-success text-success-foreground",
       },
     },
     defaultVariants: { variant: "default" },

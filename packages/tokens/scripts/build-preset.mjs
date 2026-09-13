@@ -25,6 +25,7 @@ const SCALES = [
   { path: ["shadow"], varPart: "shadow", tailwindKey: "boxShadow" },
   { path: ["type", "size"], varPart: "font-size", tailwindKey: "fontSize" },
   { path: ["type", "leading"], varPart: "leading", tailwindKey: "lineHeight" },
+  { path: ["type", "tracking"], varPart: "tracking", tailwindKey: "letterSpacing" },
   { path: ["type", "family"], varPart: "font-family", tailwindKey: "fontFamily" },
 ];
 
