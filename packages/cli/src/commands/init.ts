@@ -23,11 +23,12 @@ import readline from "node:readline/promises";
 import { configYaml } from "../config.js";
 import { CODEX_HOOKS_PATH, mergeCodexHooksFile } from "../codex-hooks.js";
 import { CURSOR_HOOKS_PATH, mergeCursorHooksFile } from "../cursor-hooks.js";
+import { OPENCODE_PLUGIN_PATH, mergeOpencodePluginFile } from "../opencode-hooks.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { LEDGER_DIR, findRepoRoot, isEnabled } from "../ledger-fs.js";
 import { gitDir, parseIni } from "../git-info.js";
 import { SETTINGS_PATH, SettingsError, mergeSettingsFile } from "../settings-merge.js";
-import { isInstalled, probeCodex, probeCursor, probeHarness, processHealthIo } from "./doctor.js";
+import { isInstalled, probeCodex, probeCursor, probeHarness, probeOpencode, processHealthIo } from "./doctor.js";
 import type { HealthIo } from "./doctor.js";
 import type { SettingsOutcome } from "../settings-merge.js";
 
@@ -332,11 +333,13 @@ export async function runInitReport(options: InitOptions, io: InitIo): Promise<I
   const probe = probeHarness(io);
   const codex = probeCodex(io);
   const cursor = probeCursor(io);
+  const opencode = probeOpencode(io);
   // Claude Code's hooks are always written: it is the harness workledger was built against, and
   // an absent `claude` binary is a hook file that activates the day one is installed. The other
-  // two are written when this machine has them, or when `--harness` names them.
+  // three are written when this machine has them, or when `--harness` names them.
   const enableCodex = isInstalled(codex) || forced.has("codex");
   const enableCursor = isInstalled(cursor) || forced.has("cursor");
+  const enableOpencode = isInstalled(opencode) || forced.has("opencode");
 
   io.stdout(`workledger init: ${root}`);
   io.stdout(
@@ -364,6 +367,13 @@ export async function runInitReport(options: InitOptions, io: InitIo): Promise<I
   if (enableCursor) {
     io.stdout(`  cursor: ${cursor.binary ?? (cursor.store_readable ? cursor.store : "not found")}`);
   }
+  if (enableOpencode) {
+    io.stdout(
+      opencode.binary === null
+        ? "  opencode: `opencode` not found on PATH — the plugin file is still written and activates once it is"
+        : `  opencode: ${opencode.binary}${opencode.version === null ? "" : ` (${opencode.version})`}`,
+    );
+  }
 
   // Step 2 — identity. The one refusal.
   const identity = gitIdentity(root, io);
@@ -386,6 +396,7 @@ export async function runInitReport(options: InitOptions, io: InitIo): Promise<I
     "claude-code",
     ...(enableCodex ? ["codex"] : []),
     ...(enableCursor ? ["cursor"] : []),
+    ...(enableOpencode ? ["opencode"] : []),
   ];
   const created = scaffold(root, configYaml(harnesses));
   for (const entry of created) io.stdout(`  created ${entry}`);
@@ -401,6 +412,7 @@ export async function runInitReport(options: InitOptions, io: InitIo): Promise<I
   ];
   if (enableCodex) merges.push([CODEX_HOOKS_PATH, () => mergeCodexHooksFile(root, io, ask)]);
   if (enableCursor) merges.push([CURSOR_HOOKS_PATH, () => mergeCursorHooksFile(root, io, ask)]);
+  if (enableOpencode) merges.push([OPENCODE_PLUGIN_PATH, () => mergeOpencodePluginFile(root, io, ask)]);
 
   let allUnchanged = true;
   for (const [label, run] of merges) {
@@ -435,7 +447,7 @@ export async function runInitReport(options: InitOptions, io: InitIo): Promise<I
     "Start a Claude Code session in this repo; SessionStart injects the brief.",
     ...report.trustSteps,
     "Run `workledger doctor` to confirm the hooks are live.",
-    `Commit \`.workledger/\` and ${[SETTINGS_PATH, ...(enableCodex ? [CODEX_HOOKS_PATH] : []), ...(enableCursor ? [CURSOR_HOOKS_PATH] : [])].join(", ")}.`,
+    `Commit \`.workledger/\` and ${[SETTINGS_PATH, ...(enableCodex ? [CODEX_HOOKS_PATH] : []), ...(enableCursor ? [CURSOR_HOOKS_PATH] : []), ...(enableOpencode ? [OPENCODE_PLUGIN_PATH] : [])].join(", ")}.`,
   ];
   steps.forEach((step, index) => io.stdout(`  ${index + 1}. ${step}`));
   io.stdout("");

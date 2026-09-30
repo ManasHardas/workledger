@@ -22,6 +22,7 @@ import process from "node:process";
 import { checkConfigFile, loadConfig } from "../config.js";
 import { CODEX_HOOKS_PATH, codexHookCommand } from "../codex-hooks.js";
 import { CURSOR_EVENTS, CURSOR_EVENT_KEYS, CURSOR_HOOKS_PATH, cursorHookCommand } from "../cursor-hooks.js";
+import { OPENCODE_PLUGIN_PATH, opencodePluginSource } from "../opencode-hooks.js";
 import { EXIT_OK, EXIT_USAGE, EXIT_WARNINGS } from "../exit-codes.js";
 import { fileSize, findRepoRoot, isEnabled } from "../ledger-fs.js";
 import { HOOKED_EVENTS, SETTINGS_PATH, hookCommandString } from "../settings-merge.js";
@@ -55,6 +56,12 @@ export const CONTRACT_TESTED_CODEX_VERSION = "0.150.x";
  * contract. `doctor` says so rather than implying a version it never saw.
  */
 export const CONTRACT_TESTED_CURSOR_VERSION = "untested (not installed on the reference machine)";
+
+/**
+ * The OpenCode version `docs/contracts/p4/hooks-opencode.md` was frozen against. The plugin
+ * install path and event names were verified on `1.18.33` (2026-09-29).
+ */
+export const CONTRACT_TESTED_OPENCODE_VERSION = "1.18.x";
 
 /** Everything `doctor` and `init` read from outside their own process. */
 export interface HealthIo {
@@ -264,9 +271,29 @@ export function isInstalled(probe: HarnessProbe): boolean {
   return probe.binary !== null || probe.store_readable;
 }
 
+/**
+ * Detect OpenCode: `opencode` on `PATH` and its SQLite store at `~/.local/share/opencode/`.
+ * Metadata only — the store directory is listed, never the database.
+ */
+export function probeOpencode(io: HealthIo): HarnessProbe {
+  const binary = onPath("opencode", io.env) ?? null;
+  const store = path.join(io.homeDir, ".local", "share", "opencode");
+  const metadata = storeMetadata(store, false);
+  return {
+    harness: "opencode",
+    binary,
+    version: binary === null ? null : binaryVersion(binary),
+    contract_tested_version: CONTRACT_TESTED_OPENCODE_VERSION,
+    store,
+    store_readable: metadata.readable,
+    projects: metadata.projects,
+    last_activity: metadata.last_activity,
+  };
+}
+
 /** Every harness this build speaks, in the order `doctor` reports them. */
 export function probeHarnesses(io: HealthIo): HarnessProbe[] {
-  return [probeHarness(io), probeCodex(io), probeCursor(io)];
+  return [probeHarness(io), probeCodex(io), probeCursor(io), probeOpencode(io)];
 }
 
 /** `true` when `installed` is in the family `tested` names (`2.1.x` matches `2.1.4`). */
@@ -399,6 +426,31 @@ export function checkCursorHookFile(root: string): CursorHookFileCheck {
   );
 }
 
+/**
+ * State of `<root>/.opencode/plugins/workledger.ts` against the contract's plugin source.
+ *
+ * OpenCode's hook file is a whole file workledger owns, not a JSON config it merges into, so
+ * there are no per-event lists to classify: the file is either present and byte-identical to what
+ * `init` writes, or it is not.
+ */
+export interface OpencodeHookFileCheck {
+  file: string;
+  present: boolean;
+  matching: boolean;
+}
+
+/** Compare `<root>/.opencode/plugins/workledger.ts` against docs/contracts/p4/hooks-opencode.md. */
+export function checkOpencodePluginFile(root: string): OpencodeHookFileCheck {
+  const file = path.join(root, OPENCODE_PLUGIN_PATH);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return { file, present: false, matching: false };
+  }
+  return { file, present: true, matching: text === opencodePluginSource() };
+}
+
 /** One line of the report. */
 export interface Check {
   name: string;
@@ -417,6 +469,8 @@ export interface DoctorReport {
   codex_hooks: HookFileCheck | null;
   /** `<repo>/.cursor/hooks.json`, present only when Cursor is installed or enabled. */
   cursor_hooks: CursorHookFileCheck | null;
+  /** `<repo>/.opencode/plugins/workledger.ts`, present only when OpenCode is installed or enabled. */
+  opencode_hooks: OpencodeHookFileCheck | null;
   config: { file: string | null; present: boolean; valid: boolean; errors: string[] };
   index: { path: string; exists: boolean; size_bytes: number | null; open_sessions: number | null };
   /**
@@ -551,6 +605,34 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
     }
   }
 
+  const opencodeProbe = harnesses[3] as HarnessProbe;
+  const opencodeOn = isInstalled(opencodeProbe) || enabledHarnesses.includes("opencode");
+  const opencodeHooks = opencodeOn && root !== null ? checkOpencodePluginFile(root) : null;
+  if (opencodeOn) {
+    add(
+      "opencode binary",
+      opencodeProbe.binary === null ? "warn" : "ok",
+      opencodeProbe.binary === null
+        ? "`opencode` is not on PATH; the plugin file is still written and activates once it is"
+        : `${opencodeProbe.binary}${opencodeProbe.version === null ? "" : ` (${opencodeProbe.version})`}`,
+    );
+    if (opencodeProbe.version === null) {
+      add("opencode version", "warn", `installed version unknown; contract tested against ${CONTRACT_TESTED_OPENCODE_VERSION}`);
+    } else if (versionMatches(opencodeProbe.version, CONTRACT_TESTED_OPENCODE_VERSION)) {
+      add("opencode version", "ok", `${opencodeProbe.version} matches the contract-tested ${CONTRACT_TESTED_OPENCODE_VERSION}`);
+    } else {
+      add("opencode version", "warn", `installed ${opencodeProbe.version}, contract tested against ${CONTRACT_TESTED_OPENCODE_VERSION}`);
+    }
+    if (opencodeHooks === null) add("opencode hooks", "warn", "no repo to check");
+    else if (!opencodeHooks.present) {
+      add("opencode hooks", "warn", `${OPENCODE_PLUGIN_PATH} missing; run \`workledger init\``);
+    } else if (!opencodeHooks.matching) {
+      add("opencode hooks", "warn", `${OPENCODE_PLUGIN_PATH} does not match the contract; re-run \`workledger init\``);
+    } else {
+      add("opencode hooks", "ok", `${OPENCODE_PLUGIN_PATH} matches the contract`);
+    }
+  }
+
   const config = root === null
     ? { file: null, present: false, valid: false, errors: [] as string[] }
     : await (async () => {
@@ -606,6 +688,7 @@ export async function buildReport(io: HealthIo): Promise<DoctorReport> {
     hooks,
     codex_hooks: codexHooks,
     cursor_hooks: cursorHooks,
+    opencode_hooks: opencodeHooks,
     config,
     index,
     repos,

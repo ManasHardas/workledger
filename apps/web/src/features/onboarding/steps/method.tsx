@@ -137,8 +137,8 @@ function Plan({ state, source, method }: { state: WizardState; source: AppSource
           result.sessions === 0 ? (
             <>
               <p className="text-sm">
-                {(result.unsupported?.codex ?? 0) > 0
-                  ? `${plural(result.unsupported!.codex, "Codex session")} can only be backfilled by resume and will be skipped by extraction; nothing else in ${WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. Change your answer to resume them, or finish.`
+                {((result.unsupported?.codex ?? 0) + (result.unsupported?.opencode ?? 0)) > 0
+                  ? `${plural((result.unsupported?.codex ?? 0) + (result.unsupported?.opencode ?? 0), "session")} can only be backfilled by resume and will be skipped by extraction; nothing else in ${WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. Change your answer to resume them, or finish.`
                   : `No session in ${WINDOW_LABELS[since].toLowerCase()} is missing a checkpoint. There is nothing to backfill.`}
               </p>
               <StepActions>

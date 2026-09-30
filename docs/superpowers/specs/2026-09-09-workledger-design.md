@@ -6,12 +6,12 @@ valid as evidence, its verdict does not govern this spec).
 
 ## 1. What this is
 
-A local observer for coding-agent work. It watches sessions in Claude Code, Cursor, and Codex,
-asks the agent itself to write a short structured digest at checkpoints during the session (what
-was done, what remains, what it learned, what it needs from a human), files those digests and the
-resulting backlog into the repo under `.workledger/`, and shows them in a small local web UI where
-a human can edit the backlog. Everything carries provenance (which session, which checkpoint,
-which person, which harness) and everything is shared with a team through git.
+A local observer for coding-agent work. It watches sessions in Claude Code, Cursor, Codex, and
+OpenCode, asks the agent itself to write a short structured digest at checkpoints during the
+session (what was done, what remains, what it learned, what it needs from a human), files those
+digests and the resulting backlog into the repo under `.workledger/`, and shows them in a small
+local web UI where a human can edit the backlog. Everything carries provenance (which session,
+which checkpoint, which person, which harness) and everything is shared with a team through git.
 
 One sentence: **the agent reports its own work at checkpoints; the ledger lives in the repo; the
 UI is where humans edit what comes next.**
@@ -27,7 +27,10 @@ UI is where humans edit what comes next.**
 
 ### Non-goals (v1)
 
-- OpenCode support (no native deny-stop; deferred).
+- A native deny-stop for OpenCode: it has none. OpenCode is supported through a plugin that
+  translates its event bus and asks for a checkpoint with `session.prompt` on `session.idle`,
+  which is a continuation rather than a block (docs/contracts/p4/hooks-opencode.md). The ledger
+  and backlog are unaffected; only the strength of the checkpoint guarantee differs.
 - Reading transcripts with a model during normal operation (only in backfill and crash repair).
 - Cross-agent coordination, presence, or blocking of agent actions.
 - Replacing an issue tracker; the backlog is a per-repo list, not a project-management system.

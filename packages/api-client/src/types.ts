@@ -503,7 +503,7 @@ export interface RepoCandidate {
    * Sessions per harness store attributed to this repo: started in it, or (P8 amendment 8)
    * started elsewhere and touching it.
    */
-  harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
+  harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number; opencode?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
   lastSessionAt: string | null;
   /**
@@ -638,7 +638,7 @@ export interface PlanResult {
    * estimate — the extractor parses Claude Code transcripts only, so they are skipped rather
    * than queued. Resume covers them.
    */
-  unsupported?: { codex: number };
+  unsupported?: { codex?: number; opencode?: number };
 }
 
 /** `POST /api/onboarding/run` body. The server refuses anything but `consent: true` (409). */

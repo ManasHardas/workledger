@@ -5,7 +5,7 @@ structured digest: what was done, what remains, what it learned, and what it nee
 The ledger lives in each repo under `.workledger/` and is shared with a team through git. One local
 app shows every project on the machine: what each session did, and what is waiting on a person.
 
-Supported harnesses: **Claude Code**, **Codex** and **Cursor**.
+Supported harnesses: **Claude Code**, **Codex**, **Cursor** and **OpenCode**.
 
 ## Status
 
@@ -14,7 +14,7 @@ Supported harnesses: **Claude Code**, **Codex** and **Cursor**.
 | P1 CLI core | `init`, `hook`, `checkpoint`, `brief`, `doctor`, the ledger format and the local index | shipped (`p1-shipped`) |
 | P2 Local UI | local server, web app, backlog and note editing | shipped (`p2-shipped`) |
 | P3 Recovery and backfill | orphan `scan`, `repair` by resume or extraction, `backfill`, the job queue | shipped (`p3-shipped`) |
-| P4 More harnesses | Codex and Cursor adapters | shipped (`p4-shipped`) |
+| P4 More harnesses | Codex, Cursor and OpenCode adapters | shipped (`p4-shipped`) |
 | P5 Team | `auto_commit`, private sessions and paths, `identities.yaml`, teammate onboarding | shipped (`p5-shipped`, v0.3.0) |
 | P8 Onboarding and home | one daemon per machine, Home over every project, the onboarding wizard, install path | built on main, not yet tagged |
 | P9 Screens | the app rebuilt from the Figma designs | on main |

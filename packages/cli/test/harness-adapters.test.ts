@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CODEX_BIN_ENV, CODEX_SANDBOX, codexAdapter } from "../src/adapters/codex.js";
 import { CURSOR_NO_RESUME, cursorAdapter } from "../src/adapters/cursor.js";
 import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
+import { opencodeAdapter } from "../src/adapters/opencode.js";
 import { DEFAULT_HARNESS, HARNESS_NAMES, adapterFor } from "../src/adapters/registry.js";
 import { EXIT_BLOCK, EXIT_OK } from "../src/exit-codes.js";
 import { openIndex } from "../src/index/db.js";
@@ -70,7 +71,7 @@ function setup(): Fixture {
     path.join(root, ".workledger", "config.yaml"),
     [
       "schema_version: 1",
-      "harnesses: [claude-code, codex, cursor]",
+      "harnesses: [claude-code, codex, cursor, opencode]",
       "thresholds: { bytes: 40000, minutes: 20, turns: 15 }",
       "brief: { inject: true, max_tokens: 2000 }",
       "stale_turns: 5",
@@ -175,12 +176,13 @@ function fixtureText(harness: "codex" | "cursor", name: string): string {
 // ---------------------------------------------------------------------------
 
 describe("the harness registry", () => {
-  it("resolves every name P4 speaks and nothing else", () => {
-    expect(HARNESS_NAMES).toEqual(["claude-code", "codex", "cursor"]);
+  it("resolves every name this build speaks and nothing else", () => {
+    expect(HARNESS_NAMES).toEqual(["claude-code", "codex", "cursor", "opencode"]);
     expect(adapterFor("claude-code")).toBe(claudeCodeAdapter);
     expect(adapterFor("codex")).toBe(codexAdapter);
     expect(adapterFor("cursor")).toBe(cursorAdapter);
-    expect(adapterFor("opencode")).toBeUndefined();
+    expect(adapterFor("opencode")).toBe(opencodeAdapter);
+    expect(adapterFor("windsurf")).toBeUndefined();
     expect(adapterFor("")).toBeUndefined();
     expect(adapterFor(DEFAULT_HARNESS)).toBe(claudeCodeAdapter);
   });
@@ -201,11 +203,11 @@ describe("the harness registry", () => {
         return true;
       });
     try {
-      expect(await hookCommand("Stop", { harness: "opencode" })).toBe(EXIT_OK);
+      expect(await hookCommand("Stop", { harness: "windsurf" })).toBe(EXIT_OK);
     } finally {
       spy.mockRestore();
     }
-    expect(written.join("")).toContain("unknown harness opencode");
+    expect(written.join("")).toContain("unknown harness windsurf");
   });
 });
 

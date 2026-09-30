@@ -15,10 +15,11 @@
 import { claudeCodeAdapter } from "./claude-code.js";
 import { codexAdapter } from "./codex.js";
 import { cursorAdapter } from "./cursor.js";
+import { opencodeAdapter } from "./opencode.js";
 import type { HarnessAdapter } from "./types.js";
 
 /** Every harness this build speaks, in the order `doctor` reports them. */
-export const HARNESS_NAMES = ["claude-code", "codex", "cursor"] as const;
+export const HARNESS_NAMES = ["claude-code", "codex", "cursor", "opencode"] as const;
 
 /** One of {@link HARNESS_NAMES}. */
 export type HarnessName = (typeof HARNESS_NAMES)[number];
@@ -31,6 +32,7 @@ const ADAPTERS: Readonly<Record<HarnessName, HarnessAdapter>> = {
   "claude-code": claudeCodeAdapter,
   codex: codexAdapter,
   cursor: cursorAdapter,
+  opencode: opencodeAdapter,
 };
 
 /** `true` when `name` is a harness this build speaks. */

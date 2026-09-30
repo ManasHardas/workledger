@@ -724,6 +724,7 @@ const WORKSPACE_HOOK_FILES = [
   path.join(".claude", "settings.json"),
   path.join(".codex", "hooks.json"),
   path.join(".cursor", "hooks.json"),
+  path.join(".opencode", "plugins", "workledger.ts"),
 ];
 
 /** `true` when `dir` carries a hook file — the cheap test before the index says it is a workspace. */

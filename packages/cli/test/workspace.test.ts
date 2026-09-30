@@ -18,6 +18,7 @@ import { claudeCodeAdapter } from "../src/adapters/claude-code.js";
 import { CODEX_HOOKS_PATH } from "../src/codex-hooks.js";
 import { CLAUDE_STORE, projectSlug } from "../src/commands/backfill.js";
 import { CURSOR_HOOKS_PATH } from "../src/cursor-hooks.js";
+import { OPENCODE_PLUGIN_PATH } from "../src/opencode-hooks.js";
 import { buildReport } from "../src/commands/doctor.js";
 import { runHook } from "../src/commands/hook.js";
 import { runInitReport } from "../src/commands/init.js";
@@ -657,7 +658,7 @@ describe("discover, init and doctor with workspaces", () => {
   it("doctor lists each workspace with its hook status", async () => {
     await enableWorkspace();
     const report = await buildReport({ cwd: repoA, env: { PATH: "", HOME: home, WORKLEDGER_HOME: indexHome }, homeDir: home, stdout: () => undefined, stderr: () => undefined });
-    expect(report.workspaces).toEqual([{ path: workspace, hooks: { [SETTINGS_PATH]: true, [CODEX_HOOKS_PATH]: false, [CURSOR_HOOKS_PATH]: false } }]);
+    expect(report.workspaces).toEqual([{ path: workspace, hooks: { [SETTINGS_PATH]: true, [CODEX_HOOKS_PATH]: false, [CURSOR_HOOKS_PATH]: false, [OPENCODE_PLUGIN_PATH]: false } }]);
     expect(report.checks.find((check) => check.name === `workspace ${workspace}`)).toEqual({ name: `workspace ${workspace}`, status: "ok", detail: `hooks in ${SETTINGS_PATH}` });
 
     writeFileSync(path.join(workspace, SETTINGS_PATH), "{}", "utf8");

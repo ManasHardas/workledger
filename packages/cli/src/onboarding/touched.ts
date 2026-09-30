@@ -221,6 +221,47 @@ export async function inferContext(
   return { startDir, startRepo, contextRepos: rankContext(tallies, startRepo, own !== undefined), tallies };
 }
 
+/** One tool call in the harness-neutral shape {@link Tallies.toolCall} consumes. */
+export interface ToolCallInput {
+  name: string;
+  input: Record<string, unknown>;
+  /** The working directory the call is resolved against; the session's start directory. */
+  cwd: string;
+}
+
+/**
+ * Tally already-parsed tool calls against `roots`.
+ *
+ * The store-based half of {@link inferContext}: a harness whose "transcript" is a query rather
+ * than a file (OpenCode's SQLite store, `onboarding/stores.ts`) hands its normalized tool calls
+ * here, and the same {@link Tallies} rule — path inputs, writes, shell words — decides where they
+ * landed. No transcript cache is involved because there is no file to key one on.
+ */
+export function tallyToolCalls(
+  calls: readonly ToolCallInput[],
+  roots: readonly string[],
+  startDir: string,
+  homeDir: string,
+): Map<string, TouchTally> {
+  const tallies = new Tallies(roots, homeDir);
+  for (const call of calls) tallies.toolCall(call.name, call.input, call.cwd || startDir);
+  return tallies.roots;
+}
+
+/** {@link inferContext} over a store's parsed tool calls rather than a transcript file. */
+export function inferContextFromToolCalls(
+  calls: readonly ToolCallInput[],
+  candidates: readonly string[],
+  startDir: string,
+  homeDir: string,
+): ContextInference {
+  const tallies = tallyToolCalls(calls, candidates, startDir, homeDir);
+  const own = startRepoOf(startDir, candidates);
+  const ownKey = own === undefined ? undefined : realOr(own);
+  const startRepo = ownKey === undefined ? undefined : candidates.find((root) => realOr(root) === ownKey);
+  return { startDir, startRepo, contextRepos: rankContext(tallies, startRepo, own !== undefined), tallies };
+}
+
 /** What {@link scanTranscript} needs beyond the file. */
 export interface ScanOptions {
   /** The session's start directory, when the store knows it; the first recorded cwd otherwise. */

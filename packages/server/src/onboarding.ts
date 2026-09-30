@@ -42,7 +42,7 @@ export interface RepoCandidate {
    * Sessions per harness store the inference says are about this repo (amendment 10), wherever
    * they were started — `touchedSessions` of them elsewhere.
    */
-  harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number };
+  harnessSessions: { "claude-code"?: number; codex?: number; cursor?: number; opencode?: number };
   /** ISO 8601 of the newest such session, or `null` for a repo with none. */
   lastSessionAt: string | null;
   /**
@@ -173,7 +173,7 @@ export interface PlanResult {
    * `extract` sets it: the extractor reads Claude Code transcripts, so Codex sessions are
    * resume-only and wait for a later `resume`.
    */
-  unsupported?: { codex: number };
+  unsupported?: { codex?: number; opencode?: number };
 }
 
 /** `POST /api/onboarding/run` body. */

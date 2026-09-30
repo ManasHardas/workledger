@@ -12,6 +12,7 @@ const HARNESS_LABELS: Record<string, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   cursor: "Cursor",
+  opencode: "OpenCode",
 };
 
 export function harnessLabel(harness: string): string {

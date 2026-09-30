@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
     "id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "ULID assigned at SessionStart." },
-    "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex"] },
+    "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex", "opencode"] },
     "harness_session_id": { "type": "string", "minLength": 1 },
     "repo": { "type": "string", "minLength": 1, "description": "First git remote's host/path without scheme or .git, else the directory basename." },
     "branch": { "type": ["string", "null"] },

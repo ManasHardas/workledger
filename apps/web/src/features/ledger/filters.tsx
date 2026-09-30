@@ -21,6 +21,7 @@ const HARNESS_OPTIONS = [
   { value: "claude-code", label: "claude-code" },
   { value: "cursor", label: "cursor" },
   { value: "codex", label: "codex" },
+  { value: "opencode", label: "opencode" },
 ];
 
 const STATUS_OPTIONS = [

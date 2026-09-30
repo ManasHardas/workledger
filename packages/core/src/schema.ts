@@ -90,7 +90,7 @@ export const BACKLOG_STATUS = ["proposed", "accepted", "in_progress", "done", "d
 /** Why a session ended, as reported by the harness. */
 export const END_REASONS = ["clean", "clear", "resume", "logout", "crashed", "unknown"] as const;
 /** Coding agents workledger observes. */
-export const HARNESSES = ["claude-code", "cursor", "codex"] as const;
+export const HARNESSES = ["claude-code", "cursor", "codex", "opencode"] as const;
 /** Optional backlog priority band. */
 export const PRIORITIES = ["p1", "p2", "p3"] as const;
 /** Whether a session was recorded live or reconstructed by backfill. */

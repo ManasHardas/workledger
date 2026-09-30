@@ -355,3 +355,51 @@ export async function mergeSettingsFile(
 ): Promise<SettingsOutcome> {
   return await applyJsonFile(path.join(root, SETTINGS_PATH), SETTINGS_PATH, mergeHooks, io, ask);
 }
+
+/**
+ * Write one whole text file in place: read, diff, ask, back up, write.
+ *
+ * The JSON merges are additive because a settings file is shared with the user's own hooks;
+ * OpenCode's plugin file (`.opencode/plugins/workledger.ts`) is not shared with anything, so it
+ * is written whole. Every other property is the same as {@link applyJsonFile} — a byte-identical
+ * file is left untouched (so a second `init` is a no-op), the diff is printed, and the previous
+ * content is copied to `<file>.bak` before the write. `desired` is compared verbatim, which is
+ * what lets an operator hand-edit the plugin and be told their edit is about to be replaced.
+ *
+ * @param file absolute path of the file to write.
+ * @param label the path shown in the unified diff, relative to the repo root.
+ * @param desired the exact text the file should hold.
+ */
+export async function applyTextFile(
+  file: string,
+  label: string,
+  desired: string,
+  io: SettingsIo,
+  ask: boolean,
+): Promise<SettingsOutcome> {
+  let before = "";
+  let exists = false;
+  try {
+    before = readFileSync(file, "utf8");
+    exists = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (before === desired) return { status: "unchanged", file, diff: "" };
+
+  const diff = unifiedDiff(before, desired, label);
+  for (const line of diff.replace(/\n$/, "").split("\n")) io.stdout(line);
+
+  if (ask && !(await io.confirm(`Write these changes to ${file}?`))) {
+    return { status: "declined", file, diff };
+  }
+
+  mkdirSync(path.dirname(file), { recursive: true });
+  let backup: string | undefined;
+  if (exists) {
+    backup = `${file}.bak`;
+    writeFileSync(backup, before, "utf8");
+  }
+  writeFileSync(file, desired, "utf8");
+  return { status: "written", file, backup, diff };
+}

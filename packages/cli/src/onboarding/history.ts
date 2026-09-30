@@ -32,7 +32,7 @@ export async function historyWindows(repos: readonly string[], io: OnboardingIo)
   const about = await withIndex(io, (db) => attributeTranscripts(io.homeDir, roots, db));
   for (const repo of roots) {
     const attribution = about.get(repo);
-    const sessions = [...(attribution?.claude ?? []), ...(attribution?.codex ?? [])];
+    const sessions = [...(attribution?.claude ?? []), ...(attribution?.codex ?? []), ...(attribution?.opencode ?? [])];
     for (const window of WINDOWS) {
       for (const session of filterSince(sessions, window, now)) {
         windows[window].sessions += 1;

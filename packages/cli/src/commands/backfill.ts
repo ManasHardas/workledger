@@ -25,6 +25,8 @@ import path from "node:path";
 import process from "node:process";
 
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
+import { codexAdapter } from "../adapters/codex.js";
+import { opencodeAdapter } from "../adapters/opencode.js";
 import { SINCE_WINDOWS, loadConfig } from "../config.js";
 import { EXIT_NOT_ENABLED, EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { DEFAULT_TIMEOUT_S, resumeSession } from "./repair.js";
@@ -384,18 +386,36 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
   }
   const concurrency = options.concurrency ?? config.backfill.concurrency;
 
-  // Every transcript the inference says is about this repo, wherever it started (amendment 10).
+  // Every session the inference says is about this repo, wherever it started (amendment 10),
+  // planned per harness with that harness's adapter. A session is resumed by the adapter named on
+  // its row, so the only thing the adapter decides here is the `harness` the row is opened under.
   const { attributeTranscripts } = await import("../onboarding/attribution.js");
   const about = (await attributeTranscripts(io.homeDir, [io.root], io.db)).get(io.root);
-  const plan = planBackfill(about?.claude ?? [], {
+  const planOptions = {
     db: io.db,
-    harness: io.adapter.harness,
     repoPath: io.root,
     since,
     now: io.now(),
     concurrency,
     secondsPerSession: config.backfill.seconds_per_session,
-  });
+  };
+  const plans: Array<{ plan: BackfillPlan; adapter: HarnessAdapter }> = [
+    { plan: planBackfill(about?.claude ?? [], { ...planOptions, harness: claudeCodeAdapter.harness }), adapter: claudeCodeAdapter },
+    { plan: planBackfill(about?.codex ?? [], { ...planOptions, harness: codexAdapter.harness }), adapter: codexAdapter },
+    { plan: planBackfill(about?.opencode ?? [], { ...planOptions, harness: opencodeAdapter.harness }), adapter: opencodeAdapter },
+  ];
+  const fresh = plans.flatMap(({ plan, adapter }) => plan.fresh.map((session) => ({ session, adapter })));
+  const oldestMs = fresh.reduce<number | null>(
+    (min, { session }) => (min === null || session.mtimeMs < min ? session.mtimeMs : min),
+    null,
+  );
+  const plan: BackfillPlan = {
+    fresh: fresh.map(({ session }) => session),
+    skipped: plans.flatMap(({ plan: entry }) => entry.skipped),
+    totalBytes: plans.reduce((sum, { plan: entry }) => sum + entry.totalBytes, 0),
+    oldest: oldestMs === null ? null : new Date(oldestMs).toISOString(),
+    estimateSeconds: plans.reduce((sum, { plan: entry }) => sum + entry.estimateSeconds, 0),
+  };
 
   for (const line of planLines(plan, concurrency)) io.stdout(line);
 
@@ -425,8 +445,8 @@ export async function runBackfill(options: BackfillOptions, io: BackfillIo): Pro
   }
 
   const ulids: string[] = [];
-  for (const session of plan.fresh) {
-    const ulid = await createBackfilledSession(session, io);
+  for (const { session, adapter } of fresh) {
+    const ulid = await createBackfilledSession(session, { ...io, adapter });
     ulids.push(ulid);
     enqueueJob(io.db, {
       kind: "repair",

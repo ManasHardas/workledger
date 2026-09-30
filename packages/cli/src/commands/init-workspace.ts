@@ -18,10 +18,11 @@ import path from "node:path";
 
 import { CODEX_HOOKS_PATH, mergeCodexHooksFile } from "../codex-hooks.js";
 import { CURSOR_HOOKS_PATH, mergeCursorHooksFile } from "../cursor-hooks.js";
+import { OPENCODE_PLUGIN_PATH, mergeOpencodePluginFile } from "../opencode-hooks.js";
 import { EXIT_OK, EXIT_USAGE } from "../exit-codes.js";
 import { isEnabled } from "../ledger-fs.js";
 import { SETTINGS_PATH, SettingsError, mergeSettingsFile } from "../settings-merge.js";
-import { isInstalled, probeCodex, probeCursor } from "./doctor.js";
+import { isInstalled, probeCodex, probeCursor, probeOpencode } from "./doctor.js";
 import { PRIVACY_SUMMARY, codexTrustStep } from "./init.js";
 import type { SettingsOutcome } from "../settings-merge.js";
 import type { InitIo, InitOptions, InitReport } from "./init.js";
@@ -75,14 +76,17 @@ export function workspaceProblem(dir: string, selected: readonly string[] = []):
 /** The hook files in `dir` that carry the workledger hook command, by path. */
 export function workspaceHookStatus(dir: string): Record<string, boolean> {
   const status: Record<string, boolean> = {};
-  for (const file of [SETTINGS_PATH, CODEX_HOOKS_PATH, CURSOR_HOOKS_PATH]) {
+  for (const file of [SETTINGS_PATH, CODEX_HOOKS_PATH, CURSOR_HOOKS_PATH, OPENCODE_PLUGIN_PATH]) {
     let text: string | undefined;
     try {
       text = readFileSync(path.join(dir, file), "utf8");
     } catch {
       text = undefined;
     }
-    status[file] = text !== undefined && text.includes("workledger hook Stop");
+    // The plugin file is TypeScript the CLI generated, not a hook command: it carries the Stop
+    // call as `hook("Stop", …)` rather than `workledger hook Stop`.
+    status[file] =
+      text !== undefined && (text.includes("workledger hook Stop") || text.includes('hook("Stop"'));
   }
   return status;
 }
@@ -113,6 +117,7 @@ export async function runWorkspaceInit(
   const forced = new Set((options.harness ?? []).map((name) => name.trim()).filter((name) => name !== ""));
   const enableCodex = isInstalled(probeCodex(io)) || forced.has("codex");
   const enableCursor = isInstalled(probeCursor(io)) || forced.has("cursor");
+  const enableOpencode = isInstalled(probeOpencode(io)) || forced.has("opencode");
   io.stdout(`workledger init --workspace: ${workspace}`);
   const repos = trackedReposUnder(workspace);
   io.stdout(`  tracked repos under it: ${repos.length === 0 ? "none yet (selected in this run)" : repos.map((repo) => path.relative(workspace, repo)).join(", ")}`);
@@ -124,6 +129,7 @@ export async function runWorkspaceInit(
   ];
   if (enableCodex) merges.push([CODEX_HOOKS_PATH, () => mergeCodexHooksFile(workspace, io, ask)]);
   if (enableCursor) merges.push([CURSOR_HOOKS_PATH, () => mergeCursorHooksFile(workspace, io, ask)]);
+  if (enableOpencode) merges.push([OPENCODE_PLUGIN_PATH, () => mergeOpencodePluginFile(workspace, io, ask)]);
   for (const [label, run] of merges) {
     let merge: SettingsOutcome;
     try {

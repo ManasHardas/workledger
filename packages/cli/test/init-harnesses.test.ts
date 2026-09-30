@@ -25,7 +25,12 @@ import {
   cursorHookCommand,
   cursorHooksBlock,
 } from "../src/cursor-hooks.js";
-import { CONTRACT_TESTED_CODEX_VERSION, runDoctor } from "../src/commands/doctor.js";
+import { OPENCODE_PLUGIN_PATH, opencodePluginSource } from "../src/opencode-hooks.js";
+import {
+  CONTRACT_TESTED_CODEX_VERSION,
+  CONTRACT_TESTED_OPENCODE_VERSION,
+  runDoctor,
+} from "../src/commands/doctor.js";
 import { EXIT_OK, EXIT_USAGE, EXIT_WARNINGS } from "../src/exit-codes.js";
 import { configYaml } from "../src/config.js";
 import { runInit } from "../src/commands/init.js";
@@ -47,6 +52,10 @@ interface SetupOptions {
   codexStore?: boolean;
   /** Create `~/.cursor/`. */
   cursorStore?: boolean;
+  /** Install a fake `opencode` on `PATH` reporting this version. */
+  opencodeVersion?: string;
+  /** Create `~/.local/share/opencode/`, the SQLite store. */
+  opencodeStore?: boolean;
   /** Answer to the hook-file confirmations. */
   confirm?: boolean;
 }
@@ -78,6 +87,14 @@ function setup(options: SetupOptions = {}): Fixture {
     );
   }
   if (options.cursorStore === true) mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  if (options.opencodeVersion !== undefined) {
+    const fake = path.join(bin, "opencode");
+    writeFileSync(fake, `#!/bin/sh\necho "opencode ${options.opencodeVersion}"\n`, "utf8");
+    chmodSync(fake, 0o755);
+  }
+  if (options.opencodeStore === true) {
+    mkdirSync(path.join(home, ".local", "share", "opencode"), { recursive: true });
+  }
 
   const out: string[] = [];
   const err: string[] = [];
@@ -138,6 +155,22 @@ describe("the hook files the contracts freeze", () => {
       sessionEnd: [{ command: command("SessionEnd", "cursor") }],
     });
     expect(CURSOR_LOOP_LIMIT).toBe(2);
+  });
+
+  it("`.opencode/plugins/workledger.ts` is the plugin from hooks-opencode.md", () => {
+    expect(OPENCODE_PLUGIN_PATH).toBe(path.join(".opencode", "plugins", "workledger.ts"));
+    const source = opencodePluginSource();
+    // The three events the plugin translates, on OpenCode's own event-bus names.
+    expect(source).toContain('"session.created"');
+    expect(source).toContain('"session.idle"');
+    expect(source).toContain('"session.deleted"');
+    // The three workledger events it invokes, with the harness flag.
+    expect(source).toContain('hook("SessionStart"');
+    expect(source).toContain('hook("Stop"');
+    expect(source).toContain('hook("SessionEnd"');
+    expect(source).toContain('"--harness", "opencode"');
+    // A missing binary is a no-op, not a throw.
+    expect(source).toContain('if (result.error || result.status === null) return undefined');
   });
 
   it("every command exits 0 in silence when the CLI is absent", async () => {
@@ -312,7 +345,7 @@ async function initThenDoctor(fixture: Fixture, options: Parameters<typeof runIn
 }
 
 describe("workledger doctor with other harnesses", () => {
-  it("always reports all three harnesses in the JSON, in a fixed order", async () => {
+  it("always reports all four harnesses in the JSON, in a fixed order", async () => {
     const fixture = setup();
     const report = await initThenDoctor(fixture);
 
@@ -320,17 +353,19 @@ describe("workledger doctor with other harnesses", () => {
       "claude-code",
       "codex",
       "cursor",
+      "opencode",
     ]);
   });
 
-  it("adds no codex or cursor rows on a machine with neither", async () => {
+  it("adds no codex, cursor or opencode rows on a machine with none", async () => {
     const fixture = setup();
     const report = await initThenDoctor(fixture);
 
-    expect(report.checks.map((check) => check.name).filter((name) => /codex|cursor/.test(name)))
+    expect(report.checks.map((check) => check.name).filter((name) => /codex|cursor|opencode/.test(name)))
       .toEqual([]);
     expect(report.codex_hooks).toBeNull();
     expect(report.cursor_hooks).toBeNull();
+    expect(report.opencode_hooks).toBeNull();
   });
 
   it("reports codex binary, store, version and hooks once Codex is installed", async () => {
@@ -392,5 +427,39 @@ describe("workledger doctor with other harnesses", () => {
 
     expect(report.checks.map((check) => check.name)).toContain("cursor hooks");
     expect(report.checks.find((check) => check.name === "cursor hooks")?.status).toBe("ok");
+  });
+
+  it("writes the OpenCode plugin and reports it once OpenCode is present", async () => {
+    const fixture = setup({ opencodeVersion: "1.18.33", opencodeStore: true });
+    await runInit({ yes: true }, fixture.io);
+
+    const plugin = readFileSync(path.join(fixture.root, OPENCODE_PLUGIN_PATH), "utf8");
+    expect(plugin).toBe(opencodePluginSource());
+
+    fixture.io.out.length = 0;
+    await runDoctor({ json: true }, fixture.io);
+    const report = JSON.parse(fixture.io.out[0] as string) as DoctorReport;
+
+    const byName = new Map(report.checks.map((check) => [check.name, check]));
+    expect(byName.get("opencode binary")?.status).toBe("ok");
+    expect(byName.get("opencode version")?.status).toBe("ok");
+    expect(byName.get("opencode version")?.detail).toContain(CONTRACT_TESTED_OPENCODE_VERSION);
+    expect(byName.get("opencode hooks")?.status).toBe("ok");
+    expect(report.opencode_hooks?.matching).toBe(true);
+  });
+
+  it("warns when the OpenCode plugin file has drifted from the contract", async () => {
+    const fixture = setup({ opencodeStore: true });
+    await runInit({ yes: true }, fixture.io);
+    writeFileSync(path.join(fixture.root, OPENCODE_PLUGIN_PATH), "// hand-edited\n", "utf8");
+    fixture.io.out.length = 0;
+
+    await expect(runDoctor({ json: true }, fixture.io)).resolves.toBe(EXIT_WARNINGS);
+    const report = JSON.parse(fixture.io.out[0] as string) as DoctorReport;
+    expect(report.opencode_hooks?.present).toBe(true);
+    expect(report.opencode_hooks?.matching).toBe(false);
+    expect(report.checks.find((check) => check.name === "opencode hooks")?.detail).toContain(
+      OPENCODE_PLUGIN_PATH,
+    );
   });
 });

@@ -7,10 +7,25 @@
  * facts are all the discovery step needs. No transcript body is ever read here.
  */
 import { readdirSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+
+import type Database from "better-sqlite3";
 
 import { CLAUDE_STORE, firstRecord, readFirstLine } from "../commands/backfill.js";
 import { isDirectory, slugToPath } from "./session-cwd.js";
+
+/**
+ * `better-sqlite3` through `createRequire`, like `index/db.ts`: it is a native addon esbuild
+ * cannot inline, and a static import would put it in the eager graph of every command that
+ * reaches this module.
+ */
+const nodeRequire = createRequire(import.meta.url);
+let DatabaseCtor: typeof Database | undefined;
+function databaseConstructor(): typeof Database {
+  DatabaseCtor ??= nodeRequire("better-sqlite3") as typeof Database;
+  return DatabaseCtor;
+}
 
 /** Where Codex keeps its rollouts, relative to the home directory (hooks-codex.md §Headless resume). */
 export const CODEX_STORE = path.join(".codex", "sessions");
@@ -217,4 +232,172 @@ export function codexSessions(homeDir: string): CodexSession[] {
   };
   walk(path.join(homeDir, CODEX_STORE), 0);
   return found;
+}
+
+// ---------------------------------------------------------------------------
+// OpenCode — a SQLite store, not a directory of transcripts
+// ---------------------------------------------------------------------------
+
+/**
+ * Where OpenCode keeps its data, relative to the home directory (opencode 1.18.x).
+ *
+ * Unlike the other three harnesses, OpenCode has no per-session JSONL transcript: sessions,
+ * messages and parts live in one SQLite database, `opencode.db`, in WAL mode. This enumeration
+ * opens it **read-only** and never migrates it; a store it cannot open reads as no sessions.
+ */
+export const OPENCODE_STORE = path.join(".local", "share", "opencode");
+
+/** The SQLite database OpenCode writes sessions and message parts into. */
+export const OPENCODE_DB = "opencode.db";
+
+/**
+ * One tool call of an OpenCode session, normalized to the harness-neutral shape `touched.ts`
+ * reads: OpenCode's tool names are lower-case (`write`, `read`, `bash`) and its path argument is
+ * `filePath`, where the scanner expects `Write`/`file_path`.
+ */
+export interface OpencodeToolCall {
+  name: string;
+  input: Record<string, unknown>;
+  cwd: string;
+}
+
+/** One OpenCode session, by its metadata and the tool calls its parts carry. */
+export interface OpencodeSession {
+  /** `session.id` — the `ses_…` id `opencode run --session` resumes. */
+  harnessSessionId: string;
+  /** The SQLite database path; there is no per-session transcript file. */
+  file: string;
+  /** Synthetic: the summed byte length of the session's tool parts. */
+  bytes: number;
+  /** `session.time_updated`, ms since epoch. */
+  mtimeMs: number;
+  /** `session.directory`, where the session was started. */
+  cwd: string;
+  /** `session.time_created`, ISO 8601. */
+  startedIso: string | null;
+  /** The parent session id when this is a subagent session, else `null`. */
+  parentId: string | null;
+  title: string;
+  toolCalls: OpencodeToolCall[];
+}
+
+/** A one-level normalized tool call, or `undefined` for a tool that names no path. */
+function normalizeOpencodeCall(tool: unknown, input: unknown, cwd: string): OpencodeToolCall | undefined {
+  if (typeof tool !== "string" || input === null || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  const args = input as Record<string, unknown>;
+  const text = (key: string): string | undefined =>
+    typeof args[key] === "string" && args[key] !== "" ? (args[key] as string) : undefined;
+  switch (tool) {
+    case "write":
+    case "edit":
+    case "multiedit": {
+      const file = text("filePath") ?? text("path");
+      return file === undefined ? undefined : { name: "Write", input: { file_path: file }, cwd };
+    }
+    case "read":
+    case "list":
+    case "ls": {
+      const file = text("filePath") ?? text("path");
+      return file === undefined ? undefined : { name: "Read", input: { file_path: file }, cwd };
+    }
+    case "bash": {
+      const command = text("command");
+      return command === undefined ? undefined : { name: "Bash", input: { command }, cwd };
+    }
+    case "grep":
+    case "glob": {
+      const normalized: Record<string, unknown> = {};
+      const pattern = text("pattern");
+      if (pattern !== undefined) normalized["pattern"] = pattern;
+      const dir = text("path");
+      if (dir !== undefined) normalized["path"] = dir;
+      return { name: "Grep", input: normalized, cwd };
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Every session in `<homeDir>/.local/share/opencode/opencode.db`, with the tool calls its parts
+ * carry. Metadata and tool inputs only — assistant text and reasoning are never read here.
+ *
+ * `parent_id` marks a subagent's child session; those are returned too (the caller decides
+ * whether to record them), but they are not what a repo's history is about.
+ */
+export function opencodeSessions(homeDir: string): OpencodeSession[] {
+  const file = path.join(homeDir, OPENCODE_STORE, OPENCODE_DB);
+  let db: Database.Database;
+  try {
+    db = new (databaseConstructor())(file, { readonly: true, fileMustExist: true });
+  } catch {
+    return [];
+  }
+  try {
+    const sessions = db
+      .prepare("SELECT id, directory, parent_id, title, time_created, time_updated FROM session")
+      .all() as Array<{
+      id: unknown;
+      directory: unknown;
+      parent_id: unknown;
+      title: unknown;
+      time_created: unknown;
+      time_updated: unknown;
+    }>;
+    const parts = db
+      .prepare("SELECT session_id, data FROM part WHERE json_extract(data, '$.type') = 'tool'")
+      .all() as Array<{ session_id: unknown; data: unknown }>;
+
+    const bySession = new Map<string, { bytes: number; calls: OpencodeToolCall[] }>();
+    for (const row of parts) {
+      if (typeof row.session_id !== "string" || typeof row.data !== "string") continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.data) as unknown;
+      } catch {
+        continue;
+      }
+      if (parsed === null || typeof parsed !== "object") continue;
+      const record = parsed as Record<string, unknown>;
+      const state = record["state"];
+      const input = state !== null && typeof state === "object" ? (state as Record<string, unknown>)["input"] : undefined;
+      const entry = bySession.get(row.session_id) ?? { bytes: 0, calls: [] };
+      entry.bytes += row.data.length;
+      // The cwd is the session directory; patched onto every call below, where it is known.
+      const call = normalizeOpencodeCall(record["tool"], input, "");
+      if (call !== undefined) entry.calls.push(call);
+      bySession.set(row.session_id, entry);
+    }
+
+    const found: OpencodeSession[] = [];
+    for (const session of sessions) {
+      if (typeof session.id !== "string" || typeof session.directory !== "string" || session.directory === "") {
+        continue;
+      }
+      const meta = bySession.get(session.id);
+      found.push({
+        harnessSessionId: session.id,
+        file,
+        bytes: meta?.bytes ?? 0,
+        mtimeMs: typeof session.time_updated === "number" ? session.time_updated : 0,
+        cwd: session.directory,
+        startedIso:
+          typeof session.time_created === "number" ? new Date(session.time_created).toISOString() : null,
+        parentId: typeof session.parent_id === "string" ? session.parent_id : null,
+        title: typeof session.title === "string" ? session.title : "",
+        toolCalls: (meta?.calls ?? []).map((call) => ({ ...call, cwd: session.directory as string })),
+      });
+    }
+    return found;
+  } catch {
+    return [];
+  } finally {
+    try {
+      db.close();
+    } catch {
+      // A close failure on a read-only handle is not worth reporting.
+    }
+  }
 }

@@ -34,7 +34,7 @@ import { attributeTranscripts } from "./attribution.js";
 import { withIndex } from "./io.js";
 import { OS_TEMP_DIRS, assertRootPaths, underTempDir } from "./repo-path.js";
 import { isDirectory } from "./session-cwd.js";
-import { claudeProjects, codexSessions } from "./stores.js";
+import { claudeProjects, codexSessions, opencodeSessions } from "./stores.js";
 import { repoAbove } from "./touched.js";
 import type { OnboardingIo } from "./io.js";
 import type { DiscoverResult, RepoCandidate, WorkspaceCandidate } from "@workledger/server";
@@ -157,6 +157,10 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
     if (session.cwd === null || !usableStart(session.cwd, tempDirs)) continue;
     startedIn(session.cwd);
   }
+  for (const session of opencodeSessions(io.homeDir)) {
+    if (session.parentId !== null || !usableStart(session.cwd, tempDirs)) continue;
+    startedIn(session.cwd);
+  }
   for (const root of roots) walkRoot(root, consider);
 
   // The inference, over every candidate at once (amendment 10): a transcript is scanned once
@@ -166,7 +170,11 @@ export async function discoverRepos(options: { roots?: string[] | undefined }, i
   const found = new Map<string, RepoCandidate>();
   for (const [key, entry] of candidates) {
     const attribution = about.get(key);
-    const sessions = [...(attribution?.claude.map((s) => ["claude-code", s] as const) ?? []), ...(attribution?.codex.map((s) => ["codex", s] as const) ?? [])];
+    const sessions = [
+      ...(attribution?.claude.map((s) => ["claude-code", s] as const) ?? []),
+      ...(attribution?.codex.map((s) => ["codex", s] as const) ?? []),
+      ...(attribution?.opencode.map((s) => ["opencode", s] as const) ?? []),
+    ];
     if (sessions.length === 0) {
       // No session is about it: a walked repo stays offered; a start directory whose sessions
       // were all about other repos — a workspace folder, `~` — is not a project at all.

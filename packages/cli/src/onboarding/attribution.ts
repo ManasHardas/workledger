@@ -22,8 +22,9 @@ import path from "node:path";
 import { isEnabled } from "../ledger-fs.js";
 import { underTempDir } from "./repo-path.js";
 import { isDirectory } from "./session-cwd.js";
-import { claudeTranscripts, codexSessions } from "./stores.js";
-import { inferContext, repoAbove } from "./touched.js";
+import { claudeTranscripts, codexSessions, opencodeSessions } from "./stores.js";
+import { inferContext, inferContextFromToolCalls, repoAbove } from "./touched.js";
+import type { ToolCallInput } from "./touched.js";
 import type { StoreSession } from "../commands/backfill.js";
 import type { IndexDb } from "../index/db.js";
 
@@ -33,6 +34,8 @@ export interface RepoAttribution {
   claude: StoreSession[];
   /** Codex sessions about the repo, newest first. */
   codex: StoreSession[];
+  /** OpenCode sessions about the repo, newest first. */
+  opencode: StoreSession[];
   /** Distinct start directories of those sessions that are not inside the repo — `RepoCandidate.startedIn`. */
   startedIn: string[];
   /** How many of those sessions the content qualified, and how many are the fallback — `RepoCandidate.about`. */
@@ -60,8 +63,13 @@ function realOr(file: string): string {
 
 /** One transcript of either harness, as the inference needs it. */
 interface Transcript {
-  harness: "claude-code" | "codex";
+  harness: "claude-code" | "codex" | "opencode";
   session: StoreSession & { cwd: string };
+  /**
+   * OpenCode has no transcript file to scan; its normalized tool calls travel with the session
+   * instead, and the inference reads those directly (`inferContextFromToolCalls`).
+   */
+  toolCalls?: ToolCallInput[];
 }
 
 /**
@@ -94,6 +102,23 @@ export function transcripts(homeDir: string, tempDirs: readonly string[] = []): 
       harness: "codex",
       session: {
         harnessSessionId: entry.id,
+        file: entry.file,
+        bytes: entry.bytes,
+        mtimeMs: entry.mtimeMs,
+        startedIso: entry.startedIso,
+        cwd: entry.cwd,
+      },
+    });
+  }
+  for (const entry of opencodeSessions(homeDir)) {
+    // A subagent's child session (parent_id set) is part of its parent's work, not a session of
+    // its own to backfill; the live plugin records it but never blocks it.
+    if (entry.parentId !== null || !usable(entry.cwd)) continue;
+    found.push({
+      harness: "opencode",
+      toolCalls: entry.toolCalls,
+      session: {
+        harnessSessionId: entry.harnessSessionId,
         file: entry.file,
         bytes: entry.bytes,
         mtimeMs: entry.mtimeMs,
@@ -153,7 +178,7 @@ export async function attributeTranscripts(
   // Resolved root → the spellings asked for. Two spellings of one repo share one scan.
   const spellings = new Map<string, string[]>();
   for (const repo of repos) {
-    result.set(repo, { claude: [], codex: [], startedIn: [], about: { content: 0, fallback: 0 } });
+    result.set(repo, { claude: [], codex: [], opencode: [], startedIn: [], about: { content: 0, fallback: 0 } });
     const key = realOr(repo);
     spellings.set(key, [...(spellings.get(key) ?? []), repo]);
   }
@@ -167,13 +192,19 @@ export async function attributeTranscripts(
     ]),
   ];
 
-  for (const { harness, session } of all) {
-    const inference = await inferContext(session.file, candidates, session.cwd, { db, homeDir });
+  for (const { harness, session, toolCalls } of all) {
+    const inference =
+      toolCalls !== undefined
+        ? inferContextFromToolCalls(toolCalls, candidates, session.cwd, homeDir)
+        : await inferContext(session.file, candidates, session.cwd, { db, homeDir });
     const spelled = inference.contextRepos.map((context) => ({ ...context, root: spellings.get(context.root)?.[0] ?? context.root }));
     for (const context of inference.contextRepos) {
       for (const repo of spellings.get(context.root) ?? []) {
         const entry = result.get(repo) as RepoAttribution;
-        (harness === "codex" ? entry.codex : entry.claude).push({ ...session, context: spelled });
+        (harness === "opencode" ? entry.opencode : harness === "codex" ? entry.codex : entry.claude).push({
+          ...session,
+          context: spelled,
+        });
         if (context.fallback === true) entry.about.fallback += 1;
         else entry.about.content += 1;
         if (inference.startRepo !== context.root && !entry.startedIn.includes(session.cwd)) entry.startedIn.push(session.cwd);

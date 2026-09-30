@@ -59,7 +59,7 @@
       "additionalProperties": false,
       "required": ["harness", "session", "checkpoint", "author"],
       "properties": {
-        "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex"] },
+        "harness": { "type": "string", "enum": ["claude-code", "cursor", "codex", "opencode"] },
         "session": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
         "checkpoint": { "type": "integer", "minimum": 1 },
         "author": { "$ref": "#/$defs/Actor" }

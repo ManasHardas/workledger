@@ -31,6 +31,7 @@
  */
 import { claudeCodeAdapter } from "../adapters/claude-code.js";
 import { codexAdapter } from "../adapters/codex.js";
+import { opencodeAdapter } from "../adapters/opencode.js";
 import { BacklogOpError } from "../backlog-ops.js";
 import { createBackfilledSession, drainBackfillJobs, planBackfill } from "../commands/backfill.js";
 import { loadConfig } from "../config.js";
@@ -73,6 +74,8 @@ interface RepoPlan {
   plan: BackfillPlan;
   /** The Codex store's plan. Resume only: its `fresh` never reaches the extraction path. */
   codex: BackfillPlan;
+  /** The OpenCode store's plan. Resume only, for the same reason as Codex. */
+  opencode: BackfillPlan;
   concurrency: number;
   /** The extraction cost of every fresh Claude Code session, summed. */
   tokens: number;
@@ -97,6 +100,7 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
     };
     const plan = planBackfill(attribution?.claude ?? [], { ...options, harness: claudeCodeAdapter.harness });
     const codex = planBackfill(attribution?.codex ?? [], { ...options, harness: codexAdapter.harness });
+    const opencode = planBackfill(attribution?.opencode ?? [], { ...options, harness: opencodeAdapter.harness });
     let tokens = 0;
     let usd = 0;
     for (const session of plan.fresh) {
@@ -106,15 +110,17 @@ async function planRepos(input: PlanInput, io: OnboardingIo, db: IndexDb): Promi
       tokens += estimate.inputTokens + estimate.outputTokens;
       usd += estimate.usd;
     }
-    plans.push({ root, plan, codex, concurrency: config.backfill.concurrency, tokens, usd });
+    plans.push({ root, plan, codex, opencode, concurrency: config.backfill.concurrency, tokens, usd });
   }
   return plans;
 }
 
-/** `unsupported` for the extraction method: the fresh Codex sessions it cannot digest, if any. */
+/** `unsupported` for the extraction method: the fresh non-Claude sessions it cannot digest, if any. */
 function unsupportedFor(plans: readonly RepoPlan[]): Pick<PlanResult, "unsupported"> {
   const codex = plans.reduce((sum, entry) => sum + entry.codex.fresh.length, 0);
-  return codex === 0 ? {} : { unsupported: { codex } };
+  const opencode = plans.reduce((sum, entry) => sum + entry.opencode.fresh.length, 0);
+  if (codex === 0 && opencode === 0) return {};
+  return { unsupported: { ...(codex > 0 ? { codex } : {}), ...(opencode > 0 ? { opencode } : {}) } };
 }
 
 /** The plan step: how many sessions, and what digesting them costs by the chosen method. */
@@ -123,7 +129,10 @@ export async function backfillPlan(input: PlanInput, io: OnboardingIo): Promise<
   if (input.since === "none") return { sessions: 0, estimate: null };
   return await withIndex(io, async (db) => {
     const plans = await planRepos(input, io, db);
-    const sessions = plans.reduce((sum, entry) => sum + entry.plan.fresh.length + entry.codex.fresh.length, 0);
+    const sessions = plans.reduce(
+      (sum, entry) => sum + entry.plan.fresh.length + entry.codex.fresh.length + entry.opencode.fresh.length,
+      0,
+    );
     if (input.method === "none") return { sessions, estimate: null };
     if (input.method === "extract") {
       return {
@@ -141,7 +150,11 @@ export async function backfillPlan(input: PlanInput, io: OnboardingIo): Promise<
       // Each harness's estimate is its own ceiling at the repo's concurrency; the sum can be at
       // most one session's worth above a single reckoning of both, and never below it.
       estimate: {
-        seconds: plans.reduce((sum, entry) => sum + entry.plan.estimateSeconds + entry.codex.estimateSeconds, 0),
+        seconds: plans.reduce(
+          (sum, entry) =>
+            sum + entry.plan.estimateSeconds + entry.codex.estimateSeconds + entry.opencode.estimateSeconds,
+          0,
+        ),
       },
     };
   });
@@ -218,7 +231,10 @@ export async function queueOnboardingBackfill(input: RunInput, io: OnboardingIo)
     const repos: string[] = [];
     for (const entry of await planRepos(input, io, db)) {
       const queue: Array<[BackfillPlan, HarnessAdapter]> = [[entry.plan, claudeCodeAdapter]];
-      if (input.method === "resume") queue.push([entry.codex, codexAdapter]);
+      if (input.method === "resume") {
+        queue.push([entry.codex, codexAdapter]);
+        queue.push([entry.opencode, opencodeAdapter]);
+      }
       if (queue.every(([plan]) => plan.fresh.length === 0)) continue;
       for (const [plan, adapter] of queue) {
         const bio = await backfillIo(db, entry.root, io, adapter);
