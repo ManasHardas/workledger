@@ -678,6 +678,54 @@ describe("hook SessionStart", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Reopen after the sweep
+// ---------------------------------------------------------------------------
+
+describe("hook reopens a session the sweep closed", () => {
+  /** Mimic `scan`'s write: a crashed index row and a crashed ledger file. */
+  function markCrashed(fixture: Fixture): string {
+    const session = row(fixture) as SessionRow;
+    withDb(fixture, (db) => db.updateSession(session.ulid, { status: "crashed" }));
+    const file = sessionFile(fixture.root, session.ulid);
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8")
+        .replace("status: open", "status: crashed")
+        .replace("needs_repair: false", "needs_repair: true"),
+      "utf8",
+    );
+    return session.ulid;
+  }
+
+  it("a Stop clears the crashed frontmatter and index row", async () => {
+    const fixture = setup();
+    const ulid = await start(fixture);
+    markCrashed(fixture);
+
+    expect(await run(fixture, "Stop", "stop-hook-active-false")).toBe(EXIT_OK);
+
+    expect((row(fixture) as SessionRow).status).toBe("open");
+    const text = readFileSync(sessionFile(fixture.root, ulid), "utf8");
+    expect(text).toContain("status: open");
+    expect(text).toContain("needs_repair: false");
+    expect(text).not.toContain("status: crashed");
+  });
+
+  it("a resume SessionStart clears the crashed frontmatter", async () => {
+    const fixture = setup();
+    const ulid = await start(fixture);
+    markCrashed(fixture);
+
+    expect(await run(fixture, "SessionStart", "session-start-resume")).toBe(EXIT_OK);
+
+    expect((row(fixture) as SessionRow).status).toBe("open");
+    const text = readFileSync(sessionFile(fixture.root, ulid), "utf8");
+    expect(text).toContain("status: open");
+    expect(text).not.toContain("needs_repair: true");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SessionEnd
 // ---------------------------------------------------------------------------
 

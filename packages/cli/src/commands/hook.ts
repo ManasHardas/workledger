@@ -145,6 +145,30 @@ export async function patchFrontmatter(
   return true;
 }
 
+/**
+ * A hook firing for a row an earlier `scan` or `SessionEnd` closed means the harness is driving
+ * the session again: reopen it, in the ledger file (which is what the read model and the UI
+ * read) and in the index.
+ *
+ * A no-op for the common case of an already-open row. OpenCode has no resume `SessionStart`, so
+ * its `Stop` is often the only signal that a swept session is alive; Claude Code's `SessionStart`
+ * reuse gets the same treatment so a resumed session never keeps the counters the sweep wrote.
+ *
+ * Reopening also stands a queued `repair` down: `repair` refuses a session that is still open
+ * (`repair.ts` `eligibility`), so a job the sweep queued for a live session can no longer resume
+ * it.
+ */
+async function reopenIfClosed(ctx: Context, session: SessionRow): Promise<void> {
+  if (session.status === "open") return;
+  ctx.db.updateSession(session.ulid, { status: "open", updated_at: ctx.nowIso });
+  await patchFrontmatter(ctx.root, session.ulid, (data) => {
+    data["status"] = "open";
+    data["needs_repair"] = false;
+    delete data["ended"];
+    delete data["end_reason"];
+  });
+}
+
 // ---------------------------------------------------------------------------
 // SessionStart
 // ---------------------------------------------------------------------------
@@ -186,6 +210,9 @@ async function sessionStart(ctx: Context): Promise<number> {
   let ulid: string;
   if (existing !== undefined) {
     ulid = existing.ulid;
+    // A `resume` after the sweep is the same session coming back, so a crashed frontmatter is
+    // cleared rather than left to contradict the open index row.
+    await reopenIfClosed(ctx, existing);
     // `compact` rewrote the context but changed nothing about the session; `resume` and `fork`
     // pick it back up. Counters are left exactly where they were (data-flow §2).
     db.updateSession(ulid, {
@@ -368,6 +395,10 @@ export async function stop(ctx: Context): Promise<number> {
   // No SessionStart was seen for this id (a session that predates `init`, or a lost index).
   // There is nothing to count against and nothing to checkpoint into: allow.
   if (session === undefined) return EXIT_OK;
+
+  // A Stop proves the harness is still driving a session the sweep may have closed: reopen it
+  // before counting the turn (OpenCode's only liveness signal — see `reopenIfClosed`).
+  await reopenIfClosed(ctx, session);
 
   const ulid = session.ulid;
   const turnsTotal = session.turns_total + 1;

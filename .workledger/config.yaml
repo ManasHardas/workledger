@@ -1,5 +1,5 @@
 schema_version: 1
-harnesses: [claude-code]
+harnesses: [claude-code, codex, opencode]
 thresholds: { bytes: 2000000, minutes: 20, turns: 15 }
 brief: { inject: true, max_tokens: 2000 }
 stale_turns: 5
