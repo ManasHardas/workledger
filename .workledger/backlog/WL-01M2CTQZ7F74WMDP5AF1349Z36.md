@@ -18,7 +18,7 @@ area: []
 blocked_by: []
 done_by: null
 created: 2026-09-13T07:29:40.588Z
-updated: 2026-09-13T07:29:40.588Z
+updated: 2026-09-13T17:00:13.611Z
 history:
   - at: 2026-09-13T07:29:40.588Z
     by:
@@ -26,5 +26,13 @@ history:
       checkpoint: 5
     op: create
     diff: created [cp 5]
+  - at: 2026-09-13T17:00:13.611Z
+    by:
+      session: 01M2C2WMACH589KZV1BE8VVQ85
+      checkpoint: 6
+    op: update
+    diff: "why: Planned as v0.4.0-rc.1 to npm next, then v0.4.0, then a brew install check"
 ---
 README install points at source until the tokens exist and a v tag is pushed
+
+- [cp 6] Planned as v0.4.0-rc.1 to npm next, then v0.4.0, then a brew install check

@@ -9,11 +9,11 @@ author:
   name: Manas Hardas
   email: manas.hardas@gmail.com
 started: 2026-09-13T00:32:47.420Z
-status: crashed
+status: ended
 private: false
 source: live
 model: claude-opus-5[1m]
-needs_repair: true
+needs_repair: false
 checkpoint_failures: 0
 checkpoints:
   - n: 1
@@ -41,16 +41,32 @@ checkpoints:
     turns: 16
     transcript_offset: 13114331
     trigger: minutes
+  - n: 6
+    at: 2026-09-13T17:00:13.611Z
+    turns: 20
+    transcript_offset: 13323496
+    trigger: minutes
+  - n: 7
+    at: 2026-09-13T17:21:24.335Z
+    turns: 23
+    transcript_offset: 13887185
+    trigger: minutes
 started_in: /Users/manashardas/Projects/workledger
 about:
   - /Users/manashardas/Projects/workledger
-end_reason: crashed
-ended: 2026-09-13T02:04:00.198Z
+end_reason: unknown
+ended: 2026-09-18T05:33:32.383Z
 ---
 ## Goal
 - [cp 1] Restart the workledger server, explain why the running pages look different from the Figma designs, then rebuild the four screens so they match the Figma frames exactly
 
 ## Done
+- [cp 7] Walked the operator through the npm token form, then switched the plan to trusted publishing so no npm token is stored at all
+  detail: npm warns against bypass-2FA tokens for CI; trusted publishing uses GitHub OIDC for a short-lived per-run credential plus provenance; it is configured per package, so the first version is published once by hand from the operator machine · files: .github/workflows/release.yml · verified: not-verified
+- [cp 6] This repo’s own session notes and backlog are committed and pushed, so the remote matches local
+  detail: 55 .workledger session and backlog files committed as chore dogfood ledger and pushed; origin/main equals main · commit: fb1c4fb · files: .workledger/sessions/01M2C2WMACH589KZV1BE8VVQ85.md · verified: not-verified
+- [cp 6] Explained how a tagged release reaches npm and Homebrew, and what is missing before the first one
+  detail: release.yml: v tag builds, tests, checks tag equals packages/cli version, packs, npm publish (next for prereleases), GitHub release, tap formula url and sha256 rewrite; npm name free (404); no repo secrets; tap formula has placeholder sha for a nonexistent v0.3.0 · files: .github/workflows/release.yml, packages/cli/package.json · verified: not-verified
 - [cp 5] The centred app and the aligned details panel are merged and running
   detail: PR 146 squash-merged as 0c673b9 after one review with no blockers; docked panel max-height now subtracts the 52px header band; main rebuilt; 7419 daemon restarted · commit: 0c673b9 · files: apps/web/src/components/app-shell.tsx, apps/web/src/components/aside.tsx, apps/web/src/components/ui/panel.tsx · verified: tests-passed
 - [cp 5] The README now describes the product as it is today instead of the first CLI release
@@ -95,6 +111,15 @@ ended: 2026-09-13T02:04:00.198Z
   detail: Subagents: ledger filters, UTC day groups, cards, ledger-aside.tsx; session goal h1, recap cards, Left open, provenance module with selected outcome; ledger.test.tsx has 6 session-detail tests to repoint · files: apps/web/src/routes/ledger.tsx, apps/web/src/features/ledger/ledger-aside.tsx, apps/web/src/features/ledger/session-detail.tsx, apps/web/src/features/ledger/provenance-panel.tsx · verified: tests-failed
 
 ## Remaining
+- [cp 7] → WL-01M2DVCNXDDZ7VGC77PZGJKB4P (updates) Add TAP_TOKEN as a repo secret; why: npm needs no secret now, but the Homebrew formula update still needs a tap token
+- [cp 7] → WL-01M2DWKEVGJZVY21NEQKW6AKTX (new) Move the release workflow to npm trusted publishing with provenance; why: The workflow still expects NPM_TOKEN and uses the npm CLI bundled with Node 22
+- [cp 7] → WL-01M2DVCNXEMSP8EJSKFST5115C (updates) Skip the Homebrew tap update on prerelease tags; why: A release candidate tag would still point brew users at the candidate
+- [cp 7] → WL-01M2DVCNXEMSP8EJSKFST5115D (updates) Bump workledger to 0.4.0-rc.1 and close the changelog section; why: The first manual publish and the tags need the version set
+- [cp 7] → WL-01M2DWKEVHZY3TMNSZRDJY143G (new) Publish the first version by hand, then add the trusted publisher on npmjs.com; why: Trusted publishing can only be configured on a package that already exists
+- [cp 6] → WL-01M2DVCNXDDZ7VGC77PZGJKB4P (new) Add NPM_TOKEN and TAP_TOKEN as repo secrets; why: Without them a tag skips npm publish and the Homebrew formula update
+- [cp 6] → WL-01M2DVCNXEMSP8EJSKFST5115C (new) Skip the Homebrew tap update on prerelease tags; why: A release candidate tag would point brew users at the candidate
+- [cp 6] → WL-01M2DVCNXEMSP8EJSKFST5115D (new) Bump workledger to 0.4.0 and close the changelog section; why: The release job fails when the tag does not match the package version
+- [cp 6] → WL-01M2CTQZ7F74WMDP5AF1349Z36 (updates) Publish the first release to npm and Homebrew; why: Planned as v0.4.0-rc.1 to npm next, then v0.4.0, then a brew install check
 - [cp 5] → WL-01M2CA7A6X9TH4TMZWEEYA3HBW (closes) Merge PR 146 after its review and restart the server; why: Done: merged as 0c673b9 and the daemon restarted
 - [cp 5] → WL-01M2CTQZ7EMKZ6F6PTH4452HVN (new) Decide how Ledger, Sessions and Health appear in the nav on All projects; why: The operator deferred it; the Home nav still shows only Home, Review and Jobs
 - [cp 5] → WL-01M2CTQZ7F74WMDP5AF1349Z36 (new) Publish the first release to npm and Homebrew; why: README install points at source until the tokens exist and a v tag is pushed
@@ -127,5 +152,8 @@ ended: 2026-09-13T02:04:00.198Z
 - decision [cp 3] by human: Review offers All, Blockers, Questions, Proposals, Decisions and Discoveries views plus a project filter; reason: Operator chose the full set of views over only what needs a human
 - decision [cp 4] by human: The whole app, nav included, is centred at 1440 px and grows margins equally on both sides; reason: Operator found the left-pinned nav stranded on a wide screen and asked to centre it with the rest
 - discovery [cp 5]: workledger is not on npm and the repo has no GitHub releases yet, so the old README install commands did not work for anyone
+- decision [cp 6] by agent: The operator adds the npm and tap tokens as repository secrets from their own terminal instead of pasting them into the chat; reason: Tokens pasted into the conversation would sit in the session transcript; gh secret set keeps them out of it
+- discovery [cp 6]: The tap formula installs the npm tarball with Homebrew node; better-sqlite3 may compile from source if no prebuilt binary matches that node, which needs Xcode command line tools
+- decision [cp 7] by agent: Releases publish to npm through trusted publishing, not a token that bypasses two-factor authentication; reason: npm flags bypass tokens as a security risk for CI; OIDC leaves nothing to leak or rotate and adds provenance; awaiting operator go-ahead
 
 ## Memory
