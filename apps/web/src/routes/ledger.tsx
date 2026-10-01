@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { AsyncPanel } from "../components/async-panel.js";
 import { PageBody, PageHeader } from "../components/ui/page.js";
+import { SessionActivityGrid } from "../features/ledger/activity-grid.js";
 import { EMPTY_FILTERS, LedgerFilterBar, LedgerSinceFilter, sinceInstant } from "../features/ledger/filters.js";
 import { useLiveSessions } from "../features/ledger/live.js";
 import { SessionList, openFirst } from "../features/ledger/session-list.js";
@@ -52,11 +53,20 @@ export function LedgerView() {
     [filters, q],
   );
   const sessions = useLiveSessions(query);
+  /**
+   * The work grid reads the whole ledger, not the filtered slice: it is the repo's shape over
+   * time, and a filter that narrows the list below must not redraw it. A second `listSessions`,
+   * but the SSE stream behind it is shared (`lib/ledger-source.ts`).
+   */
+  const activity = useLiveSessions({});
 
   return (
     <>
       <PageHeader title="Ledger" aside={sessions.state === "ready" ? ledgerSummary(sessions.value) : undefined} />
       <PageBody rhythm="ledger">
+        {activity.state === "ready" && activity.value.length > 0 ? (
+          <SessionActivityGrid sessions={activity.value} />
+        ) : null}
         <LedgerFilterBar filters={filters} onChange={setFilters} q={q} onQChange={setQ} />
         <AsyncPanel
           result={sessions}
